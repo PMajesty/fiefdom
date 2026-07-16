@@ -641,12 +641,14 @@ async def test_post_realm_public_posts_to_group_chat(monkeypatch):
 
     async def _fake_send_game(bot, chat_id, text, **kwargs):
         sent.append((chat_id, text, kwargs.get("reply_markup")))
+        return True
 
     monkeypatch.setattr(shared_mod, "get_engine", lambda: _Engine())
     monkeypatch.setattr(shared_mod, "send_game", _fake_send_game)
 
     kb = object()
-    await shared_mod.post_realm_public(object(), 7, "⚔️ набег", reply_markup=kb)
+    ok = await shared_mod.post_realm_public(object(), 7, "⚔️ набег", reply_markup=kb)
+    assert ok is True
     assert sent == [(-100500, "⚔️ набег", kb)]
 
 
@@ -665,12 +667,13 @@ async def test_post_realm_public_skips_missing_or_zero_realm(monkeypatch):
     async def _fake_send_game(*_a, **_k):
         nonlocal called
         called = True
+        return True
 
     monkeypatch.setattr(shared_mod, "get_engine", lambda: _Engine())
     monkeypatch.setattr(shared_mod, "send_game", _fake_send_game)
 
-    await shared_mod.post_realm_public(object(), 0, "текст")
-    await shared_mod.post_realm_public(object(), 9, "текст")
+    assert await shared_mod.post_realm_public(object(), 0, "текст") is False
+    assert await shared_mod.post_realm_public(object(), 9, "текст") is False
     assert called is False
 
 
@@ -690,7 +693,7 @@ async def test_post_realm_public_swallows_send_errors(monkeypatch):
     monkeypatch.setattr(shared_mod, "get_engine", lambda: _Engine())
     monkeypatch.setattr(shared_mod, "send_game", _boom)
 
-    await shared_mod.post_realm_public(object(), 1, "текст")
+    assert await shared_mod.post_realm_public(object(), 1, "текст") is False
 
 
 async def test_announce_realm_skips_empty_realm(monkeypatch):

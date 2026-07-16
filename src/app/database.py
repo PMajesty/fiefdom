@@ -265,6 +265,12 @@ class Database:
                 );
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS announced_patches (
+                    name TEXT PRIMARY KEY,
+                    announced_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS personal_deals (
                     id BIGSERIAL PRIMARY KEY,
                     realm_id BIGINT NOT NULL,
@@ -1588,6 +1594,22 @@ class Database:
             cols = [d[0] for d in self.cursor.description]
             self.commit()
             return dict(zip(cols, row))
+
+    def list_announced_patch_names(self) -> set[str]:
+        with self.lock:
+            self.cursor.execute("SELECT name FROM announced_patches;")
+            rows = self.cursor.fetchall() or []
+            return {str(row[0]) for row in rows}
+
+    def mark_patch_announced(self, name: str) -> None:
+        """Фиксирует вестник после успешной (или пустой) рассылки."""
+        with self.lock:
+            self.cursor.execute(
+                "INSERT INTO announced_patches (name) VALUES (%s) "
+                "ON CONFLICT (name) DO NOTHING;",
+                (str(name),),
+            )
+            self.commit()
 
     # --- helpers ---
     def _update(self, table: str, row_id: int, fields: dict) -> None:

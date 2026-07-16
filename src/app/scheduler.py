@@ -19,6 +19,7 @@ from app.domain.events import (
 )
 from app.domain.tick_schedule import due_tick_slot
 from app.handlers.shared import get_engine, post_digest, post_realm_public
+from app.patch_announce import announce_pending_patches
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,11 @@ async def _scheduler_tick(bot: Bot) -> None:
         await _maybe_post_world_catastrophe(bot, engine, world)
     except Exception:
         logger.exception("world catastrophe post failed")
+
+    try:
+        await announce_pending_patches(bot)
+    except Exception:
+        logger.exception("patch announce failed")
 
     for realm in engine.db.list_realms_by_chain(int(world["id"])):
         try:

@@ -84,16 +84,17 @@ async def answer_html(message: Message, text: str, **kwargs: Any) -> None:
             logger.error("answer_html: send failed: %s", exc)
 
 
-async def send_html(bot: Bot, chat_id: int, text: str, **kwargs: Any) -> None:
+async def send_html(bot: Bot, chat_id: int, text: str, **kwargs: Any) -> bool:
     """То же, что answer_html, но через bot.send_message(chat_id=...)."""
     if text is None:
-        return
+        return False
     plain = str(text)
     if not plain:
-        return
+        return False
 
     kwargs.pop("parse_mode", None)
     reply_markup = kwargs.pop("reply_markup", None)
+    any_ok = False
     for index, part in enumerate(chunk_text(plain)):
         escaped = escape_html(part)
         part_kwargs = dict(kwargs)
@@ -105,6 +106,7 @@ async def send_html(bot: Bot, chat_id: int, text: str, **kwargs: Any) -> None:
 
         try:
             await _send_with_retry(_html, label="send_html")
+            any_ok = True
         except TelegramBadRequest as exc:
             logger.warning("send_html: HTML rejected, plain fallback: %s", exc)
 
@@ -113,10 +115,12 @@ async def send_html(bot: Bot, chat_id: int, text: str, **kwargs: Any) -> None:
 
             try:
                 await _send_with_retry(_plain, label="send_html/plain")
+                any_ok = True
             except Exception as fallback_exc:
                 logger.error("send_html: plain fallback failed: %s", fallback_exc)
         except Exception as exc:
             logger.error("send_html: send failed: %s", exc)
+    return any_ok
 
 
 async def answer_text_document(

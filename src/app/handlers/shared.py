@@ -236,23 +236,26 @@ def format_pact_leave_announce(
 
 async def post_realm_public(
     bot, realm_id: int, text: str, *, reply_markup=None
-) -> None:
+) -> bool:
     """Короткое объявление в групповой чат долины. Ошибки не роняют хендлер."""
     if not text or not realm_id:
-        return
+        return False
     try:
         engine = get_engine()
         realm = engine.db.get_realm(int(realm_id))
         if not realm:
-            return
+            return False
         chat_id = realm.get("chat_id")
         if chat_id is None:
-            return
-        await send_game(bot, int(chat_id), text, reply_markup=reply_markup)
+            return False
+        return bool(
+            await send_game(bot, int(chat_id), text, reply_markup=reply_markup)
+        )
     except Exception:
         logger.warning(
             "post_realm_public failed realm_id=%s", realm_id, exc_info=True
         )
+        return False
 
 
 async def announce_realm(
@@ -725,18 +728,20 @@ async def reply_guide(message: Message, text: str, **kwargs: Any) -> None:
     await reply_guide_document(message, text, **kwargs)
 
 
-async def send_game(bot, chat_id: int, text: str, **kwargs: Any) -> None:
-    """Отправка HTML от движка в чат."""
+async def send_game(bot, chat_id: int, text: str, **kwargs: Any) -> bool:
+    """Отправка HTML от движка в чат. True, если сообщение ушло."""
     if text is None:
-        return
+        return False
     plain = str(text)
     if not plain:
-        return
+        return False
     kwargs.pop("parse_mode", None)
     try:
         await bot.send_message(chat_id, plain, parse_mode=ParseMode.HTML, **kwargs)
+        return True
     except TelegramBadRequest as exc:
         logger.warning("send_game: HTML rejected, fallback send_html: %s", exc)
-        await send_html(bot, chat_id, plain, **kwargs)
+        return await send_html(bot, chat_id, plain, **kwargs)
     except Exception as exc:
         logger.error("send_game failed: %s", exc)
+        return False
