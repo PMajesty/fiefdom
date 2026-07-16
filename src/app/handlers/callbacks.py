@@ -84,55 +84,6 @@ async def cb_catastrophe_contribute(callback: CallbackQuery) -> None:
         await callback.answer("Ошибка", show_alert=True)
 
 
-@router.callback_query(F.data.startswith("drt:"))
-async def cb_drought_mitigate(callback: CallbackQuery) -> None:
-    """Полив засухи: товары за иммунитет этой усадьбы."""
-    engine = get_engine()
-    try:
-        fief_id = int(callback.data.split(":")[1])
-        _ensure_owner(engine, fief_id, callback.from_user.id)
-        result = engine.mitigate_drought(fief_id)
-        if result == "already":
-            await callback.answer("Ваши поля уже политы", show_alert=True)
-            return
-        await _ok(callback)
-        await reply_game(
-            callback.message,
-            "Полив сделан - засуха больше не душит ваши фермы.\n"
-            + engine.status_card(fief_id),
-            reply_markup=fief_home_kb(engine, fief_id),
-        )
-    except ValueError as exc:
-        await callback.answer(str(exc), show_alert=True)
-    except Exception:
-        logger.exception("cb_drought_mitigate")
-        await callback.answer("Ошибка", show_alert=True)
-
-
-@router.callback_query(F.data.startswith("cpl:"))
-async def cb_cattle_plague_mitigate(callback: CallbackQuery) -> None:
-    engine = get_engine()
-    try:
-        fief_id = int(callback.data.split(":")[1])
-        _ensure_owner(engine, fief_id, callback.from_user.id)
-        result = engine.mitigate_cattle_plague(fief_id)
-        if result == "already":
-            await callback.answer("Мор у вас уже снят", show_alert=True)
-            return
-        await _ok(callback)
-        await reply_game(
-            callback.message,
-            "Скот забит - мор больше не душит ваши фермы.\n"
-            + engine.status_card(fief_id),
-            reply_markup=fief_home_kb(engine, fief_id),
-        )
-    except ValueError as exc:
-        await callback.answer(str(exc), show_alert=True)
-    except Exception:
-        logger.exception("cb_cattle_plague_mitigate")
-        await callback.answer("Ошибка", show_alert=True)
-
-
 @router.callback_query(F.data.startswith("gth:"))
 async def cb_gather(callback: CallbackQuery) -> None:
     engine = get_engine()
@@ -316,8 +267,6 @@ async def cb_more(callback: CallbackQuery) -> None:
             "Все действия:",
             reply_markup=more_menu_kb(
                 fief_id,
-                drought_mitigate=engine.fief_can_mitigate_drought(fief_id),
-                cattle_plague_mitigate=engine.fief_can_mitigate_cattle_plague(fief_id),
                 raid_pact_open=open_,
                 lock_hint=hint,
                 force_tick_progress=force_prog,

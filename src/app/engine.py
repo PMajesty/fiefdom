@@ -1974,12 +1974,6 @@ class Engine:
         event_line = self._prepare_tick_minor(realm_id, consume_pending=False)
         realm = self.db.get_realm(realm_id) or realm
         base_farm_mult = self._realm_farm_mult(realm)
-        drought_mitigated = self._drought_mitigated_fief_ids(realm_id, realm)
-        plague_ev = self._active_cattle_plague(realm_id)
-        plague_mitigated: set[int] = set()
-        if plague_ev is not None:
-            payload = plague_ev.get("payload") or {}
-            plague_mitigated = {int(x) for x in (payload.get("mitigated_fief_ids") or [])}
 
         outcomes = []
         for fief in self.db.list_fiefs(realm_id):
@@ -2018,10 +2012,6 @@ class Engine:
                 continue
 
             farm_mult = base_farm_mult
-            if base_farm_mult < 1.0 and int(fief["id"]) in drought_mitigated:
-                farm_mult = 1.0
-            if base_farm_mult < 1.0 and int(fief["id"]) in plague_mitigated:
-                farm_mult = 1.0
 
             state = FiefTickState(
                 grain=fief["grain"],
@@ -2155,26 +2145,17 @@ class Engine:
             )
         event_line = event_digest_line(meta)
         self._apply_instant_minor(realm_id, minor_key)
-        if minor_key == "drought":
-            self.db.create_event(
-                realm_id=realm_id,
-                kind="minor",
-                event_key="drought",
-                payload={"mitigated_fief_ids": []},
-                narrative=narrative,
-                status="active",
-                resolves_tick=resolves_tick,
-            )
-        else:
-            self.db.create_event(
-                realm_id=realm_id,
-                kind="minor",
-                event_key=minor_key,
-                payload={},
-                narrative=narrative,
-                status="resolved",
-                resolves_tick=resolves_tick,
-            )
+        # Засуха остаётся active до следующего тика (farm_mult), без личного выкупа.
+        status = "active" if minor_key == "drought" else "resolved"
+        self.db.create_event(
+            realm_id=realm_id,
+            kind="minor",
+            event_key=minor_key,
+            payload={},
+            narrative=narrative,
+            status=status,
+            resolves_tick=resolves_tick,
+        )
         return event_line
 
     def _realm_farm_mult(self, realm: dict) -> float:
@@ -2187,101 +2168,11 @@ class Engine:
             return float(catastrophe_effect("cattle_plague").get("farm_mult") or 0.50)
         return 1.0
 
-    def _drought_mitigated_fief_ids(self, realm_id: int, realm: dict | None = None) -> set[int]:
-        realm = realm or self.db.get_realm(realm_id)
-        if not realm or realm.get("active_minor_key") != "drought":
-            return set()
-        for ev in self.db.get_active_events(realm_id, kind="minor"):
-            if ev.get("event_key") != "drought":
-                continue
-            payload = ev.get("payload") or {}
-            if isinstance(payload, str):
-                continue
-            ids = payload.get("mitigated_fief_ids") or []
-            return {int(x) for x in ids}
-        return set()
-
-    def _active_drought_event(self, realm_id: int) -> dict | None:
-        for ev in self.db.get_active_events(realm_id, kind="minor"):
-            if ev.get("event_key") == "drought":
-                return ev
-        return None
-
-    def fief_can_mitigate_drought(self, fief_id: int) -> bool:
-        fief = self.db.get_fief(fief_id)
-        if not fief or fief.get("frozen"):
-            return False
-        realm = self.db.get_realm(fief["realm_id"])
-        if not realm or realm.get("active_minor_key") != "drought":
-            return False
-        return int(fief_id) not in self._drought_mitigated_fief_ids(fief["realm_id"], realm)
-
-    def mitigate_drought(self, fief_id: int) -> str:
-        """Полив: товары за иммунитет этой усадьбы к farm_mult засухи."""
-        fief = self.db.get_fief(fief_id)
-        if not fief:
-            raise ValueError("Усадьба не найдена")
-        if fief.get("frozen"):
-            raise ValueError("Усадьба заморожена")
-        realm = self.db.get_realm(fief["realm_id"])
-        if not realm:
-            raise ValueError("Долина не найдена")
-        if realm.get("active_minor_key") != "drought":
-            raise ValueError("Сейчас нет засухи")
-        cost = int((minor_effect("drought").get("mitigate") or {}).get("goods") or 15)
-        if int(fief["goods"]) < cost:
-            raise ValueError("Недостаточно товаров")
-        mitigated = self._drought_mitigated_fief_ids(fief["realm_id"], realm)
-        if int(fief_id) in mitigated:
-            return "already"
-        ev = self._active_drought_event(fief["realm_id"])
-        if not ev:
-            raise ValueError("Сейчас нет засухи")
-        new_ids = sorted(mitigated | {int(fief_id)})
-        payload = dict(ev.get("payload") or {})
-        payload["mitigated_fief_ids"] = new_ids
-        self.db.update_fief(fief_id, goods=int(fief["goods"]) - cost)
-        self.db.update_event(ev["id"], payload=payload)
-        return "ok"
-
     def _active_cattle_plague(self, realm_id: int) -> dict | None:
         for ev in self.db.get_active_events(realm_id, kind="catastrophe"):
             if ev.get("event_key") == "cattle_plague":
                 return ev
         return None
-
-    def fief_can_mitigate_cattle_plague(self, fief_id: int) -> bool:
-        fief = self.db.get_fief(fief_id)
-        if not fief or fief.get("frozen"):
-            return False
-        ev = self._active_cattle_plague(fief["realm_id"])
-        if not ev:
-            return False
-        payload = ev.get("payload") or {}
-        mitigated = {int(x) for x in (payload.get("mitigated_fief_ids") or [])}
-        return int(fief_id) not in mitigated
-
-    def mitigate_cattle_plague(self, fief_id: int) -> str:
-        """Забить скот: зерно за снятие штрафа мора у этой усадьбы."""
-        fief = self.db.get_fief(fief_id)
-        if not fief:
-            raise ValueError("Усадьба не найдена")
-        if fief.get("frozen"):
-            raise ValueError("Усадьба заморожена")
-        ev = self._active_cattle_plague(fief["realm_id"])
-        if not ev:
-            raise ValueError("Сейчас нет мора скота")
-        cost = int((catastrophe_effect("cattle_plague").get("mitigate") or {}).get("grain") or 20)
-        if int(fief["grain"]) < cost:
-            raise ValueError("Недостаточно зерна")
-        payload = dict(ev.get("payload") or {})
-        mitigated = {int(x) for x in (payload.get("mitigated_fief_ids") or [])}
-        if int(fief_id) in mitigated:
-            return "already"
-        payload["mitigated_fief_ids"] = sorted(mitigated | {int(fief_id)})
-        self.db.update_fief(fief_id, grain=int(fief["grain"]) - cost)
-        self.db.update_event(ev["id"], payload=payload)
-        return "ok"
 
     def _resolve_active_minor_events(self, realm_id: int) -> None:
         for ev in self.db.get_active_events(realm_id, kind="minor"):

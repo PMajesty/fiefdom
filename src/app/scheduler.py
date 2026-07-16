@@ -129,10 +129,7 @@ async def _post_catastrophe_message(
             f"Вклад: кнопка ниже (−5 силы за нажатие)."
         )
     elif key == "cattle_plague":
-        extra = (
-            "\nПоля без тягла дают половину. В личке: "
-            "\"Забить скот\" (−20 зерна) - снять мор у своей усадьбы."
-        )
+        extra = "\nПоля без тягла дают половину, пока мор не отступит."
     text = (
         f"⚠️ <b>{meta['name_ru']}</b>\n"
         f"{narrative}{extra}\n"
@@ -281,8 +278,6 @@ async def _maybe_post_world_catastrophe(bot: Bot, engine, world: dict) -> None:
             if int(realm["id"]) in have_ids:
                 continue
             payload: dict = {"threshold_hint": True}
-            if key == "cattle_plague":
-                payload = {"mitigated_fief_ids": []}
             if wave_expired:
                 # Sync-placeholder: не открываем active, который сразу получит fail-штрафы.
                 engine.db.create_event(
@@ -332,8 +327,6 @@ async def _maybe_post_world_catastrophe(bot: Bot, engine, world: dict) -> None:
     created: list[tuple[dict, dict]] = []
     for realm in realms:
         payload: dict = {"threshold_hint": True}
-        if key == "cattle_plague":
-            payload = {"mitigated_fief_ids": []}
         event = engine.db.create_event(
             realm_id=realm["id"],
             kind="catastrophe",

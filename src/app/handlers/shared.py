@@ -399,8 +399,6 @@ def home_kb(fief_id: int, primary_label: str, primary_callback: str) -> InlineKe
 def more_menu_kb(
     fief_id: int,
     *,
-    drought_mitigate: bool = False,
-    cattle_plague_mitigate: bool = False,
     raid_pact_open: bool = True,
     lock_hint: str | None = None,
     force_tick_progress: tuple[int, int] | None = None,
@@ -412,24 +410,6 @@ def more_menu_kb(
     """
     fid = int(fief_id)
     rows: list[list[InlineKeyboardButton]] = []
-    if drought_mitigate:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text="Полив (15 товаров)",
-                    callback_data=f"drt:{fid}",
-                )
-            ]
-        )
-    if cattle_plague_mitigate:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text="Забить скот (20 зерна)",
-                    callback_data=f"cpl:{fid}",
-                )
-            ]
-        )
     if force_tick_progress is not None:
         votes, needed = force_tick_progress
         rows.append(
@@ -492,7 +472,6 @@ def main_menu_kb(
     fief: dict | None = None,
     tile_count: int = 2,
     *,
-    drought_mitigate: bool = False,
     day_number: int = B.RAID_PACT_UNLOCK_DAY,
     min_build_cost: int | None = None,
     next_claim_cost: int | None = None,
@@ -500,50 +479,26 @@ def main_menu_kb(
     """Домашняя клавиатура усадьбы (status-first). Без снимка fief - безопасный CTA."""
     fid = int(fief_id)
     if fief is None:
-        kb = home_kb(fid, "Обновить статус", f"st:{fid}")
-    else:
-        label, cb = choose_primary_cta(
-            fid,
-            actions=int(fief.get("actions") or 0),
-            onboard_step=int(fief.get("onboard_step") or 0),
-            tile_count=tile_count,
-            goods=int(fief.get("goods") or 0),
-            might=int(fief.get("might") or 0),
-            day_number=day_number,
-            min_build_cost=min_build_cost,
-            next_claim_cost=next_claim_cost,
-        )
-        kb = home_kb(fid, label, cb)
-    if not drought_mitigate:
-        return kb
-    rows = [list(row) for row in kb.inline_keyboard]
-    rows.insert(
-        1,
-        [
-            InlineKeyboardButton(
-                text="Полив (15 товаров)",
-                callback_data=f"drt:{fid}",
-            )
-        ],
+        return home_kb(fid, "Обновить статус", f"st:{fid}")
+    label, cb = choose_primary_cta(
+        fid,
+        actions=int(fief.get("actions") or 0),
+        onboard_step=int(fief.get("onboard_step") or 0),
+        tile_count=tile_count,
+        goods=int(fief.get("goods") or 0),
+        might=int(fief.get("might") or 0),
+        day_number=day_number,
+        min_build_cost=min_build_cost,
+        next_claim_cost=next_claim_cost,
     )
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return home_kb(fid, label, cb)
 
 
 def fief_home_kb(engine: Engine, fief_id: int) -> InlineKeyboardMarkup:
     """Дом с CTA по актуальному снимку усадьбы из БД."""
     fief = engine.db.get_fief(fief_id)
-    can_water = False
-    can_plague = False
-    try:
-        can_water = engine.fief_can_mitigate_drought(fief_id)
-    except Exception:
-        can_water = False
-    try:
-        can_plague = engine.fief_can_mitigate_cattle_plague(fief_id)
-    except Exception:
-        can_plague = False
     if not fief:
-        return main_menu_kb(fief_id, drought_mitigate=can_water)
+        return main_menu_kb(fief_id)
     tiles = engine.db.fief_tiles(fief_id)
     active = [t for t in tiles if not t.get("is_overgrown")]
     n = len(active)
@@ -561,7 +516,6 @@ def fief_home_kb(engine: Engine, fief_id: int) -> InlineKeyboardMarkup:
         fief_id,
         fief=fief,
         tile_count=n,
-        drought_mitigate=can_water,
         day_number=day_number,
         min_build_cost=min_build,
         next_claim_cost=next_claim,

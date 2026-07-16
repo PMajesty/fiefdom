@@ -270,23 +270,6 @@ def test_main_menu_kb_compact_without_fief():
     assert len(kb.inline_keyboard) == 2
 
 
-def test_main_menu_kb_drought_button():
-    from app.handlers.shared import main_menu_kb
-
-    fief = {"actions": 1, "onboard_step": 4, "goods": 20, "might": 0}
-    kb = main_menu_kb(5, fief=fief, tile_count=4, drought_mitigate=True)
-    assert kb.inline_keyboard[1][0].callback_data == "drt:5"
-    assert kb.inline_keyboard[1][0].text == "Полив (15 товаров)"
-
-
-def test_more_menu_kb_drought_row():
-    from app.handlers.shared import more_menu_kb
-
-    kb = more_menu_kb(9, drought_mitigate=True)
-    assert kb.inline_keyboard[0][0].callback_data == "drt:9"
-    assert kb.inline_keyboard[0][0].text == "Полив (15 товаров)"
-
-
 def test_main_menu_kb_uses_fief_snapshot():
     from app.handlers.shared import main_menu_kb
 

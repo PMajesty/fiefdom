@@ -192,17 +192,17 @@ def test_tick_applies_harvest_mult_same_day():
     assert "Урожай" in (result["digest"] or "") or "урожа" in (result["digest"] or "").lower()
 
 
-def test_tick_drought_mitigated_fief_gets_full_mult():
-    """При засухе этого тика политая усадьба тикает с farm_mult=1.0."""
+def test_tick_drought_applies_farm_mult_to_all_fiefs():
+    """При засухе этого тика все усадьбы тикают с farm_mult засухи."""
     db = MagicMock()
     realm = _base_realm()
-    watered = _base_fief(id=10, name="Политая")
-    dry = _base_fief(id=11, user_id=1002, name="Сухая")
-    _attach_world(db, realm, [watered, dry])
+    a = _base_fief(id=10, name="А")
+    b = _base_fief(id=11, user_id=1002, name="Б")
+    _attach_world(db, realm, [a, b])
     db.get_realm.return_value = realm
     db.list_open_trades.return_value = []
     db.list_expired_open_trades.return_value = []
-    db.list_fiefs.return_value = [watered, dry]
+    db.list_fiefs.return_value = [a, b]
     db.fief_tiles.return_value = [
         {
             "x": 0,
@@ -215,14 +215,7 @@ def test_tick_drought_mitigated_fief_gets_full_mult():
             "is_overgrown": False,
         }
     ]
-    db.get_active_events.return_value = [
-        {
-            "id": 44,
-            "event_key": "drought",
-            "status": "active",
-            "payload": {"mitigated_fief_ids": [10]},
-        }
-    ]
+    db.get_active_events.return_value = []
     db.raids_since_tick.return_value = []
 
     def update_realm(rid, **fields):
@@ -258,7 +251,7 @@ def test_tick_drought_mitigated_fief_gets_full_mult():
         engine.run_realm_tick(1)
 
     drought_mult = float(minor_effect("drought")["farm_mult"])
-    assert mults == [1.0, drought_mult]
+    assert mults == [drought_mult, drought_mult]
 
 
 def test_tick_always_rerolls_minor_even_if_key_active():

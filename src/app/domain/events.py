@@ -88,14 +88,13 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
     "drought": {
         "id": "drought",
         "name_ru": "Засуха",
-        "digest_line": "Засуха - урожай слабее; полив за товары в личке.",
+        "digest_line": "Засуха - урожай слабее.",
         "canned_narrative": (
             "Земля потрескалась, как старая кожа, и ручьи стали пыльными бороздами. "
-            "Без полива нива отдаст едва ли половину. У кого есть товары на воду - "
-            "ещё может спасти свой край."
+            "Нива отдаст едва ли половину - переждать и молиться на облака."
         ),
-        "button_labels": ["Полив (15 товаров)"],
-        "mechanics": "farm_mult-45%/1t;mitigate:15_goods",
+        "button_labels": None,
+        "mechanics": "farm_mult-45%/1t",
         "tone": "bad",
     },
     "wedding": {
@@ -208,22 +207,20 @@ CATASTROPHES: dict[str, dict[str, Any]] = {
         "name_ru": "Наводнение",
         "canned_narrative": (
             "Река вышла из берегов без спроса и лижет стены усадеб у воды. "
-            "Мешки с песком стоят товаров, а чужая беда - чужая лишь до тех пор, "
-            "пока волна не придёт к тебе. Платить можно и за соседа."
+            "Чужая беда - чужая лишь до тех пор, пока волна не придёт к тебе."
         ),
-        "button_labels": ["Мешки с песком (15 товаров)", "Помочь соседу"],
-        "mechanics": "river+adj:building-1;mitigate:15_goods;donate_ok",
+        "button_labels": None,
+        "mechanics": "river+adj:building-1",
     },
     "cattle_plague": {
         "id": "cattle_plague",
         "name_ru": "Мор скота",
         "canned_narrative": (
             "На выгонах падают коровы, а воздух пахнет сладкой гнилью. "
-            "Поля без тягла дают половину; кто забьёт больной скот за зерно - "
-            "оборвёт мор у себя раньше остальных."
+            "Поля без тягла дают половину, пока мор сам не отступит."
         ),
-        "button_labels": ["Забить скот (20 зерна)"],
-        "mechanics": "farm_mult-50%/window;mitigate:20_grain",
+        "button_labels": None,
+        "mechanics": "farm_mult-50%/window",
     },
     "rat_king": {
         "id": "rat_king",
@@ -312,7 +309,6 @@ _MINOR_EFFECTS: dict[str, dict[str, Any]] = {
     "drought": {
         "farm_mult": 0.55,
         "duration_ticks": 1,
-        "mitigate": {"goods": 15, "action": "полив"},
     },
     "wedding": {"trade_gift_grain": 5, "duration_ticks": 1},
     "omen": {"foreshadow": True},
@@ -334,12 +330,9 @@ _CATASTROPHE_EFFECTS: dict[str, dict[str, Any]] = {
     "flood": {
         "targets": "river_and_orthogonal_neighbors",
         "building_delta": -1,
-        "mitigate": {"goods": 15, "action": "мешки_с_песком"},
-        "donate_allowed": True,
     },
     "cattle_plague": {
         "farm_mult": 0.50,
-        "mitigate": {"grain": 20, "action": "забить_скот"},
     },
     "rat_king": {
         "loot_bonus_frac": 0.30,
