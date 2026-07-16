@@ -506,6 +506,6 @@ def test_home_kb_hides_force_tick_without_progress():
 def test_force_tick_status_line():
     fiefs = [_fief(10, 1001), _fief(11, 1002)]
     engine, _, _ = _engine_with_votes(fiefs, votes={10})
-    assert engine.force_tick_status_line(1) == "Голоса за тик сейчас: 1/2"
+    assert engine.force_tick_status_line(1) == "Голоса: 1/2"
     solo, _, _ = _engine_with_votes([_fief(10, 1001)])
     assert solo.force_tick_status_line(1) is None

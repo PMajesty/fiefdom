@@ -398,10 +398,11 @@ def test_status_card_puts_bold_quest_after_title():
     text = engine.status_card(1)
     lines = text.split("\n")
     assert lines[0].startswith("🏡 <b>Усадьба А</b>")
-    assert lines[1] == onboard_quest_html(2)
-    assert "<b>Квест:" in lines[1]
-    assert "рынок" in lines[2]
-    assert str(B.CLAIM_COSTS[2]) in lines[2]
+    assert lines[1] == ""
+    assert lines[2] == onboard_quest_html(2)
+    assert "<b>Квест:" in lines[2]
+    assert "рынок" in lines[3]
+    assert str(B.CLAIM_COSTS[2]) in lines[3]
     assert not lines[-1].startswith("<b>Квест:")
 
 
@@ -562,6 +563,68 @@ def test_status_card_shows_next_tick():
         text = engine.status_card(1)
 
     assert "Следующий тик: 16.07 19:00" in text
+
+
+def test_status_card_groups_blocks_for_glance():
+    db = MagicMock()
+    engine = Engine(db)
+    engine.collect_for_fief = MagicMock(return_value=[])  # type: ignore[method-assign]
+    engine.fief_prod = MagicMock(  # type: ignore[method-assign]
+        return_value=SimpleNamespace(grain=5.0, goods=13.0, might=3.0)
+    )
+    engine.barn_level = MagicMock(return_value=0)  # type: ignore[method-assign]
+    engine.force_tick_status_line = MagicMock(return_value="Голоса: 3/6")  # type: ignore[method-assign]
+    db.get_fief.return_value = {
+        "id": 1,
+        "name": "Усадьба @Artyom_dio",
+        "realm_id": 3,
+        "grain": 39,
+        "goods": 31,
+        "might": 5,
+        "actions": 0,
+        "hungry": True,
+        "onboard_step": 4,
+        "last_active_at": datetime.now(timezone.utc),
+        "patrol_until_tick": None,
+        "shield_until_tick": None,
+        "last_active_tick": 10,
+    }
+    db.get_realm.return_value = {
+        "id": 3,
+        "day_number": 2,
+        "tick_index": 10,
+        "timezone": "Europe/Moscow",
+        "last_tick_local_date": date(2026, 7, 16),
+        "last_tick_slot": 0,
+    }
+    db.fief_tiles.return_value = [
+        {"is_overgrown": False},
+        {"is_overgrown": False},
+    ]
+    fixed_now = datetime(2026, 7, 16, 15, 0, tzinfo=ZoneInfo("Europe/Moscow"))
+
+    class _FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return fixed_now
+            return fixed_now.astimezone(tz)
+
+    with patch("app.engine.datetime", _FrozenDateTime):
+        text = engine.status_card(1)
+
+    assert "Статусы: -" not in text
+    assert "Зерно:" not in text
+    assert "Содержание:" not in text
+    assert text.startswith("🏡 <b>Усадьба @Artyom_dio</b> · день 2\n\n")
+    assert "Статусы: Голод\n\n⚡ Действия: 0/" in text
+    assert f"⚡ Действия: 0/{B.ACTIONS_BANK_MAX} · Клетки: 2/{B.TILE_HARD_CAP}" in text
+    assert "🌾 39 · 📦 31 · ⚔️ 5" in text
+    assert f"Склад до {B.DEFAULT_STASH_CAP} · без амбара" in text
+    assert "В день: +5 зерна, +13 товаров, +3 силы" in text
+    assert "Корм: земля " in text
+    assert "Следующий тик: 16.07 19:00" in text
+    assert text.endswith("Голоса: 3/6")
 
 
 def test_guide_mentions_raid_pact_unlock_day():

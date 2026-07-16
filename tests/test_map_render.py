@@ -98,8 +98,8 @@ def test_map_tile_legend_reads_naturally():
 def test_stash_status_line_copy():
     from app.engine import _stash_status_line
 
-    assert _stash_status_line(0) == f"Склад: до {B.DEFAULT_STASH_CAP} · без амбара"
-    assert _stash_status_line(2) == f"Склад: до {B.stash_cap(2)} · амбар II"
+    assert _stash_status_line(0) == f"Склад до {B.DEFAULT_STASH_CAP} · без амбара"
+    assert _stash_status_line(2) == f"Склад до {B.stash_cap(2)} · амбар II"
 
 
 def test_map_text_wraps_only_grid_in_pre():

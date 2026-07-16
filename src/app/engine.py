@@ -101,9 +101,9 @@ def fief_name_for_user(user) -> str:
 def _stash_status_line(barn_level: int) -> str:
     cap = B.stash_cap(barn_level)
     if barn_level <= 0:
-        return f"Склад: до {cap} · без амбара"
+        return f"Склад до {cap} · без амбара"
     roman = {1: "I", 2: "II", 3: "III"}.get(barn_level, str(barn_level))
-    return f"Склад: до {cap} · амбар {roman}"
+    return f"Склад до {cap} · амбар {roman}"
 
 
 def onboard_quest_html(onboard_step: int) -> str | None:
@@ -590,20 +590,21 @@ class Engine:
         tier = absence_mod.inactivity_tier(inactive_ticks)
         if tier == "dormant":
             flags.append("Дремлет")
-        flag_s = (", ".join(flags)) if flags else "-"
         militia = B.militia_upkeep_grain(fief["might"])
         land = B.land_upkeep(len([t for t in tiles if not t.get("is_overgrown")]))
         lines = [
-            f"🏡 <b>{self.fief_label(fief)}</b> - день {realm['day_number']}",
+            f"🏡 <b>{self.fief_label(fief)}</b> · день {realm['day_number']}",
+            "",
         ]
         active_tiles = [t for t in tiles if not t.get("is_overgrown")]
         # Уже расширились, но квест на клейм ещё висит (старые усадьбы / сбой).
         if int(fief.get("onboard_step") or 0) == 2 and len(active_tiles) >= 2:
             self._onboard_claim(fief_id)
             fief = self.db.get_fief(fief_id)
+        alerts: list[str] = []
         quest = onboard_quest_html(fief["onboard_step"])
         if quest:
-            lines.append(quest)
+            alerts.append(quest)
             patience = onboard_patience_hint(
                 onboard_step=int(fief["onboard_step"]),
                 goods=int(fief["goods"]),
@@ -611,22 +612,34 @@ class Engine:
                 min_build_cost=B.min_any_build_action_cost(active_tiles),
             )
             if patience:
-                lines.append(patience)
+                alerts.append(patience)
         else:
             hint = raid_pact_lock_hint(
                 onboard_step=int(fief.get("onboard_step") or 0),
                 day_number=int(realm["day_number"]),
             )
             if hint:
-                lines.append(f"Набег и пакт - {hint}.")
+                alerts.append(f"Набег и пакт - {hint}.")
+        if flags:
+            alerts.append(f"Статусы: {', '.join(flags)}")
+        if alerts:
+            lines.extend(alerts)
+            lines.append("")
         lines.extend(
             [
-                f"Клеток: {len(tiles)}/{B.TILE_HARD_CAP} · Действий: {fief['actions']}/{B.ACTIONS_BANK_MAX}",
-                f"Зерно: {fief['grain']} · Товары: {fief['goods']} · Сила: {fief['might']}",
+                (
+                    f"⚡ Действия: {fief['actions']}/{B.ACTIONS_BANK_MAX} · "
+                    f"Клетки: {len(tiles)}/{B.TILE_HARD_CAP}"
+                ),
+                f"🌾 {fief['grain']} · 📦 {fief['goods']} · ⚔️ {fief['might']}",
                 _stash_status_line(barn),
-                f"В день: +{prod.grain:.0f} зерна, +{prod.goods:.0f} товаров, +{prod.might:.0f} силы",
-                f"Содержание: земля {land}, дружина {militia} зерна",
-                f"Статусы: {flag_s}",
+                "",
+                (
+                    f"В день: +{prod.grain:.0f} зерна, +{prod.goods:.0f} товаров, "
+                    f"+{prod.might:.0f} силы"
+                ),
+                f"Корм: земля {land}, дружина {militia}",
+                "",
             ]
         )
         tz_name = realm.get("timezone") or TIMEZONE
@@ -1715,9 +1728,7 @@ class Engine:
         progress = self.force_tick_progress(realm_id)
         if not progress["available"]:
             return None
-        return (
-            f"Голоса за тик сейчас: {progress['votes']}/{progress['needed']}"
-        )
+        return f"Голоса: {progress['votes']}/{progress['needed']}"
 
     def _forced_tick_mandate_open(self, world_id: int) -> bool:
         """Есть ли ещё кворум голосов за досрочный тик на континенте."""
