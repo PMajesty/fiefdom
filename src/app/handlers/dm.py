@@ -430,6 +430,8 @@ def build_tiles_kb(
 
 
 def raid_targets_kb(fief_id: int, others: list[dict], engine=None) -> InlineKeyboardMarkup:
+    from app.domain.rumors import might_soft_label
+
     rows = []
     for o in others[:20]:
         label = engine.fief_label(o) if engine is not None else o["name"]
@@ -437,10 +439,11 @@ def raid_targets_kb(fief_id: int, others: list[dict], engine=None) -> InlineKeyb
             realm = engine.db.get_realm(o["realm_id"]) or {}
             title = str(realm.get("title") or "долина")[:12]
             label = f"{title}: {label}"
+        soft = might_soft_label(int(o.get("might") or 0))
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"{label} (сила {o['might']})",
+                    text=f"{label} · {soft}",
                     callback_data=f"rad:{fief_id}:{o['id']}",
                 )
             ]
@@ -841,7 +844,9 @@ async def _offer_raid(message: Message, engine, fief: dict) -> None:
         return
     await answer_html(
         message,
-        "Выберите цель набега (любая долина континента):",
+        "Выберите цель набега (любая долина континента).\n"
+        "Точная сила скрыта - смотрите слухи или спрашивайте. "
+        "Защита цели - сторожка, дозор и перехват пакта, не чужая дружина.",
         reply_markup=raid_targets_kb(fief["id"], others, engine),
     )
 

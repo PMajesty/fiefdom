@@ -83,7 +83,9 @@ def test_inactive_fief_skips_tick_economy():
     engine._prepare_tick_minor = MagicMock(return_value=None)
     engine._realm_farm_mult = MagicMock(return_value=1.0)
     engine._active_cattle_plague = MagicMock(return_value=None)
-    engine._rumor_snapshots = MagicMock(return_value=[])
+    from app.domain.rumors import DailyRumorBundle
+
+    engine._roll_day_rumors = MagicMock(return_value=DailyRumorBundle())
     engine._upcoming_event_hints = MagicMock(return_value=[])
     engine._sunday_extra = MagicMock(return_value=None)
 

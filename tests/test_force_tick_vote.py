@@ -8,8 +8,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app import balance as B
+from app.domain.rumors import DailyRumorBundle
 from app.engine import Engine
-from app.handlers.shared import more_menu_kb
+from app.handlers.shared import home_kb
 
 
 def test_force_tick_votes_needed_curve():
@@ -188,7 +189,7 @@ def _engine_with_votes(fiefs: list[dict], votes: set[int] | None = None):
     engine._prepare_tick_minor = MagicMock(return_value=None)
     engine._realm_farm_mult = MagicMock(return_value=1.0)
     engine._active_cattle_plague = MagicMock(return_value=None)
-    engine._rumor_snapshots = MagicMock(return_value=[])
+    engine._roll_day_rumors = MagicMock(return_value=DailyRumorBundle())
     engine._upcoming_event_hints = MagicMock(return_value=[])
     engine._sunday_extra = MagicMock(return_value=None)
     return engine, realm, vote_set
@@ -489,19 +490,18 @@ def test_scheduled_advance_clears_votes_before_resume_no_stale_quorum():
     assert world.get("forced_tick_count", 0) == 0
 
 
-def test_more_menu_shows_force_tick_button():
-    kb = more_menu_kb(7, force_tick_progress=(1, 2))
+def test_home_kb_shows_force_tick_button():
+    kb = home_kb(7, "Рынок", "mkt:7", force_tick_progress=(1, 2))
     labels = [btn.text for row in kb.inline_keyboard for btn in row]
     assert "Тик сейчас (1/2)" in labels
     datas = [btn.callback_data for row in kb.inline_keyboard for btn in row]
     assert "ftv:7" in datas
 
 
-def test_more_menu_hides_force_tick_without_progress():
-    kb = more_menu_kb(7)
+def test_home_kb_hides_force_tick_without_progress():
+    kb = home_kb(7, "Рынок", "mkt:7")
     labels = [btn.text for row in kb.inline_keyboard for btn in row]
     assert not any(t.startswith("Тик сейчас") for t in labels)
-
 
 def test_force_tick_status_line():
     fiefs = [_fief(10, 1001), _fief(11, 1002)]

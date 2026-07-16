@@ -192,8 +192,15 @@ PACT_SIZE_MAX = 5
 PACT_INVITE_EXPIRE_TICKS = 4
 
 # --- Слухи (сплетни в утренней сводке) ---
+# Базовый потолок местных строк при 1 игроке; дальше растёт с населением долины.
 RUMOR_MAX_PER_DAY = 2
+RUMOR_PLAYERS_PER_EXTRA_LINE = 2  # +1 строка за каждых N игроков сверх первого
+RUMOR_MAX_CAP = 6
 RUMOR_LINE_CHANCE = 0.70
+# Чужие долины континента: редкий отдельный блок в сводке.
+RUMOR_FOREIGN_LINE_CHANCE = 0.55
+RUMOR_FOREIGN_MAX_CAP = 2
+RUMOR_FOREIGN_EXTRA_AT_PLAYERS = 6  # вторая чужая строка при стольких усадьбах вне долины
 RUMOR_TRUTH_FULL = 0.50
 RUMOR_TRUTH_FUZZY = 0.35
 # остаток (~0.15) - ложный слух

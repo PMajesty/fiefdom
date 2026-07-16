@@ -206,29 +206,60 @@ def test_raid_pact_unlock_helpers():
     )
 
 
-def test_more_menu_kb_locked_raid_pact():
-    from app.handlers.shared import more_menu_kb
+def test_estate_hub_kb_locked_raid():
+    from app.handlers.shared import estate_hub_kb
 
-    kb = more_menu_kb(9, raid_pact_open=False, lock_hint="после квестов")
+    kb = estate_hub_kb(9, raid_pact_open=False, lock_hint="после квестов")
     by_data = {
         btn.callback_data: btn.text
         for row in kb.inline_keyboard
         for btn in row
     }
     assert by_data["lock:rad:9"] == "Набег - после квестов"
-    assert by_data["lock:pct:9"] == "Пакт - после квестов"
     assert "rad:9" not in by_data
     assert "pct:9" not in by_data
+    assert "lock:pct:9" not in by_data
 
 
-def test_more_menu_kb_unlocked_raid_pact():
-    from app.handlers.shared import more_menu_kb
+def test_valley_hub_kb_locked_pact():
+    from app.handlers.shared import valley_hub_kb
 
-    kb = more_menu_kb(9, raid_pact_open=True)
-    data = [btn.callback_data for row in kb.inline_keyboard for btn in row]
-    assert "rad:9" in data
-    assert "pct:9" in data
-    assert "lock:rad:9" not in data
+    kb = valley_hub_kb(9, raid_pact_open=False, lock_hint="после квестов")
+    by_data = {
+        btn.callback_data: btn.text
+        for row in kb.inline_keyboard
+        for btn in row
+    }
+    assert by_data["lock:pct:9"] == "Пакт - после квестов"
+    assert "pct:9" not in by_data
+    assert "rad:9" not in by_data
+
+
+def test_estate_hub_kb_unlocked_raid():
+    from app.handlers.shared import estate_hub_kb
+
+    kb = estate_hub_kb(9, raid_pact_open=True)
+    by_data = {
+        btn.callback_data: btn.text
+        for row in kb.inline_keyboard
+        for btn in row
+    }
+    assert by_data["rad:9"] == "Набег (атака)"
+    assert "lock:rad:9" not in by_data
+
+
+def test_valley_hub_kb_unlocked_pact():
+    from app.handlers.shared import valley_hub_kb
+
+    kb = valley_hub_kb(9, raid_pact_open=True)
+    by_data = {
+        btn.callback_data: btn.text
+        for row in kb.inline_keyboard
+        for btn in row
+    }
+    assert by_data["pct:9"] == "Пакт (союз)"
+    assert by_data["rum:9"] == "Слухи (сводка)"
+    assert "lock:pct:9" not in by_data
 
 
 def test_choose_primary_cta_no_actions_market():
@@ -247,18 +278,27 @@ def test_choose_primary_cta_onboard_ignored_without_actions():
     assert cb == "mkt:7"
 
 
-def test_home_kb_has_primary_status_and_more():
+def test_home_kb_has_primary_hubs_map_guide():
     from app.handlers.shared import home_kb
 
     kb = home_kb(9, "Занять землю", "clm:9")
     rows = kb.inline_keyboard
-    assert len(rows) == 2
+    assert len(rows) == 3
     assert rows[0][0].text == "Занять землю"
     assert rows[0][0].callback_data == "clm:9"
-    texts = [btn.text for btn in rows[1]]
-    assert texts == ["Статус", "Ещё"]
-    assert rows[1][0].callback_data == "st:9"
-    assert rows[1][1].callback_data == "more:9"
+    assert [btn.text for btn in rows[1]] == ["Усадьба (дела)", "Долина (связи)"]
+    assert [btn.callback_data for btn in rows[1]] == ["hub:e:9", "hub:v:9"]
+    assert [btn.text for btn in rows[2]] == ["Карта (мир)", "Устав (правила)"]
+    assert [btn.callback_data for btn in rows[2]] == ["map:9", "gd:9"]
+
+
+def test_home_kb_force_tick_row():
+    from app.handlers.shared import home_kb
+
+    kb = home_kb(9, "Рынок", "mkt:9", force_tick_progress=(1, 2))
+    assert kb.inline_keyboard[1][0].text == "Тик сейчас (1/2)"
+    assert kb.inline_keyboard[1][0].callback_data == "ftv:9"
+    assert len(kb.inline_keyboard) == 4
 
 
 def test_main_menu_kb_compact_without_fief():
@@ -266,8 +306,8 @@ def test_main_menu_kb_compact_without_fief():
 
     kb = main_menu_kb(9)
     data = [btn.callback_data for row in kb.inline_keyboard for btn in row]
-    assert data == ["st:9", "st:9", "more:9"]
-    assert len(kb.inline_keyboard) == 2
+    assert data == ["st:9", "hub:e:9", "hub:v:9", "map:9", "gd:9"]
+    assert len(kb.inline_keyboard) == 3
 
 
 def test_main_menu_kb_uses_fief_snapshot():
@@ -277,7 +317,7 @@ def test_main_menu_kb_uses_fief_snapshot():
     kb = main_menu_kb(5, fief=fief, tile_count=1, min_build_cost=50, next_claim_cost=30)
     assert kb.inline_keyboard[0][0].callback_data == "mkt:5"
     assert kb.inline_keyboard[0][0].text == "Рынок"
-    assert kb.inline_keyboard[1][1].callback_data == "more:5"
+    assert kb.inline_keyboard[1][0].callback_data == "hub:e:5"
 
     rich = {"actions": 1, "onboard_step": 2, "goods": 50, "might": 0}
     kb2 = main_menu_kb(
@@ -294,26 +334,33 @@ def test_main_menu_kb_uses_fief_snapshot():
     assert kb3.inline_keyboard[0][0].text == "Квест: строить"
 
 
-def test_more_menu_kb_prefixes():
+def test_estate_and_valley_hub_prefixes():
+    from app.handlers.shared import estate_hub_kb, valley_hub_kb
+
+    estate = estate_hub_kb(9)
+    estate_data = [btn.callback_data for row in estate.inline_keyboard for btn in row]
+    assert estate_data == [
+        "clm:9",
+        "bld:9",
+        "gth:9",
+        "pat:9",
+        "dml:9",
+        "rad:9",
+        "home:9",
+    ]
+
+    valley = valley_hub_kb(9)
+    valley_data = [btn.callback_data for row in valley.inline_keyboard for btn in row]
+    assert valley_data == ["mkt:9", "snd:9", "pct:9", "rum:9", "home:9"]
+
+
+def test_more_menu_kb_compat_hub_picker():
+    """Старый more_menu_kb остаётся входной точкой в хабы."""
     from app.handlers.shared import more_menu_kb
 
     kb = more_menu_kb(9)
     data = [btn.callback_data for row in kb.inline_keyboard for btn in row]
-    assert "map:9" in data
-    assert "mkt:9" in data
-    assert "clm:9" in data
-    assert "bld:9" in data
-    assert "gth:9" in data
-    assert "dml:9" in data
-    assert "pat:9" in data
-    assert "rad:9" in data
-    assert "trd:9" in data
-    assert "snd:9" in data
-    assert "pct:9" in data
-    assert "gd:9" in data
-    assert "home:9" in data
-    assert "st:9" not in data
-    assert "more:9" not in data
+    assert data == ["hub:e:9", "hub:v:9", "home:9"]
 
 
 def test_bandit_threshold_math():
@@ -479,6 +526,21 @@ def test_claimable_kb_includes_cost_preview():
     btn = kb.inline_keyboard[0][0]
     assert btn.text == "А3 Поле · 20 тов."
     assert btn.callback_data == "clm:3:0:2"
+
+
+def test_raid_targets_kb_hides_exact_might():
+    from app.handlers.dm import raid_targets_kb
+
+    kb = raid_targets_kb(
+        1,
+        [
+            {"id": 2, "name": "Сосед", "might": 17, "realm_id": 1},
+            {"id": 3, "name": "Слабый", "might": 2, "realm_id": 1},
+        ],
+    )
+    texts = [row[0].text for row in kb.inline_keyboard[:-1]]
+    assert texts == ["Сосед · крепкая", "Слабый · тонкая"]
+    assert all("сила" not in t and "17" not in t and "2" not in t for t in texts)
 
 
 def test_announce_formatters_escape_names():

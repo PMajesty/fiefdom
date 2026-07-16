@@ -12,6 +12,7 @@ from app.handlers import dm as dm_mod
 from app.handlers.shared import (
     announce_continent,
     announce_realm,
+    estate_hub_kb,
     fief_home_kb,
     fief_raid_pact_state,
     format_join_announce,
@@ -21,11 +22,11 @@ from app.handlers.shared import (
     get_engine,
     map_realms_kb,
     map_view_kb,
-    more_menu_kb,
     post_digest,
     realm_upgrade_cost_mult,
     reply_game,
     reply_guide,
+    valley_hub_kb,
 )
 from app.engine import raid_pact_lock_message
 from app.messaging import answer_html
@@ -230,7 +231,7 @@ async def cb_status(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("home:"))
 async def cb_home(callback: CallbackQuery) -> None:
-    """Свернуть \"Ещё\" → статус + домашний CTA."""
+    """Вернуться на статус + домашние хабы."""
     engine = get_engine()
     try:
         fief_id = int(callback.data.split(":")[1])
@@ -251,31 +252,85 @@ async def cb_home(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("more:"))
 async def cb_more(callback: CallbackQuery) -> None:
-    """Раскрыть полный набор действий."""
+    """Старая кнопка \"Ещё\": обновляем сообщение до нового домашнего меню."""
     engine = get_engine()
     try:
         fief_id = int(callback.data.split(":")[1])
         fief = _ensure_owner(engine, fief_id, callback.from_user.id)
-        open_, hint = fief_raid_pact_state(engine, fief)
-        progress = engine.force_tick_progress(int(fief["realm_id"]))
-        force_prog = None
-        if progress["available"]:
-            force_prog = (progress["votes"], progress["needed"])
-        await _ok(callback)
-        await answer_html(
+        engine.db.set_last_realm(callback.from_user.id, fief["realm_id"])
+        await callback.answer("Меню обновлено")
+        await reply_game(
             callback.message,
-            "Все действия:",
-            reply_markup=more_menu_kb(
-                fief_id,
-                raid_pact_open=open_,
-                lock_hint=hint,
-                force_tick_progress=force_prog,
-            ),
+            engine.status_card(fief_id),
+            reply_markup=fief_home_kb(engine, fief_id),
         )
     except ValueError as exc:
         await callback.answer(str(exc), show_alert=True)
     except Exception:
         logger.exception("cb_more")
+        await callback.answer("Ошибка", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("hub:"))
+async def cb_hub(callback: CallbackQuery) -> None:
+    """Хабы Усадьба (e) / Долина (v)."""
+    engine = get_engine()
+    try:
+        parts = callback.data.split(":")
+        if len(parts) != 3:
+            await callback.answer("Неизвестное меню", show_alert=True)
+            return
+        kind = parts[1]
+        fief_id = int(parts[2])
+        if kind not in {"e", "v"}:
+            await callback.answer("Неизвестное меню", show_alert=True)
+            return
+        fief = _ensure_owner(engine, fief_id, callback.from_user.id)
+        open_, hint = fief_raid_pact_state(engine, fief)
+        await _ok(callback)
+        if kind == "e":
+            await answer_html(
+                callback.message,
+                "Усадьба - дела за действие:",
+                reply_markup=estate_hub_kb(
+                    fief_id,
+                    raid_pact_open=open_,
+                    lock_hint=hint,
+                ),
+            )
+            return
+        await answer_html(
+            callback.message,
+            "Долина - связи без действия:",
+            reply_markup=valley_hub_kb(
+                fief_id,
+                raid_pact_open=open_,
+                lock_hint=hint,
+            ),
+        )
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+    except Exception:
+        logger.exception("cb_hub")
+        await callback.answer("Ошибка", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("rum:"))
+async def cb_rumors(callback: CallbackQuery) -> None:
+    engine = get_engine()
+    try:
+        fief_id = int(callback.data.split(":")[1])
+        fief = _ensure_owner(engine, fief_id, callback.from_user.id)
+        await _ok(callback)
+        await reply_game(
+            callback.message,
+            engine.rumors_text(fief["realm_id"]),
+            reply_markup=fief_home_kb(engine, fief_id),
+        )
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+    except Exception:
+        logger.exception("cb_rumors")
         await callback.answer("Ошибка", show_alert=True)
 
 
@@ -668,7 +723,9 @@ async def cb_raid(callback: CallbackQuery) -> None:
                 return
             await answer_html(
                 callback.message,
-                "Выберите цель (любая долина континента):",
+                "Выберите цель (любая долина континента).\n"
+                "Точная сила скрыта - смотрите слухи или спрашивайте. "
+                "Защита цели - сторожка, дозор и перехват пакта, не чужая дружина.",
                 reply_markup=dm_mod.raid_targets_kb(fief_id, others, engine),
             )
             return
@@ -682,6 +739,8 @@ async def cb_raid(callback: CallbackQuery) -> None:
         await answer_html(
             callback.message,
             f"Сколько силы отправить? (мин. {B.RAID_MIN_MIGHT})\n"
+            "Удар идёт против защиты цели (сторожка, дозор, перехват), "
+            "не против её запаса силы.\n"
             "Или напишите \"отмена\".",
             reply_markup=dm_mod.pending_cancel_kb(fief_id),
         )

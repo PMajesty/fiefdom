@@ -32,6 +32,7 @@ def format_digest(
     feud_lines: list[str],
     sunday_extra: str | None,
     rumor_lines: list[str] | None = None,
+    foreign_rumor_lines: list[str] | None = None,
 ) -> str:
     night = " ".join(night_lines) if night_lines else "тихо."
     parts = [
@@ -44,10 +45,12 @@ def format_digest(
         parts.append(f"🛒 Рынок: {market_line}")
     for feud in feud_lines:
         parts.append(f"⚔️ Вражда: {feud}")
-    if rumor_lines:
-        section = format_rumor_section(rumor_lines)
-        if section:
-            parts.append(section)
+    section = format_rumor_section(
+        rumor_lines or [],
+        foreign_lines=foreign_rumor_lines or [],
+    )
+    if section:
+        parts.append(section)
     if sunday_extra:
         parts.append(sunday_extra)
     return "\n".join(parts)

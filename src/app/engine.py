@@ -37,10 +37,12 @@ from app.domain.map_gen import GenTile, append_strip, coord_label, generate_map
 from app.domain.portals import pick_portal_insertion
 from app.domain.raids import RaidActionResult, resolve_raid
 from app.domain.rumors import (
+    DailyRumorBundle,
     FiefRumorSnapshot,
     UpcomingEventHint,
     format_rumors_pull,
-    roll_daily_rumors,
+    parse_stored_rumors,
+    roll_valley_day_rumors,
 )
 from app.domain.tick import FiefTickState, apply_fief_tick, collect_pending
 from app.domain.tick_schedule import (
@@ -194,6 +196,9 @@ def raid_pact_lock_message(*, onboard_step: int, day_number: int) -> str:
 class Engine:
     def __init__(self, db: Database):
         self.db = db
+        # Снимок усадеб континента на старте тика: слухи не смешивают
+        # уже обновлённые и ещё не отыгравшие долины.
+        self._rumor_snapshot_cache: dict[int, list[FiefRumorSnapshot]] | None = None
 
     # ---------- realm ----------
     def create_realm(self, chat_id: int, title: str, creator_user_id: int) -> tuple[dict, str]:
@@ -1878,40 +1883,49 @@ class Engine:
                 self.db.clear_world_force_tick_votes(wid)
 
         realm_results = []
-        for realm in self.db.list_realms_by_chain(wid):
-            rid = int(realm["id"])
-            if int(realm.get("last_economy_tick") or -1) >= new_tick:
-                realm_results.append(
-                    {
-                        "realm_id": rid,
-                        "skipped": True,
-                        "already_ticked": True,
-                        "digest": None,
-                        "chat_id": realm.get("chat_id"),
-                    }
-                )
-                continue
-            try:
-                with self.db.transaction():
-                    result = self.run_realm_tick(
-                        rid,
-                        tick_slot=tick_slot,
-                        forced=forced,
-                        advance_clock=False,
+        # Единый снимок на этот вызов тика (при догоне после сбоя - best-effort
+        # по текущей БД, без отдельного персиста start-of-tick).
+        self._rumor_snapshot_cache = {
+            int(r["id"]): self._rumor_snapshots(int(r["id"]))
+            for r in self.db.list_realms_by_chain(wid)
+        }
+        try:
+            for realm in self.db.list_realms_by_chain(wid):
+                rid = int(realm["id"])
+                if int(realm.get("last_economy_tick") or -1) >= new_tick:
+                    realm_results.append(
+                        {
+                            "realm_id": rid,
+                            "skipped": True,
+                            "already_ticked": True,
+                            "digest": None,
+                            "chat_id": realm.get("chat_id"),
+                        }
                     )
-                    self.db.update_realm(rid, last_economy_tick=new_tick)
-                realm_results.append(result)
-            except Exception:
-                logger.exception("realm tick failed world=%s realm=%s", wid, rid)
-                realm_results.append(
-                    {
-                        "realm_id": rid,
-                        "skipped": True,
-                        "error": True,
-                        "digest": None,
-                        "chat_id": realm.get("chat_id"),
-                    }
-                )
+                    continue
+                try:
+                    with self.db.transaction():
+                        result = self.run_realm_tick(
+                            rid,
+                            tick_slot=tick_slot,
+                            forced=forced,
+                            advance_clock=False,
+                        )
+                        self.db.update_realm(rid, last_economy_tick=new_tick)
+                    realm_results.append(result)
+                except Exception:
+                    logger.exception("realm tick failed world=%s realm=%s", wid, rid)
+                    realm_results.append(
+                        {
+                            "realm_id": rid,
+                            "skipped": True,
+                            "error": True,
+                            "digest": None,
+                            "chat_id": realm.get("chat_id"),
+                        }
+                    )
+        finally:
+            self._rumor_snapshot_cache = None
 
         caught_up = all(
             int(r.get("last_economy_tick") or -1) >= new_tick
@@ -2064,11 +2078,7 @@ class Engine:
 
         grow_msg = self.maybe_grow_map(realm_id)
         realm = self.db.get_realm(realm_id) or realm
-        rumor_lines = roll_daily_rumors(
-            self._rumor_snapshots(realm_id),
-            random.Random(),
-            event_hints=self._upcoming_event_hints(realm_id),
-        )
+        rumor_bundle = self._roll_day_rumors(realm_id)
         digest = format_digest(
             realm_title=realm["title"],
             day=day,
@@ -2077,7 +2087,8 @@ class Engine:
             market_line=market_line,
             feud_lines=feud_lines,
             sunday_extra=sunday_extra,
-            rumor_lines=rumor_lines,
+            rumor_lines=rumor_bundle.local,
+            foreign_rumor_lines=rumor_bundle.foreign,
         )
         if grow_msg:
             digest += f"\n📜 {grow_msg}"
@@ -2085,7 +2096,7 @@ class Engine:
         self.db.update_realm(
             realm_id,
             last_digest_text=digest,
-            last_rumor_lines=rumor_lines,
+            last_rumor_lines=rumor_bundle.as_storage(),
         )
 
         return {
@@ -2260,9 +2271,19 @@ class Engine:
         top = by_tiles[0]
         return f"Титулы: больше всех земель - {self.fief_label(top)}."
 
-    def _rumor_snapshots(self, realm_id: int) -> list[FiefRumorSnapshot]:
+    def _rumor_snapshots(
+        self,
+        realm_id: int,
+        *,
+        realm_title: str | None = None,
+    ) -> list[FiefRumorSnapshot]:
         realm = self.db.get_realm(realm_id) or {}
         tick_index = int(realm.get("tick_index") or 0)
+        title = (
+            str(realm_title)
+            if realm_title is not None
+            else str(realm.get("title") or "")
+        )
         out: list[FiefRumorSnapshot] = []
         for fief in self.db.list_fiefs(realm_id):
             if fief.get("frozen"):
@@ -2283,9 +2304,38 @@ class Engine:
                     might=int(fief["might"]),
                     buildings=buildings,
                     patrol_active=tick_active(fief.get("patrol_until_tick"), tick_index),
+                    realm_title=title,
                 )
             )
         return out
+
+    def _foreign_rumor_snapshots(self, realm_id: int) -> list[FiefRumorSnapshot]:
+        """Усадьбы других долин того же континента (для чужих сплетен)."""
+        cache = self._rumor_snapshot_cache
+        if cache is not None:
+            out: list[FiefRumorSnapshot] = []
+            for rid, snaps in cache.items():
+                if int(rid) == int(realm_id):
+                    continue
+                out.extend(snaps)
+            return out
+        out = []
+        for nb in self.db.list_adjacent_realms(realm_id):
+            title = str(nb.get("title") or "долина")
+            out.extend(
+                self._rumor_snapshots(int(nb["id"]), realm_title=title)
+            )
+        return out
+
+    def _roll_day_rumors(self, realm_id: int) -> DailyRumorBundle:
+        # Местные - живой снимок после экономики долины; чужие - из кэша
+        # старта тика, чтобы не смешивать уже отыгравшие и ещё нет.
+        return roll_valley_day_rumors(
+            self._rumor_snapshots(realm_id),
+            self._foreign_rumor_snapshots(realm_id),
+            random.Random(),
+            event_hints=self._upcoming_event_hints(realm_id),
+        )
 
     def _upcoming_event_hints(self, realm_id: int) -> list[UpcomingEventHint]:
         realm = self.db.get_realm(realm_id) or {}
@@ -2309,8 +2359,8 @@ class Engine:
         realm = self.db.get_realm(realm_id)
         if not realm:
             return format_rumors_pull([])
-        lines = list(realm.get("last_rumor_lines") or [])
-        return format_rumors_pull(lines)
+        bundle = parse_stored_rumors(realm.get("last_rumor_lines"))
+        return format_rumors_pull(bundle.local, foreign_lines=bundle.foreign)
 
     def help_text(self) -> str:
         from app.domain.guide import short_help
