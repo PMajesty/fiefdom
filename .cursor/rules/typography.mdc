@@ -1,0 +1,19 @@
+---
+description: Ban em dashes and guillemet quotes in project text
+alwaysApply: true
+---
+
+# Typography
+
+Do not use em dashes or guillemet (angle) quotes in this repo.
+
+Forbidden:
+- Em dash `—` (U+2014)
+- Left/right guillemets `«` `»` (U+00AB / U+00BB)
+
+Required instead:
+- Hyphen-minus `-` for pauses, ranges in prose, and status placeholders
+- Regular ASCII double quotes `"..."` for quoted words (escape inside Python `"..."` / `f"..."` strings as `\"...\"`)
+- Back-nav button labels: `< Меню`, `< Назад` (not `« Меню`)
+
+Enforced by `tests/test_typography_cop.py`.

@@ -9,7 +9,7 @@ Russian UI. Design: `valley_game_design.md`.
 - aiogram 3 + PostgreSQL (pg8000)
 - Daily tick 13:00 Europe/Moscow
 - Poe LLM for event narrative (canned fallback)
-- No whitelist — anyone can play; admin toolkit for `ADMIN_USER_ID`
+- No whitelist - anyone can play; admin toolkit for `ADMIN_USER_ID`
 
 ## Local
 
@@ -60,9 +60,12 @@ Service: `fiefdom` at `/opt/fiefdom`.
 
 ## Admin (DM)
 
-- `/вч_admin_help`
-- `/вч_tick [realm_id]`
-- `/вч_grant realm_id fief_id grain goods might`
-- `/вч_wipe_start realm_id` then `/вч_wipe realm_id CODE УДАЛИТЬ`
-- `/вч_freeze fief_id 0|1`
-- `/вч_decree realm_id text…`
+All in private chat with the bot. Use `/вч_admin_help` for examples.
+
+- `/вч_realms` - list valley ids (`#1` = realm_id)
+- `/вч_tick [realm_id]` - run daily tick (all realms if omitted)
+- `/вч_grant realm_id fief_id grain goods might` - add resources
+- `/вч_event realm_id key` - force minor event 24h
+- Wipe (two steps): `/вч_wipe_start 1` then paste the command the bot returns
+- `/вч_freeze fief_id 0|1` - freeze/unfreeze estate
+- `/вч_decree realm_id text` - post decree to the group

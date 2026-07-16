@@ -1,4 +1,4 @@
-"""Онбординг: шаги 1→2→3→4, награды, громкий квест в статусе."""
+"""Онбординг: шаги 1→2(клейм)→3(стройка)→4, награды, громкий квест в статусе."""
 from __future__ import annotations
 
 import os
@@ -12,9 +12,10 @@ os.environ.setdefault("ADMIN_USER_ID", "42")
 from app import balance as B
 from app.engine import (
     Engine,
+    fief_name_for_user,
     onboard_quest_html,
     try_complete_onboard_build,
-    try_complete_onboard_trade,
+    try_complete_onboard_claim,
 )
 
 
@@ -36,25 +37,60 @@ def test_onboard_quest_html_loud_for_steps_2_and_3():
     q2 = onboard_quest_html(2)
     q3 = onboard_quest_html(3)
     assert q2 is not None and q2.startswith("<b>Квест:") and q2.endswith("</b>")
+    assert "клетк" in q2
     assert str(B.ONBOARD_DAY2_GOODS) in q2
     assert q3 is not None and q3.startswith("<b>Квест:") and q3.endswith("</b>")
+    assert "здани" in q3
     assert str(B.ONBOARD_DAY3_GRAIN) in q3
     assert onboard_quest_html(1) is None
     assert onboard_quest_html(4) is None
 
 
-def test_try_complete_onboard_build_advances_with_reward():
-    patch = try_complete_onboard_build({"onboard_step": 2, "goods": 10})
+def test_try_complete_onboard_claim_advances_with_reward():
+    patch = try_complete_onboard_claim({"onboard_step": 2, "goods": 10})
     assert patch == {"onboard_step": 3, "goods": 10 + B.ONBOARD_DAY2_GOODS}
-    assert try_complete_onboard_build({"onboard_step": 3, "goods": 10}) is None
-    assert try_complete_onboard_build({"onboard_step": 1, "goods": 10}) is None
+    assert try_complete_onboard_claim({"onboard_step": 3, "goods": 10}) is None
+    assert try_complete_onboard_claim({"onboard_step": 1, "goods": 10}) is None
 
 
-def test_try_complete_onboard_trade_advances_with_reward():
-    patch = try_complete_onboard_trade({"onboard_step": 3, "grain": 20})
+def test_try_complete_onboard_build_advances_with_reward():
+    patch = try_complete_onboard_build({"onboard_step": 3, "grain": 20})
     assert patch == {"onboard_step": 4, "grain": 20 + B.ONBOARD_DAY3_GRAIN}
-    assert try_complete_onboard_trade({"onboard_step": 4, "grain": 20}) is None
-    assert try_complete_onboard_trade({"onboard_step": 2, "grain": 20}) is None
+    assert try_complete_onboard_build({"onboard_step": 4, "grain": 20}) is None
+    assert try_complete_onboard_build({"onboard_step": 2, "grain": 20}) is None
+
+
+def test_fief_name_for_user_prefers_username():
+    user = SimpleNamespace(
+        id=1, full_name="Артём Иванов", first_name="Артём", username="artem_x"
+    )
+    assert fief_name_for_user(user) == "Усадьба @artem_x"
+
+
+def test_fief_name_for_user_falls_back_to_full_name():
+    user = SimpleNamespace(
+        id=1, full_name="Артём Иванов", first_name="Артём", username=None
+    )
+    assert fief_name_for_user(user) == "Усадьба Артём Иванов"
+
+
+def test_fief_name_for_user_accepts_db_row():
+    assert fief_name_for_user({"username": "artem_x", "display_name": "Артём"}) == (
+        "Усадьба @artem_x"
+    )
+    assert fief_name_for_user({"username": None, "display_name": "Артём Иванов"}) == (
+        "Усадьба Артём Иванов"
+    )
+
+
+def test_fief_label_uses_profile_and_syncs():
+    db = MagicMock()
+    db.get_user.return_value = {"username": "artem_x", "display_name": "Артём"}
+    engine = Engine(db)
+    fief = {"id": 7, "user_id": 100, "name": "Усадьба Артём"}
+
+    assert engine.fief_label(fief) == "Усадьба @artem_x"
+    db.update_fief.assert_called_once_with(7, name="Усадьба @artem_x")
 
 
 def test_join_fief_sets_onboard_step_2():
@@ -67,43 +103,85 @@ def test_join_fief_sets_onboard_step_2():
         "tile_type": B.TILE_FIELD,
         "owner_fief_id": None,
     }
-    db.create_fief.return_value = {"id": 7, "name": "Усадьба Тест"}
+    db.create_fief.return_value = {"id": 7, "name": "Усадьба @ivan"}
     engine = Engine(db)
     engine.maybe_grow_map = MagicMock(return_value=None)  # type: ignore[method-assign]
     user = SimpleNamespace(id=100, full_name="Иван Тестов", first_name="Иван", username="ivan")
 
-    fief, _msg = engine.join_fief(1, user, tile_id=50)
+    fief, msg = engine.join_fief(1, user, tile_id=50)
 
     assert fief["id"] == 7
     assert db.create_fief.call_args.kwargs["onboard_step"] == 2
     assert db.create_fief.call_args.args[0] == 1
     assert db.create_fief.call_args.args[1] == 100
+    assert db.create_fief.call_args.args[2] == "Усадьба @ivan"
+    assert "Усадьба @ivan" in msg
+    assert "Урожай собирается сам" in msg
+    assert "занять" in msg.lower() or "соседн" in msg
+    assert str(B.CLAIM_COSTS[2]) in msg
+    db.set_fief_names_for_user.assert_called_with(100, "Усадьба @ivan")
 
 
-def test_onboard_build_engine_advances_step_and_goods():
+def test_onboard_patience_hint_when_unaffordable():
+    from app.engine import onboard_patience_hint
+
+    hint = onboard_patience_hint(
+        onboard_step=2,
+        goods=20,
+        tile_count=1,
+        min_build_cost=50,
+    )
+    assert hint is not None
+    assert "рынок" in hint
+    assert "30" in hint
+    assert (
+        onboard_patience_hint(
+            onboard_step=2, goods=30, tile_count=1, min_build_cost=50
+        )
+        is None
+    )
+    build_hint = onboard_patience_hint(
+        onboard_step=3, goods=15, tile_count=2, min_build_cost=20
+    )
+    assert build_hint is not None
+    assert "20" in build_hint
+    assert (
+        onboard_patience_hint(
+            onboard_step=3, goods=20, tile_count=2, min_build_cost=20
+        )
+        is None
+    )
+    assert (
+        onboard_patience_hint(
+            onboard_step=4, goods=20, tile_count=1, min_build_cost=50
+        )
+        is None
+    )
+
+
+def test_onboard_claim_engine_advances_step_and_goods():
     db = _FakeDB({1: {"id": 1, "onboard_step": 2, "goods": 5, "grain": 30}})
     engine = Engine(db)
-    engine._onboard_build(1)
+    engine._onboard_claim(1)
     assert db.fiefs[1]["onboard_step"] == 3
     assert db.fiefs[1]["goods"] == 5 + B.ONBOARD_DAY2_GOODS
-    # повторно — без двойной награды
-    engine._onboard_build(1)
+    engine._onboard_claim(1)
     assert db.fiefs[1]["onboard_step"] == 3
     assert db.fiefs[1]["goods"] == 5 + B.ONBOARD_DAY2_GOODS
 
 
-def test_onboard_trade_engine_advances_step_and_grain():
+def test_onboard_build_engine_advances_step_and_grain():
     db = _FakeDB({1: {"id": 1, "onboard_step": 3, "goods": 5, "grain": 12}})
     engine = Engine(db)
-    engine._onboard_trade(1)
+    engine._onboard_build(1)
     assert db.fiefs[1]["onboard_step"] == 4
     assert db.fiefs[1]["grain"] == 12 + B.ONBOARD_DAY3_GRAIN
-    engine._onboard_trade(1)
+    engine._onboard_build(1)
     assert db.fiefs[1]["onboard_step"] == 4
     assert db.fiefs[1]["grain"] == 12 + B.ONBOARD_DAY3_GRAIN
 
 
-def test_post_trade_advances_day3_once():
+def test_post_trade_does_not_advance_onboard():
     state = {
         1: {
             "id": 1,
@@ -131,23 +209,14 @@ def test_post_trade_advances_day3_once():
 
     msg = engine.post_trade(1, B.RES_GRAIN, 10, B.RES_GOODS, 5)
     assert "Лот #99" in msg
-    assert state[1]["onboard_step"] == 4
-    # эскроу −10, затем награда дня 3
-    assert state[1]["grain"] == 40 - 10 + B.ONBOARD_DAY3_GRAIN
-
-    # повторный post не должен снова начислять день 3
-    state[1]["grain"] = 50
-    state[1]["goods"] = 30
-    engine.post_trade(1, B.RES_GRAIN, 5, B.RES_GOODS, 3)
-    assert state[1]["onboard_step"] == 4
-    assert state[1]["grain"] == 45  # только эскроу, без повторной награды
+    assert state[1]["onboard_step"] == 3
+    assert state[1]["grain"] == 30
 
 
-def test_accept_trade_advances_day3_without_double_after_post():
-    """Продавец уже на шаге 4 (после post_trade) — награда только покупателю."""
+def test_accept_trade_does_not_advance_onboard():
     expires = datetime.now(timezone.utc) + timedelta(hours=12)
     state = {
-        1: {  # buyer, step 3
+        1: {
             "id": 1,
             "realm_id": 9,
             "grain": 50,
@@ -158,12 +227,12 @@ def test_accept_trade_advances_day3_without_double_after_post():
             "pending_might": 0,
             "might": 5,
         },
-        2: {  # seller, уже завершил день 3 через post_trade
+        2: {
             "id": 2,
             "realm_id": 9,
             "grain": 30,
             "goods": 10,
-            "onboard_step": 4,
+            "onboard_step": 3,
             "pending_grain": 0,
             "pending_goods": 0,
             "pending_might": 0,
@@ -203,11 +272,8 @@ def test_accept_trade_advances_day3_without_double_after_post():
 
     engine.accept_trade(1, 5)
 
-    assert state[1]["onboard_step"] == 4
-    assert state[1]["grain"] >= 50 - 10 + B.ONBOARD_DAY3_GRAIN  # оплата + награда (и получение товаров)
-    assert state[2]["onboard_step"] == 4
-    # продавец не получил повторную ONBOARD_DAY3_GRAIN сверх расчёта сделки
-    # grain продавца = 30 + want_amt(10) = 40, без +ONBOARD_DAY3
+    assert state[1]["onboard_step"] == 3
+    assert state[2]["onboard_step"] == 3
     assert state[2]["grain"] == 40
 
 
@@ -234,15 +300,66 @@ def test_status_card_puts_bold_quest_after_title():
         "shield_until": None,
     }
     db.get_realm.return_value = {"id": 3, "day_number": 4}
-    db.fief_tiles.return_value = [{"is_overgrown": False}]
+    db.fief_tiles.return_value = [
+        {
+            "is_overgrown": False,
+            "building": B.BLD_FARM,
+            "building_level": 1,
+            "damaged": False,
+        }
+    ]
 
     text = engine.status_card(1)
     lines = text.split("\n")
     assert lines[0].startswith("🏡 <b>Усадьба А</b>")
     assert lines[1] == onboard_quest_html(2)
     assert "<b>Квест:" in lines[1]
-    # квест не в хвосте карточки
+    assert "рынок" in lines[2]
+    assert "30" in lines[2]
     assert not lines[-1].startswith("<b>Квест:")
+
+
+def test_status_card_advances_claim_quest_if_already_expanded():
+    state = {
+        "id": 1,
+        "name": "Усадьба А",
+        "realm_id": 3,
+        "grain": 30,
+        "goods": 10,
+        "might": 5,
+        "actions": 1,
+        "hungry": False,
+        "onboard_step": 2,
+        "last_active_at": datetime.now(timezone.utc),
+        "patrol_until": None,
+        "shield_until": None,
+    }
+    db = MagicMock()
+
+    def _get_fief(_fid):
+        return dict(state)
+
+    def _update(_fid, **fields):
+        state.update(fields)
+
+    db.get_fief.side_effect = _get_fief
+    db.update_fief.side_effect = _update
+    db.get_realm.return_value = {"id": 3, "day_number": 4}
+    db.fief_tiles.return_value = [
+        {"is_overgrown": False, "building": B.BLD_FARM, "building_level": 1},
+        {"is_overgrown": False, "building": None, "building_level": 0},
+    ]
+    engine = Engine(db)
+    engine.collect_for_fief = MagicMock(return_value=[])  # type: ignore[method-assign]
+    engine.fief_prod = MagicMock(  # type: ignore[method-assign]
+        return_value=SimpleNamespace(grain=5.0, goods=1.0, might=0.0)
+    )
+    engine.barn_level = MagicMock(return_value=0)  # type: ignore[method-assign]
+
+    text = engine.status_card(1)
+    assert state["onboard_step"] == 3
+    assert state["goods"] == 10 + B.ONBOARD_DAY2_GOODS
+    assert onboard_quest_html(3) in text.split("\n")
 
 
 def test_status_card_bumps_stuck_step_1_to_2():
@@ -312,7 +429,7 @@ def test_status_card_mentions_raid_pact_unlock_after_quests():
     db.fief_tiles.return_value = [{"is_overgrown": False}]
 
     text = engine.status_card(1)
-    assert f"Набег и пакт — с дня {B.RAID_PACT_UNLOCK_DAY}." in text
+    assert f"Набег и пакт - с дня {B.RAID_PACT_UNLOCK_DAY}." in text
     assert onboard_quest_html(4) is None
 
 
@@ -336,3 +453,15 @@ def test_guide_explains_patrol():
     assert f"на {B.PATROL_HOURS}ч" in text
     assert "сторожка даёт защиту постоянно" in text
     assert "В тумане дозор почти бесполезен" in text
+
+
+def test_join_welcome_puts_guide_before_founding():
+    from app.domain.guide import game_guide, join_welcome_text
+
+    founding = "🏡 Усадьба основана на А1 (Поле)."
+    text = join_welcome_text(founding)
+    assert text.startswith("📜")
+    assert text.index("Краткий устав") < text.index(founding)
+    assert "---" in text
+    assert game_guide() in text
+    assert founding in text

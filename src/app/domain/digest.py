@@ -1,6 +1,8 @@
 """Форматирование утренней сводки и указов для группового чата."""
 from __future__ import annotations
 
+from app.domain.rumors import format_rumor_section
+
 
 def ru_plural(n: int, one: str, few: str, many: str) -> str:
     """Русское склонение для целого числа: 1 лот / 2 лота / 5 лотов."""
@@ -29,10 +31,11 @@ def format_digest(
     market_line: str | None,
     feud_lines: list[str],
     sunday_extra: str | None,
+    rumor_lines: list[str] | None = None,
 ) -> str:
     night = " ".join(night_lines) if night_lines else "тихо."
     parts = [
-        f"🏰 {realm_title} — день {day}",
+        f"🏰 {realm_title} - день {day}",
         f"🌙 Ночью: {night}",
     ]
     if event_line:
@@ -41,6 +44,10 @@ def format_digest(
         parts.append(f"🛒 Рынок: {market_line}")
     for feud in feud_lines:
         parts.append(f"⚔️ Вражда: {feud}")
+    if rumor_lines:
+        section = format_rumor_section(rumor_lines)
+        if section:
+            parts.append(section)
     if sunday_extra:
         parts.append(sunday_extra)
     return "\n".join(parts)

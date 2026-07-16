@@ -105,6 +105,7 @@ class Database:
                     feature_flags JSONB NOT NULL DEFAULT '{}',
                     pending_raid_lines JSONB NOT NULL DEFAULT '[]',
                     last_digest_text TEXT,
+                    last_rumor_lines JSONB NOT NULL DEFAULT '[]',
                     wipe_confirm_code TEXT,
                     wipe_confirm_until TIMESTAMPTZ
                 );
@@ -261,6 +262,10 @@ class Database:
             self.cursor.execute(
                 "ALTER TABLE realms ADD COLUMN IF NOT EXISTS last_digest_text TEXT;"
             )
+            self.cursor.execute(
+                "ALTER TABLE realms ADD COLUMN IF NOT EXISTS last_rumor_lines "
+                "JSONB NOT NULL DEFAULT '[]';"
+            )
 
     # --- users ---
     def upsert_user(self, telegram_id: int, username: str | None, display_name: str) -> None:
@@ -349,7 +354,12 @@ class Database:
         cols = []
         vals = []
         for k, v in fields.items():
-            if k in ("feature_flags", "balance_overrides", "pending_raid_lines") and not isinstance(v, str):
+            if k in (
+                "feature_flags",
+                "balance_overrides",
+                "pending_raid_lines",
+                "last_rumor_lines",
+            ) and not isinstance(v, str):
                 v = json.dumps(v)
                 cols.append(f"{k}=%s::jsonb")
             else:
@@ -459,6 +469,14 @@ class Database:
 
     def update_fief(self, fief_id: int, **fields: Any) -> None:
         self._update("fiefs", fief_id, fields)
+
+    def set_fief_names_for_user(self, user_id: int, name: str) -> None:
+        with self.lock:
+            self.cursor.execute(
+                "UPDATE fiefs SET name=%s WHERE user_id=%s;",
+                (name, user_id),
+            )
+            self.commit()
 
     def touch_fief(self, fief_id: int) -> None:
         with self.lock:
@@ -793,6 +811,7 @@ class Database:
                 "feature_flags",
                 "balance_overrides",
                 "pending_raid_lines",
+                "last_rumor_lines",
                 "payload",
             ):
                 try:

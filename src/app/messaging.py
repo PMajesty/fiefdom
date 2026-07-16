@@ -48,7 +48,7 @@ async def _send_with_retry(coro_factory, *, label: str) -> Any:
 
 
 async def answer_html(message: Message, text: str, **kwargs: Any) -> None:
-    """Отправляет plain-текст: экранирует и шлёт HTML; при BadRequest — plain."""
+    """Отправляет plain-текст: экранирует и шлёт HTML; при BadRequest - plain."""
     if text is None:
         return
     plain = str(text)

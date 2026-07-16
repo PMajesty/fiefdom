@@ -52,7 +52,7 @@ def _base_fief(**overrides):
 
 
 def test_tick_applies_harvest_mult_same_day():
-    """Новый harvest крутится до производства — farm_mult тика = 1.25."""
+    """Новый harvest крутится до производства - farm_mult тика = 1.25."""
     db = MagicMock()
     realm = _base_realm()
     fief = _base_fief()
@@ -172,7 +172,7 @@ def test_tick_drought_mitigated_fief_gets_full_mult():
     assert mults == [1.0, drought_mult]
 
 def test_tick_continuing_drought_does_not_reroll():
-    """Пока until в будущем — новый ролл не сбрасывает засуху и полив."""
+    """Пока until в будущем - новый ролл не сбрасывает засуху и полив."""
     until = _utcnow() + timedelta(hours=8)
     db = MagicMock()
     realm = _base_realm(active_minor_key="drought", active_minor_until=until)

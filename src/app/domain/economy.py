@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app import balance as B
-from app.domain.map_gen import col_label, coord_label
+from app.domain.map_gen import col_label
 
 
 @dataclass
@@ -68,9 +68,11 @@ def fief_daily_production(
     farm_mult: float = 1.0,
 ) -> Production:
     total = Production()
+    active_tiles = 0
     for t in tiles:
         if t.is_overgrown:
             continue
+        active_tiles += 1
         p = tile_passive(t.tile_type)
         b = building_production(t.building or "", t.building_level, t.tile_type)
         if t.building == B.BLD_FARM:
@@ -81,9 +83,22 @@ def fief_daily_production(
             might=total.might + p.might + b.might,
             defense=total.defense + b.defense,
         )
+    if active_tiles > 0 and B.FIEF_BASE_GOODS:
+        total = Production(
+            grain=total.grain,
+            goods=total.goods + B.FIEF_BASE_GOODS,
+            might=total.might,
+            defense=total.defense,
+        )
     if hungry:
         total = total.scale(B.HUNGER_PRODUCTION_MULT)
     return total
+
+
+# Свободная клетка: слот метки той же ширины, что и буква владельца
+MAP_EMPTY_MARK = "·"
+# В Telegram <pre> эмодзи ≈ 2 колонки → клетка "метка+эмодзи" ≈ 3
+_MAP_CELL_DISPLAY_WIDTH = 3
 
 
 def owner_mark(index: int) -> str:
@@ -92,6 +107,27 @@ def owner_mark(index: int) -> str:
     if index < len(alphabet):
         return alphabet[index]
     return str(index % 10)
+
+
+def format_map_cell(
+    tile: TileView | None,
+    marks: dict[int, str],
+    *,
+    claimable: set[tuple[int, int]] | None = None,
+) -> str:
+    """Клетка фиксированного вида: метка + эмодзи (сетка не плывёт)."""
+    if not tile:
+        return f"{MAP_EMPTY_MARK}❓"
+    emoji = B.TILE_EMOJI.get(tile.tile_type, "❓")
+    if tile.is_overgrown:
+        emoji = "🌿"
+    if tile.owner_fief_id is not None:
+        mark = marks[tile.owner_fief_id]
+    elif claimable and (tile.x, tile.y) in claimable:
+        mark = "+"
+    else:
+        mark = MAP_EMPTY_MARK
+    return f"{mark}{emoji}"
 
 
 def render_map(
@@ -107,34 +143,25 @@ def render_map(
     fief_ids = sorted({t.owner_fief_id for t in tiles if t.owner_fief_id is not None})
     marks = {fid: owner_mark(i) for i, fid in enumerate(fief_ids)}
 
-    header = "   " + "".join(f"{col_label(x):>2}" for x in range(width))
+    # Буква над слотом метки; ширина колонки как у клетки в моноширинном <pre>
+    header = "   " + " ".join(
+        f"{col_label(x):<{_MAP_CELL_DISPLAY_WIDTH}}" for x in range(width)
+    )
     lines = [header]
     for y in range(height):
-        row = [f"{y + 1:>2} "]
-        for x in range(width):
-            t = by_pos.get((x, y))
-            if not t:
-                row.append("❓")
-                continue
-            emoji = B.TILE_EMOJI.get(t.tile_type, "❓")
-            if t.is_overgrown:
-                emoji = "🌿"
-            cell = emoji
-            if t.owner_fief_id is not None:
-                cell = f"{emoji}{marks[t.owner_fief_id]}"
-            if highlight_fief_id is not None and t.owner_fief_id == highlight_fief_id:
-                cell = f"[{cell}]"
-            elif claimable and (x, y) in claimable and t.owner_fief_id is None:
-                cell = f"+{emoji}"
-            row.append(cell)
-        lines.append("".join(row))
+        cells = [
+            format_map_cell(by_pos.get((x, y)), marks, claimable=claimable)
+            for x in range(width)
+        ]
+        lines.append(f"{y + 1:>2} " + " ".join(cells))
 
     from app.domain.guide import map_tile_legend
 
     owner_lines = []
     for fid in fief_ids:
         name = legend.get(fid, f"#{fid}")
-        owner_lines.append(f"{marks[fid]} = {name}")
+        suffix = " ← вы" if highlight_fief_id is not None and fid == highlight_fief_id else ""
+        owner_lines.append(f"{marks[fid]} = {name}{suffix}")
     body = "\n".join(lines)
     body += "\n\n" + map_tile_legend()
     if owner_lines:
@@ -142,16 +169,74 @@ def render_map(
     return body
 
 
+def toroidal_delta(a: int, b: int, size: int) -> int:
+    """Кратчайшая разница координат на торе размера size."""
+    if size <= 0:
+        return abs(a - b)
+    d = abs(a - b) % size
+    return min(d, size - d)
+
+
+def toroidal_manhattan(
+    x1: int, y1: int, x2: int, y2: int, width: int, height: int
+) -> int:
+    return toroidal_delta(x1, x2, width) + toroidal_delta(y1, y2, height)
+
+
+def wrap_xy(x: int, y: int, width: int, height: int) -> tuple[int, int]:
+    return (x % width, y % height)
+
+
+def pick_max_separated_tiles(
+    candidates: list[dict],
+    anchors: list[tuple[int, int]],
+    width: int,
+    height: int,
+    count: int,
+) -> list[dict]:
+    """Жадный farthest-point на торе: максимизирует мин. расстояние до якорей и уже выбранных."""
+    if count <= 0 or not candidates or width <= 0 or height <= 0:
+        return []
+    active_anchors: list[tuple[int, int]] = list(anchors)
+    remaining = list(candidates)
+    picked: list[dict] = []
+    while remaining and len(picked) < count:
+
+        def score(t: dict) -> tuple[int, int, int]:
+            if not active_anchors:
+                return (10**9, -int(t["y"]), -int(t["x"]))
+            d = min(
+                toroidal_manhattan(int(t["x"]), int(t["y"]), ax, ay, width, height)
+                for ax, ay in active_anchors
+            )
+            return (d, -int(t["y"]), -int(t["x"]))
+
+        best = max(remaining, key=score)
+        picked.append(best)
+        active_anchors.append((int(best["x"]), int(best["y"])))
+        best_id = best.get("id")
+        if best_id is not None:
+            remaining = [t for t in remaining if t.get("id") != best_id]
+        else:
+            remaining = [t for t in remaining if t is not best]
+    return picked
+
+
 def adjacent_claimable(
     owned: set[tuple[int, int]],
     all_tiles: dict[tuple[int, int], TileView],
     *,
+    width: int,
+    height: int,
     for_fief_id: int | None = None,
 ) -> set[tuple[int, int]]:
+    """Соседние клетки с учётом тороидальной карты (края смыкаются)."""
     out: set[tuple[int, int]] = set()
+    if width <= 0 or height <= 0:
+        return out
     for x, y in owned:
         for dx, dy in ((0, 1), (0, -1), (1, 0), (-1, 0)):
-            p = (x + dx, y + dy)
+            p = wrap_xy(x + dx, y + dy, width, height)
             t = all_tiles.get(p)
             if not t:
                 continue

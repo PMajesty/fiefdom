@@ -44,6 +44,17 @@ def test_farm_on_field_bonus():
     ]
     prod = fief_daily_production(tiles)
     assert prod.grain == B.FARM_YIELD[1] * B.NATIVE_BONUS
+    assert prod.goods == B.FIEF_BASE_GOODS
+
+
+def test_fief_base_goods_income():
+    tiles = [TileView(0, 0, B.TILE_HILLS, 1, None, 0)]
+    prod = fief_daily_production(tiles)
+    assert prod.goods == B.FIEF_BASE_GOODS
+    hungry = fief_daily_production(tiles, hungry=True)
+    assert hungry.goods == B.FIEF_BASE_GOODS * B.HUNGER_PRODUCTION_MULT
+    overgrown = [TileView(0, 0, B.TILE_HILLS, 1, None, 0, is_overgrown=True)]
+    assert fief_daily_production(overgrown).goods == 0
 
 
 def test_tick_militia_disband():
@@ -119,6 +130,14 @@ def test_collect_respects_cap():
 
 
 def test_best_rectangle_min():
-    w, h = B.best_rectangle(12)
-    assert w * h >= 12
+    w, h = B.best_rectangle(B.MAP_MIN_TILES)
+    assert (w, h) == (6, 6)
+    assert w * h >= B.MAP_MIN_TILES
     assert w * h <= B.MAP_MAX_TILES
+
+
+def test_map_target_tiles_floor():
+    assert B.map_target_tiles(1) == B.MAP_MIN_TILES
+    assert B.map_target_tiles(4) == B.MAP_MIN_TILES
+    assert B.map_target_tiles(8) >= 72
+    assert B.map_target_tiles(100) == B.MAP_MAX_TILES

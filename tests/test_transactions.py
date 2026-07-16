@@ -97,7 +97,7 @@ def test_accept_trade_closed_is_safe_noop():
 
 
 def test_accept_trade_claim_miss_inside_tx_is_noop():
-    """Двойной accept: claim_open_trade проиграл гонку — без переводов."""
+    """Двойной accept: claim_open_trade проиграл гонку - без переводов."""
     expires = datetime.now(timezone.utc) + timedelta(hours=12)
     state = {
         1: {

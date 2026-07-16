@@ -93,7 +93,7 @@ def apply_fief_tick(state: FiefTickState) -> TickOutcome:
     pending_goods = min(max_pd, state.pending_goods + prod.goods) if prod.goods > 0 else state.pending_goods
     pending_might = min(max_pm, state.pending_might + prod.might) if prod.might > 0 else state.pending_might
 
-    # если производства нет — pending не растёт, но кап по старым дням не жмём агрессивно
+    # если производства нет - pending не растёт, но кап по старым дням не жмём агрессивно
     if prod.grain > 0:
         pending_grain = min(prod.grain * cap_days, state.pending_grain + prod.grain)
     else:
@@ -127,10 +127,10 @@ def apply_fief_tick(state: FiefTickState) -> TickOutcome:
         disbanded = max(0, might - keep)
         might = keep
         if disbanded:
-            notes.append(f"Нечем кормить дружину — разошлись {disbanded} (−{disbanded} Силы)")
+            notes.append(f"Нечем кормить дружину - разошлись {disbanded} (−{disbanded} Силы)")
 
     # Голод снимается только после полного тика с оплаченным land upkeep
-    # (если сейчас оплатили — hungry False)
+    # (если сейчас оплатили - hungry False)
     actions = min(B.ACTIONS_BANK_MAX, state.actions + B.ACTIONS_PER_DAY)
 
     return TickOutcome(
@@ -170,7 +170,7 @@ def collect_pending(
     take_g = min(g_add, room_g)
     take_d = min(d_add, room_d)
     if take_g < g_add or take_d < d_add:
-        notes.append("Склад полон — часть урожая не вошла")
+        notes.append("Склад полон - часть урожая не вошла")
     grain += take_g
     goods += take_d
     return grain, goods, might, 0.0, 0.0, 0.0, notes

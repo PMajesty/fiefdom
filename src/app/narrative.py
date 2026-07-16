@@ -29,10 +29,10 @@ _SYSTEM_PROMPT = (
     "Ты злой средневековый хронист долины. Пиши по-русски, сухо, язвительно, без героики.\n"
     "Верни ТОЛЬКО валидный JSON без пояснений и без markdown:\n"
     '{"narrative":"...","button_labels":{"key":"подпись"}}\n'
-    "narrative — 2–4 предложения про событие из brief.\n"
-    "button_labels — подписи кнопок; ключи бери только из brief (если есть).\n"
+    "narrative - 2–4 предложения про событие из brief.\n"
+    "button_labels - подписи кнопок; ключи бери только из brief (если есть).\n"
     "СТРОГО ЗАПРЕЩЕНО выдумывать числа: любые цифры в тексте должны совпадать "
-    "с числами из brief. Если числа нет в brief — не пиши цифры."
+    "с числами из brief. Если числа нет в brief - не пиши цифры."
 )
 
 _REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=45)
@@ -179,7 +179,7 @@ async def _chat_completion(brief: dict) -> str | None:
 
 
 async def generate_event_text(brief: dict) -> dict | None:
-    """Генерирует narrative + button_labels. При любой ошибке — None (caller → canned)."""
+    """Генерирует narrative + button_labels. При любой ошибке - None (caller → canned)."""
     try:
         if not isinstance(brief, dict):
             return None

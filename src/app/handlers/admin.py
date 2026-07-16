@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatType
@@ -11,7 +12,7 @@ from aiogram.types import Message
 from app.domain.digest import format_decree
 from app.domain.events import MINOR_EVENTS
 from app.handlers.shared import get_engine, is_admin, post_digest, reply_game, send_game
-from app.messaging import answer_html
+from app.messaging import answer_html, escape_html
 
 logger = logging.getLogger(__name__)
 
@@ -23,21 +24,69 @@ def _require_admin(message: Message) -> bool:
     return is_admin(message.from_user.id if message.from_user else None)
 
 
+def format_realms_list(realms: list[dict[str, Any]], fief_counts: dict[int, int]) -> str:
+    if not realms:
+        return "Нет долин."
+    lines = ["Долины:"]
+    for realm in realms:
+        rid = int(realm["id"])
+        title = escape_html(str(realm.get("title") or "без названия"))
+        chat_id = realm.get("chat_id")
+        n_fiefs = fief_counts.get(rid, 0)
+        lines.append(
+            f"#{rid} {title}\n"
+            f"  chat_id=<code>{chat_id}</code> · усадеб: {n_fiefs}"
+        )
+    return "\n".join(lines)
+
+
+ADMIN_HELP_TEXT = (
+    "Админ-команды (только личка). Сначала узнай id долины:\n"
+    "<code>/вч_realms</code>\n"
+    "\n"
+    "<b>Тик</b> (пересчитать день; без id - все долины):\n"
+    "<code>/вч_tick</code>\n"
+    "<code>/вч_tick 1</code>\n"
+    "\n"
+    "<b>Выдать ресурсы</b> усадьбе (зерно товары сила):\n"
+    "<code>/вч_grant 1 3 50 20 10</code>\n"
+    "\n"
+    "<b>Событие</b> на 24ч (ключ из списка при ошибке):\n"
+    "<code>/вч_event 1 harvest_day</code>\n"
+    "\n"
+    "<b>Удалить долину</b> - два шага:\n"
+    "1) <code>/вч_wipe_start 1</code> - бот пришлёт готовую команду с кодом\n"
+    "2) скопируй и отправь её (код + слово УДАЛИТЬ)\n"
+    "\n"
+    "<b>Заморозка</b> усадьбы: 1 = заморозить, 0 = снять:\n"
+    "<code>/вч_freeze 3 1</code>\n"
+    "\n"
+    "<b>Указ</b> в групповой чат долины:\n"
+    "<code>/вч_decree 1 Текст указа</code>"
+)
+
+
 @router.message(Command("вч_admin_help"))
 async def cmd_admin_help(message: Message) -> None:
     if not _require_admin(message):
         return
-    await reply_game(
-        message,
-        "Админ:\n"
-        "<code>/вч_tick [realm_id]</code>\n"
-        "<code>/вч_grant realm_id fief_id grain goods might</code>\n"
-        "<code>/вч_event realm_id key</code>\n"
-        "<code>/вч_wipe_start realm_id</code>\n"
-        "<code>/вч_wipe realm_id CODE УДАЛИТЬ</code>\n"
-        "<code>/вч_freeze fief_id 0|1</code>\n"
-        "<code>/вч_decree realm_id текст...</code>",
-    )
+    await reply_game(message, ADMIN_HELP_TEXT)
+
+
+@router.message(Command("вч_realms"))
+async def cmd_realms(message: Message) -> None:
+    if not _require_admin(message):
+        return
+    engine = get_engine()
+    try:
+        realms = engine.db.list_realms()
+        fief_counts = {
+            int(r["id"]): len(engine.db.list_fiefs(int(r["id"]))) for r in realms
+        }
+        await reply_game(message, format_realms_list(realms, fief_counts))
+    except Exception:
+        logger.exception("cmd_realms")
+        await answer_html(message, "Ошибка списка долин.")
 
 
 @router.message(Command("вч_tick"))
@@ -129,14 +178,14 @@ async def cmd_event(message: Message) -> None:
                 active_minor_key=key,
                 active_minor_until=datetime.now(timezone.utc) + timedelta(hours=24),
             )
-            note = f"Событие «{meta['name_ru']}» активно 24ч. {meta['mechanics']}"
+            note = f"Событие \"{meta['name_ru']}\" активно 24ч. {meta['mechanics']}"
         else:
             engine.db.update_realm(
                 realm_id,
                 active_minor_key=key,
                 active_minor_until=datetime.now(timezone.utc) + timedelta(hours=24),
             )
-            note = f"Установлен ключ события «{key}» на 24ч."
+            note = f"Установлен ключ события \"{key}\" на 24ч."
         await answer_html(message, note)
     except ValueError as exc:
         await answer_html(message, str(exc))
@@ -153,10 +202,13 @@ async def cmd_wipe_start(message: Message) -> None:
     try:
         parts = (message.text or "").split()
         if len(parts) < 2:
-            raise ValueError("Формат: /вч_wipe_start realm_id")
+            raise ValueError(
+                "Сначала шаг 1: <code>/вч_wipe_start 1</code> "
+                "(подставь id из /вч_realms). Бот пришлёт команду с кодом."
+            )
         realm_id = int(parts[1])
         if not engine.db.get_realm(realm_id):
-            raise ValueError("Долина не найдена")
+            raise ValueError("Долина не найдена. Смотри /вч_realms")
         msg = engine.begin_wipe(realm_id)
         await reply_game(message, msg)
     except ValueError as exc:
@@ -174,7 +226,11 @@ async def cmd_wipe(message: Message) -> None:
     try:
         parts = (message.text or "").split()
         if len(parts) < 4:
-            raise ValueError("Формат: /вч_wipe realm_id CODE УДАЛИТЬ")
+            raise ValueError(
+                "Это шаг 2. Сначала <code>/вч_wipe_start 1</code>, "
+                "потом отправь команду из ответа бота целиком "
+                "(id + код + УДАЛИТЬ)."
+            )
         realm_id = int(parts[1])
         code = parts[2]
         word = parts[3]

@@ -1,4 +1,4 @@
-﻿"""CallbackQuery: меню усадьбы, клейм, стройка, набег, рынок, пакт, старт."""
+"""CallbackQuery: меню усадьбы, клейм, стройка, набег, рынок, пакт, старт."""
 from __future__ import annotations
 
 import logging
@@ -9,12 +9,18 @@ from aiogram.types import CallbackQuery
 from app import balance as B
 from app.domain.economy import adjacent_claimable
 from app.domain.events import minor_effect
+from app.domain.guide import join_welcome_text
 from app.handlers import dm as dm_mod
 from app.handlers.shared import (
+    announce_realm,
     fief_home_kb,
     fief_raid_pact_state,
+    format_join_announce,
+    format_pact_leave_announce,
+    format_trade_accept_announce,
     get_engine,
     more_menu_kb,
+    realm_upgrade_cost_mult,
     reply_game,
 )
 from app.engine import raid_pact_lock_message
@@ -107,7 +113,7 @@ async def cb_drought_mitigate(callback: CallbackQuery) -> None:
         await _ok(callback)
         await reply_game(
             callback.message,
-            "Полив сделан — засуха больше не душит ваши фермы.\n"
+            "Полив сделан - засуха больше не душит ваши фермы.\n"
             + engine.status_card(fief_id),
             reply_markup=fief_home_kb(engine, fief_id),
         )
@@ -134,7 +140,14 @@ async def cb_pick_starter(callback: CallbackQuery) -> None:
         tile_id = int(tile_s)
         fief, msg = engine.join_fief(realm_id, callback.from_user, tile_id)
         await _ok(callback)
-        await reply_game(callback.message, msg, reply_markup=fief_home_kb(engine, fief["id"]))
+        await reply_game(
+            callback.message,
+            join_welcome_text(msg),
+            reply_markup=fief_home_kb(engine, fief["id"]),
+        )
+        await announce_realm(
+            callback.bot, realm_id, format_join_announce(engine.fief_label(fief))
+        )
     except ValueError as exc:
         await callback.answer(str(exc), show_alert=True)
     except Exception:
@@ -164,7 +177,7 @@ async def cb_status(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("home:"))
 async def cb_home(callback: CallbackQuery) -> None:
-    """Свернуть «Ещё» → статус + домашний CTA."""
+    """Свернуть \"Ещё\" → статус + домашний CTA."""
     engine = get_engine()
     try:
         fief_id = int(callback.data.split(":")[1])
@@ -211,7 +224,7 @@ async def cb_more(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("lock:"))
 async def cb_lock_hint(callback: CallbackQuery) -> None:
-    """Пояснение по закрытому Набегу/Пакту — без трат."""
+    """Пояснение по закрытому Набегу/Пакту - без трат."""
     engine = get_engine()
     try:
         parts = callback.data.split(":")
@@ -306,8 +319,15 @@ async def cb_claim(callback: CallbackQuery) -> None:
                 if t.owner_fief_id == fief_id and not t.is_overgrown
             }
             by_xy = {(t.x, t.y): t for t in views}
+            realm = engine.db.get_realm(fief["realm_id"])
             claimable = sorted(
-                adjacent_claimable(owned, by_xy, for_fief_id=fief_id)
+                adjacent_claimable(
+                    owned,
+                    by_xy,
+                    width=realm["width"],
+                    height=realm["height"],
+                    for_fief_id=fief_id,
+                )
             )
             await _ok(callback)
             if not claimable:
@@ -350,11 +370,20 @@ async def cb_build(callback: CallbackQuery) -> None:
         fief = _ensure_owner(engine, fief_id, callback.from_user.id)
 
         if len(parts) == 2:
+            tiles = [
+                t
+                for t in engine.db.fief_tiles(fief_id)
+                if not t.get("is_overgrown")
+            ]
+            realm = engine.db.get_realm(fief["realm_id"])
+            cost_mult = realm_upgrade_cost_mult(realm)
             await _ok(callback)
             await answer_html(
                 callback.message,
                 "Выберите здание:",
-                reply_markup=dm_mod.building_types_kb(fief_id),
+                reply_markup=dm_mod.building_types_kb(
+                    fief_id, tiles, cost_mult=cost_mult
+                ),
             )
             return
 
@@ -369,11 +398,15 @@ async def cb_build(callback: CallbackQuery) -> None:
                 for t in engine.db.fief_tiles(fief_id)
                 if not t.get("is_overgrown")
             ]
+            realm = engine.db.get_realm(fief["realm_id"])
+            cost_mult = realm_upgrade_cost_mult(realm)
             await _ok(callback)
             await answer_html(
                 callback.message,
-                f"Клетка для «{B.BUILDING_NAMES_RU[building]}»:",
-                reply_markup=dm_mod.build_tiles_kb(fief_id, building, tiles),
+                f"Клетка для \"{B.BUILDING_NAMES_RU[building]}\":",
+                reply_markup=dm_mod.build_tiles_kb(
+                    fief_id, building, tiles, cost_mult=cost_mult
+                ),
             )
             return
 
@@ -472,7 +505,7 @@ async def cb_raid(callback: CallbackQuery) -> None:
             await answer_html(
                 callback.message,
                 "Выберите цель:",
-                reply_markup=dm_mod.raid_targets_kb(fief_id, others),
+                reply_markup=dm_mod.raid_targets_kb(fief_id, others, engine),
             )
             return
 
@@ -485,7 +518,7 @@ async def cb_raid(callback: CallbackQuery) -> None:
         await answer_html(
             callback.message,
             f"Сколько силы отправить? (мин. {B.RAID_MIN_MIGHT})\n"
-            "Или напишите «отмена».",
+            "Или напишите \"отмена\".",
             reply_markup=dm_mod.pending_cancel_kb(fief_id),
         )
     except ValueError as exc:
@@ -529,18 +562,31 @@ async def cb_trade(callback: CallbackQuery) -> None:
                 callback.message,
                 "Отправьте лот: <code>зерно 10 товары 5</code>\n"
                 "(отдаю количество → хочу количество).\n"
-                "Или напишите «отмена».",
+                "Или напишите \"отмена\".",
                 reply_markup=dm_mod.pending_cancel_kb(fief_id),
             )
             return
 
         trade_id = int(parts[3])
+        seller = None
         if action == "a":
+            trade = engine.db.get_trade(trade_id)
+            if trade:
+                seller = engine.db.get_fief(trade["offerer_fief_id"])
             msg = engine.accept_trade(fief_id, trade_id)
         else:
             msg = engine.cancel_trade(fief_id, trade_id)
         await _ok(callback)
         await reply_game(callback.message, msg, reply_markup=fief_home_kb(engine, fief_id))
+        if action == "a" and seller and msg.startswith("Сделка"):
+            engine.ensure_user(callback.from_user)
+            await announce_realm(
+                callback.bot,
+                fief["realm_id"],
+                format_trade_accept_announce(
+                    engine.fief_label(fief), engine.fief_label(seller)
+                ),
+            )
     except ValueError as exc:
         await callback.answer(str(exc), show_alert=True)
     except Exception:
@@ -581,7 +627,7 @@ async def cb_pact(callback: CallbackQuery) -> None:
             if in_pact:
                 pact = engine.db.get_pact(fief["pact_id"])
                 is_founder = bool(pact and pact["founder_fief_id"] == fief_id)
-                text = f"Пакт «{pact['name']}»." if pact else "Пакт."
+                text = f"Пакт \"{pact['name']}\"." if pact else "Пакт."
             await _ok(callback)
             await answer_html(
                 callback.message,
@@ -598,7 +644,7 @@ async def cb_pact(callback: CallbackQuery) -> None:
             await _ok(callback)
             await answer_html(
                 callback.message,
-                "Введите название пакта:\nИли напишите «отмена».",
+                "Введите название пакта:\nИли напишите \"отмена\".",
                 reply_markup=dm_mod.pending_cancel_kb(fief_id),
             )
             return
@@ -616,16 +662,27 @@ async def cb_pact(callback: CallbackQuery) -> None:
             await answer_html(
                 callback.message,
                 "Укажите id усадьбы или точное имя для приглашения:\n"
-                "Или напишите «отмена».",
+                "Или напишите \"отмена\".",
                 reply_markup=dm_mod.pending_cancel_kb(fief_id),
             )
             return
 
         if action == "leave":
+            pact = engine.db.get_pact(fief["pact_id"]) if fief.get("pact_id") else None
+            pact_name = pact["name"] if pact else "?"
             msg = engine.leave_pact(fief_id)
             await _ok(callback)
             await reply_game(
                 callback.message, msg, reply_markup=fief_home_kb(engine, fief_id)
+            )
+            await announce_realm(
+                callback.bot,
+                fief["realm_id"],
+                format_pact_leave_announce(
+                    engine.fief_label(fief),
+                    pact_name,
+                    dissolved="распущен" in msg,
+                ),
             )
             return
 

@@ -135,7 +135,7 @@ async def _maybe_post_catastrophe(bot: Bot, engine, realm: dict, local_now: date
     if hour < B.CATASTROPHE_POST_HOUR_START or hour >= B.CATASTROPHE_POST_HOUR_END:
         return
 
-    # уже есть активная катастрофа — не дублируем
+    # уже есть активная катастрофа - не дублируем
     active = engine.db.get_active_events(realm["id"], kind="catastrophe")
     if active:
         return
@@ -212,7 +212,7 @@ async def _resolve_expired_catastrophes(bot: Bot, engine, realm: dict) -> None:
             engine.db.update_event(ev["id"], status="resolved")
             meta = CATASTROPHES.get(key) or {}
             name = meta.get("name_ru", key)
-            result_text = f"Катастрофа «{name}» завершилась."
+            result_text = f"Катастрофа \"{name}\" завершилась."
 
         chat_id = realm.get("chat_id")
         if chat_id and result_text:
@@ -253,7 +253,7 @@ def _resolve_bandit_night(engine, realm: dict, event: dict) -> str:
         loss_note.append(f["name"])
 
     engine.db.update_event(event["id"], status="resolved")
-    who = ", ".join(loss_note[:8]) if loss_note else "—"
+    who = ", ".join(loss_note[:8]) if loss_note else "-"
     return (
         f"☠️ Ночь бандитов: провал ({total_might}/{threshold} силы). "
         f"Пострадали: {who}."

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from aiogram.enums import ParseMode
@@ -12,12 +13,13 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from app import balance as B
 from app.config import ADMIN_USER_ID
 from app.database import get_db
+from app.domain.events import minor_effect
 from app.engine import (
     Engine,
     raid_pact_lock_hint,
     raid_pact_unlocked,
 )
-from app.messaging import answer_html, send_html
+from app.messaging import answer_html, escape_html, send_html
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,23 @@ def get_engine() -> Engine:
     if _engine is None:
         _engine = Engine(get_db())
     return _engine
+
+
+def realm_upgrade_cost_mult(realm: dict | None, *, now: datetime | None = None) -> float:
+    """Множитель стоимости стройки/апгрейда по активному мелкому событию."""
+    if not realm:
+        return 1.0
+    key = realm.get("active_minor_key")
+    until = realm.get("active_minor_until")
+    if not key or not until:
+        return 1.0
+    current = now or datetime.now(timezone.utc)
+    if until <= current:
+        return 1.0
+    try:
+        return float(minor_effect(key).get("upgrade_cost_mult", 1.0))
+    except KeyError:
+        return 1.0
 
 
 def is_admin(user_id: int | None) -> bool:
@@ -97,7 +116,7 @@ def deep_link_url(bot_username: str, payload: str) -> str:
 
 
 def open_estate_kb(bot_username: str, realm_id: int) -> InlineKeyboardMarkup:
-    """Кнопка deep-link в личку: «Открыть усадьбу»."""
+    """Кнопка deep-link в личку: \"Открыть усадьбу\"."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -120,12 +139,85 @@ async def bot_username_or_none(bot) -> str | None:
 
 
 async def post_digest(bot, chat_id: int, realm_id: int, digest: str) -> None:
-    """Публикует сводку в группу; кнопка deep-link — если есть username бота."""
+    """Публикует сводку в группу; кнопка deep-link - если есть username бота."""
     kb = None
     username = await bot_username_or_none(bot)
     if username:
         kb = open_estate_kb(username, realm_id)
     await send_game(bot, chat_id, digest, reply_markup=kb)
+
+
+def format_join_announce(fief_name: str) -> str:
+    return f"🏡 В долине новая усадьба: {escape_html(fief_name)}"
+
+
+def format_raid_announce(public_line: str) -> str:
+    return f"⚔️ {escape_html(public_line)}"
+
+
+def format_trade_post_announce(
+    fief_name: str,
+    give_amt: int,
+    give_res: str,
+    want_amt: int,
+    want_res: str,
+) -> str:
+    give = B.RES_NAMES_RU.get(give_res, give_res)
+    want = B.RES_NAMES_RU.get(want_res, want_res)
+    return (
+        f"🛒 {escape_html(fief_name)}: лот "
+        f"{int(give_amt)} {give} → {int(want_amt)} {want}"
+    )
+
+
+def format_trade_accept_announce(buyer_name: str, seller_name: str) -> str:
+    return (
+        f"🛒 Сделка: {escape_html(buyer_name)} ↔ {escape_html(seller_name)}"
+    )
+
+
+def format_pact_create_announce(fief_name: str, pact_name: str) -> str:
+    return (
+        f"🤝 Новый пакт \"{escape_html(pact_name)}\" "
+        f"({escape_html(fief_name)})"
+    )
+
+
+def format_pact_join_announce(fief_name: str, pact_name: str) -> str:
+    return (
+        f"🤝 {escape_html(fief_name)} в пакте \"{escape_html(pact_name)}\""
+    )
+
+
+def format_pact_leave_announce(
+    fief_name: str,
+    pact_name: str,
+    *,
+    dissolved: bool = False,
+) -> str:
+    if dissolved:
+        return (
+            f"🤝 {escape_html(fief_name)} больше не в пакте - "
+            f"\"{escape_html(pact_name)}\" распущен"
+        )
+    return (
+        f"🤝 {escape_html(fief_name)} больше не в пакте "
+        f"\"{escape_html(pact_name)}\""
+    )
+
+
+async def announce_realm(bot, realm_id: int, text: str) -> None:
+    """Короткое объявление в групповой чат долины. Ошибки не роняют хендлер."""
+    if not text:
+        return
+    try:
+        realm = get_engine().db.get_realm(int(realm_id))
+        chat_id = realm.get("chat_id") if realm else None
+        if not chat_id:
+            return
+        await send_game(bot, int(chat_id), text)
+    except Exception:
+        logger.warning("announce_realm failed realm_id=%s", realm_id, exc_info=True)
 
 
 def choose_primary_cta(
@@ -137,10 +229,13 @@ def choose_primary_cta(
     goods: int = 0,
     might: int = 0,
     day_number: int = B.RAID_PACT_UNLOCK_DAY,
+    min_build_cost: int | None = None,
+    next_claim_cost: int | None = None,
 ) -> tuple[str, str]:
-    """Эвристика «что делать сейчас»: (подпись кнопки, callback_data).
+    """Эвристика \"что делать сейчас\": (подпись кнопки, callback_data).
 
     Набег в primary CTA только после unlock (квесты + день долины).
+    Не предлагает стройку/клейм, если товаров заведомо не хватает.
     """
     fid = int(fief_id)
     actions = int(actions)
@@ -151,14 +246,34 @@ def choose_primary_cta(
     day_number = int(day_number)
     unlocked = raid_pact_unlocked(onboard_step=onboard_step, day_number=day_number)
 
+    if next_claim_cost is None and tile_count < B.TILE_HARD_CAP:
+        try:
+            next_claim_cost = B.claim_cost(tile_count + 1)
+        except ValueError:
+            next_claim_cost = None
+
+    can_claim = (
+        actions > 0
+        and next_claim_cost is not None
+        and goods >= int(next_claim_cost)
+    )
+    if min_build_cost is not None:
+        can_build = actions > 0 and goods >= int(min_build_cost)
+    else:
+        can_build = actions > 0 and goods >= 20
+
     if actions > 0 and onboard_step == 2:
-        return "Квест: строить", f"bld:{fid}"
+        if can_claim:
+            return "Квест: занять землю", f"clm:{fid}"
+        return "Рынок", f"mkt:{fid}"
     if actions > 0 and onboard_step == 3:
-        return "Квест: сделка", f"mkt:{fid}"
+        if can_build:
+            return "Квест: строить", f"bld:{fid}"
+        return "Рынок", f"mkt:{fid}"
     if actions > 0:
         if tile_count < 3:
             return "Занять землю", f"clm:{fid}"
-        if goods >= 20:
+        if can_build:
             return "Строить", f"bld:{fid}"
         if unlocked and might >= 5:
             return "Набег", f"rad:{fid}"
@@ -167,7 +282,7 @@ def choose_primary_cta(
 
 
 def home_kb(fief_id: int, primary_label: str, primary_callback: str) -> InlineKeyboardMarkup:
-    """Дом: один primary CTA + Статус + свёрнутое «Ещё»."""
+    """Дом: один primary CTA + Статус + свёрнутое \"Ещё\"."""
     fid = int(fief_id)
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -187,9 +302,9 @@ def more_menu_kb(
     raid_pact_open: bool = True,
     lock_hint: str | None = None,
 ) -> InlineKeyboardMarkup:
-    """Полный набор действий (раскрытие «Ещё»).
+    """Полный набор действий (раскрытие \"Ещё\").
 
-    Пока Набег/Пакт закрыты — подписи-замки с callback lock:… (пояснение без трат).
+    Пока Набег/Пакт закрыты - подписи-замки с callback lock:… (пояснение без трат).
     """
     fid = int(fief_id)
     rows: list[list[InlineKeyboardButton]] = []
@@ -208,11 +323,11 @@ def more_menu_kb(
     else:
         suffix = lock_hint or "закрыто"
         raid_btn = InlineKeyboardButton(
-            text=f"Набег — {suffix}",
+            text=f"Набег - {suffix}",
             callback_data=f"lock:rad:{fid}",
         )
         pact_btn = InlineKeyboardButton(
-            text=f"Пакт — {suffix}",
+            text=f"Пакт - {suffix}",
             callback_data=f"lock:pct:{fid}",
         )
     rows.extend(
@@ -235,7 +350,7 @@ def more_menu_kb(
             ],
             [
                 InlineKeyboardButton(text="Устав", callback_data=f"gd:{fid}"),
-                InlineKeyboardButton(text="« Назад", callback_data=f"home:{fid}"),
+                InlineKeyboardButton(text="< Назад", callback_data=f"home:{fid}"),
             ],
         ]
     )
@@ -249,8 +364,10 @@ def main_menu_kb(
     *,
     drought_mitigate: bool = False,
     day_number: int = B.RAID_PACT_UNLOCK_DAY,
+    min_build_cost: int | None = None,
+    next_claim_cost: int | None = None,
 ) -> InlineKeyboardMarkup:
-    """Домашняя клавиатура усадьбы (status-first). Без снимка fief — безопасный CTA."""
+    """Домашняя клавиатура усадьбы (status-first). Без снимка fief - безопасный CTA."""
     fid = int(fief_id)
     if fief is None:
         kb = home_kb(fid, "Обновить статус", f"st:{fid}")
@@ -263,6 +380,8 @@ def main_menu_kb(
             goods=int(fief.get("goods") or 0),
             might=int(fief.get("might") or 0),
             day_number=day_number,
+            min_build_cost=min_build_cost,
+            next_claim_cost=next_claim_cost,
         )
         kb = home_kb(fid, label, cb)
     if not drought_mitigate:
@@ -291,15 +410,26 @@ def fief_home_kb(engine: Engine, fief_id: int) -> InlineKeyboardMarkup:
     if not fief:
         return main_menu_kb(fief_id, drought_mitigate=can_water)
     tiles = engine.db.fief_tiles(fief_id)
-    n = sum(1 for t in tiles if not t.get("is_overgrown"))
+    active = [t for t in tiles if not t.get("is_overgrown")]
+    n = len(active)
     realm = engine.db.get_realm(fief["realm_id"])
     day_number = int(realm["day_number"]) if realm else 1
+    cost_mult = realm_upgrade_cost_mult(realm)
+    min_build = B.min_any_build_action_cost(active, cost_mult=cost_mult)
+    next_claim = None
+    if n < B.TILE_HARD_CAP:
+        try:
+            next_claim = B.claim_cost(n + 1)
+        except ValueError:
+            next_claim = None
     return main_menu_kb(
         fief_id,
         fief=fief,
         tile_count=n,
         drought_mitigate=can_water,
         day_number=day_number,
+        min_build_cost=min_build,
+        next_claim_cost=next_claim,
     )
 
 

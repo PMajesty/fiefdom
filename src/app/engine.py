@@ -17,6 +17,7 @@ from app.domain.economy import (
     TileView,
     adjacent_claimable,
     fief_daily_production,
+    pick_max_separated_tiles,
     render_map,
 )
 from app.domain.events import (
@@ -31,6 +32,7 @@ from app.domain.events import (
 from app.balance import best_rectangle
 from app.domain.map_gen import GenTile, append_strip, coord_label, generate_map
 from app.domain.raids import RaidActionResult, resolve_raid
+from app.domain.rumors import FiefRumorSnapshot, format_rumors_pull, roll_daily_rumors
 from app.domain.tick import FiefTickState, apply_fief_tick, collect_pending
 
 logger = logging.getLogger(__name__)
@@ -40,24 +42,86 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def fief_name_for_user(user) -> str:
+    """Уникальное читаемое имя усадьбы: @username, иначе полное имя.
+
+    Принимает Telegram User / SimpleNamespace или dict из таблицы users.
+    """
+    if isinstance(user, dict):
+        username = (user.get("username") or "").strip()
+        display = (
+            user.get("display_name")
+            or user.get("full_name")
+            or user.get("first_name")
+            or "Путник"
+        )
+    else:
+        username = (getattr(user, "username", None) or "").strip()
+        display = (
+            getattr(user, "full_name", None)
+            or getattr(user, "first_name", None)
+            or "Путник"
+        )
+    if username:
+        label = f"@{username}"
+    else:
+        label = str(display).strip() or "Путник"
+    return f"Усадьба {label}"[:40]
+
+
 def onboard_quest_html(onboard_step: int) -> str | None:
     """Громкая строка квеста для статус-карточки (шаги 2 и 3)."""
     step = int(onboard_step)
     if step == 2:
         return (
-            f"<b>Квест: постройте или улучшите здание "
+            f"<b>Квест: займите соседнюю клетку "
             f"(+{B.ONBOARD_DAY2_GOODS} товаров).</b>"
         )
     if step == 3:
         return (
-            f"<b>Квест: создайте или примите сделку на рынке "
+            f"<b>Квест: постройте или улучшите здание "
             f"(+{B.ONBOARD_DAY3_GRAIN} зерна).</b>"
         )
     return None
 
 
-def try_complete_onboard_build(fief: dict) -> dict | None:
-    """День 2: строительство → шаг 3 и награда товарами. Идемпотентно."""
+def onboard_patience_hint(
+    *,
+    onboard_step: int,
+    goods: int,
+    tile_count: int,
+    min_build_cost: int | None,
+) -> str | None:
+    """Тихая подсказка, если текущий квест пока не по карману."""
+    step = int(onboard_step)
+    goods = int(goods)
+    next_claim = None
+    if tile_count < B.TILE_HARD_CAP:
+        try:
+            next_claim = B.claim_cost(int(tile_count) + 1)
+        except ValueError:
+            next_claim = None
+    can_claim = next_claim is not None and goods >= next_claim
+    can_build = min_build_cost is not None and goods >= int(min_build_cost)
+    if step == 2:
+        if can_claim:
+            return None
+        claim_s = str(next_claim) if next_claim is not None else "-"
+        return (
+            f"Пока копите товары или зайдите на рынок: земля от {claim_s}."
+        )
+    if step == 3:
+        if can_build:
+            return None
+        build_s = str(min_build_cost) if min_build_cost is not None else "-"
+        return (
+            f"Пока копите товары или зайдите на рынок: стройка от {build_s}."
+        )
+    return None
+
+
+def try_complete_onboard_claim(fief: dict) -> dict | None:
+    """Шаг 2: занятие земли → шаг 3 и награда товарами. Идемпотентно."""
     if int(fief["onboard_step"]) != 2:
         return None
     return {
@@ -66,8 +130,8 @@ def try_complete_onboard_build(fief: dict) -> dict | None:
     }
 
 
-def try_complete_onboard_trade(fief: dict) -> dict | None:
-    """День 3: создание или принятие сделки → шаг 4 и награда зерном. Идемпотентно."""
+def try_complete_onboard_build(fief: dict) -> dict | None:
+    """Шаг 3: строительство → шаг 4 и награда зерном. Идемпотентно."""
     if int(fief["onboard_step"]) != 3:
         return None
     return {
@@ -82,7 +146,7 @@ def raid_pact_unlocked(*, onboard_step: int, day_number: int) -> bool:
 
 
 def raid_pact_lock_hint(*, onboard_step: int, day_number: int) -> str | None:
-    """Короткий хвост для подписи кнопки («после квестов» / «с дня N»). None если открыто."""
+    """Короткий хвост для подписи кнопки (\"после квестов\" / \"с дня N\"). None если открыто."""
     if raid_pact_unlocked(onboard_step=onboard_step, day_number=day_number):
         return None
     if int(onboard_step) < 4:
@@ -96,8 +160,8 @@ def raid_pact_lock_message(*, onboard_step: int, day_number: int) -> str:
     if hint is None:
         return "Набег и пакт уже доступны."
     if hint == "после квестов":
-        return "Набег и пакт — после квестов."
-    return f"Набег и пакт — {hint} долины."
+        return "Набег и пакт - после квестов."
+    return f"Набег и пакт - {hint} долины."
 
 
 class Engine:
@@ -126,7 +190,7 @@ class Engine:
             feature_flags=dict(B.DEFAULT_FEATURE_FLAGS),
             next_catastrophe_at=next_cat,
         )
-        # первый тик — завтра (не сразу после основания днём)
+        # первый тик - завтра (не сразу после основания днём)
         from zoneinfo import ZoneInfo
 
         local_today = datetime.now(ZoneInfo(tz)).date()
@@ -147,7 +211,7 @@ class Engine:
         msg = (
             f"🏰 Вотчина основана: <b>{realm['title']}</b>\n"
             f"Карта {width}×{height}. Тик каждый день в {TICK_HOUR:02d}:{TICK_MINUTE:02d} ({tz}).\n"
-            f"Напишите боту в личку или нажмите «Моё владение», чтобы получить усадьбу."
+            f"Напишите боту в личку или нажмите \"Моё владение\", чтобы получить усадьбу."
         )
         return realm, msg
 
@@ -160,7 +224,7 @@ class Engine:
         )
         realm = self.db.get_realm(realm_id)
         return (
-            f"⚠️ Удаление долины «{realm['title']}» (id={realm_id}).\n"
+            f"⚠️ Удаление долины \"{realm['title']}\" (id={realm_id}).\n"
             f"Чтобы подтвердить, отправьте:\n"
             f"<code>/вч_wipe {realm_id} {code} УДАЛИТЬ</code>\n"
             f"Код действует 10 минут."
@@ -184,15 +248,30 @@ class Engine:
     def ensure_user(self, user) -> None:
         name = (user.full_name or user.first_name or "Путник").strip()
         self.db.upsert_user(user.id, user.username, name)
+        # подтягиваем имя усадеб под username / полное имя (без дублей "Артём")
+        self.db.set_fief_names_for_user(user.id, fief_name_for_user(user))
+
+    def fief_label(self, fief: dict | None) -> str:
+        """Публичное имя из профиля владельца; при расхождении обновляет fiefs.name."""
+        if not fief:
+            return "Усадьба"
+        user = self.db.get_user(int(fief["user_id"])) if fief.get("user_id") else None
+        if not user:
+            return str(fief.get("name") or "Усадьба")
+        label = fief_name_for_user(user)
+        if fief.get("id") is not None and label != fief.get("name"):
+            self.db.update_fief(int(fief["id"]), name=label)
+        return label
 
     def starter_tile_choices(self, realm_id: int, count: int = 3) -> list[dict]:
+        """Предлагает стартовые клетки, максимально разнесённые на торе."""
+        realm = self.db.get_realm(realm_id)
+        width, height = int(realm["width"]), int(realm["height"])
         tiles = self.db.get_tiles(realm_id)
-        fiefs = self.db.list_fiefs(realm_id)
-        owned = {(t["x"], t["y"]) for t in tiles if t["owner_fief_id"]}
-        occupied_owners = []
-        for t in tiles:
-            if t["owner_fief_id"]:
-                occupied_owners.append((t["x"], t["y"]))
+        # якоря - ядра существующих усадеб (иначе все занятые клетки)
+        cores = [(t["x"], t["y"]) for t in tiles if t.get("is_core") and t["owner_fief_id"]]
+        if not cores:
+            cores = [(t["x"], t["y"]) for t in tiles if t["owner_fief_id"]]
 
         candidates = [
             t
@@ -201,27 +280,7 @@ class Engine:
             and t["tile_type"] not in (B.TILE_WILDS, B.TILE_ROAD, B.TILE_RIVER)
             and not t.get("is_overgrown")
         ]
-
-        def min_dist(t):
-            if not occupied_owners:
-                return 99
-            return min(abs(t["x"] - ox) + abs(t["y"] - oy) for ox, oy in occupied_owners)
-
-        candidates.sort(key=lambda t: (-min_dist(t), t["y"], t["x"]))
-        # разнесённые
-        picked: list[dict] = []
-        for t in candidates:
-            if all(abs(t["x"] - p["x"]) + abs(t["y"] - p["y"]) >= 2 for p in picked):
-                picked.append(t)
-            if len(picked) >= count:
-                break
-        if len(picked) < count:
-            for t in candidates:
-                if t not in picked:
-                    picked.append(t)
-                if len(picked) >= count:
-                    break
-        return picked[:count]
+        return pick_max_separated_tiles(candidates, cores, width, height, count)
 
     def join_fief(self, realm_id: int, user, tile_id: int) -> tuple[dict, str]:
         self.ensure_user(user)
@@ -235,8 +294,7 @@ class Engine:
         if tile["tile_type"] in (B.TILE_WILDS, B.TILE_ROAD, B.TILE_RIVER):
             raise ValueError("Нельзя начать здесь")
 
-        display = (user.full_name or user.first_name or "Путник").strip()
-        name = f"Усадьба {display.split()[0]}"
+        name = fief_name_for_user(user)
         fief = self.db.create_fief(
             realm_id,
             user.id,
@@ -245,7 +303,7 @@ class Engine:
             goods=B.STARTING_GOODS,
             might=B.STARTING_MIGHT,
             actions=1,
-            # день 1 (выбор клетки) уже выполнен — сразу квест на постройку
+            # выбор стартовой клетки уже выполнен - сразу квест на расширение
             onboard_step=2,
         )
         self.db.update_tile(
@@ -262,7 +320,8 @@ class Engine:
             f"({B.TILE_NAMES_RU[tile['tile_type']]}).\n"
             f"Стартовый набор: ферма I, {B.STARTING_GRAIN} зерна, "
             f"{B.STARTING_GOODS} товаров, {B.STARTING_MIGHT} силы.\n"
-            f"Откройте статус — урожай собирается автоматически."
+            f"Урожай собирается сам. Первый квест - занять соседнюю клетку "
+            f"(от {B.CLAIM_COSTS[2]} товаров)."
         )
 
     # ---------- views ----------
@@ -355,22 +414,35 @@ class Engine:
         tier = absence_mod.inactivity_tier(inactive_days)
         if tier == "dormant":
             flags.append("Дремлет")
-        flag_s = (", ".join(flags)) if flags else "—"
+        flag_s = (", ".join(flags)) if flags else "-"
         militia = B.militia_upkeep_grain(fief["might"])
         land = B.land_upkeep(len([t for t in tiles if not t.get("is_overgrown")]))
         lines = [
-            f"🏡 <b>{fief['name']}</b> — день {realm['day_number']}",
+            f"🏡 <b>{self.fief_label(fief)}</b> - день {realm['day_number']}",
         ]
+        active_tiles = [t for t in tiles if not t.get("is_overgrown")]
+        # Уже расширились, но квест на клейм ещё висит (старые усадьбы / сбой).
+        if int(fief.get("onboard_step") or 0) == 2 and len(active_tiles) >= 2:
+            self._onboard_claim(fief_id)
+            fief = self.db.get_fief(fief_id)
         quest = onboard_quest_html(fief["onboard_step"])
         if quest:
             lines.append(quest)
+            patience = onboard_patience_hint(
+                onboard_step=int(fief["onboard_step"]),
+                goods=int(fief["goods"]),
+                tile_count=len(active_tiles),
+                min_build_cost=B.min_any_build_action_cost(active_tiles),
+            )
+            if patience:
+                lines.append(patience)
         else:
             hint = raid_pact_lock_hint(
                 onboard_step=int(fief.get("onboard_step") or 0),
                 day_number=int(realm["day_number"]),
             )
             if hint:
-                lines.append(f"Набег и пакт — {hint}.")
+                lines.append(f"Набег и пакт - {hint}.")
         lines.extend(
             [
                 f"Клеток: {len(tiles)}/{B.TILE_HARD_CAP} · Действий: {fief['actions']}/{B.ACTIONS_BANK_MAX}",
@@ -396,7 +468,7 @@ class Engine:
                 p = self.db.get_pact(f["pact_id"])
                 if p:
                     tag = f" [{p['name']}]"
-            legend[fid] = f"{f['name']}{tag}"
+            legend[fid] = f"{self.fief_label(f)}{tag}"
         claimable = None
         if highlight_fief_id:
             owned = {
@@ -405,7 +477,11 @@ class Engine:
                 if t.owner_fief_id == highlight_fief_id and not t.is_overgrown
             }
             claimable = adjacent_claimable(
-                owned, {(t.x, t.y): t for t in views}, for_fief_id=highlight_fief_id
+                owned,
+                {(t.x, t.y): t for t in views},
+                width=realm["width"],
+                height=realm["height"],
+                for_fief_id=highlight_fief_id,
             )
         grid = render_map(
             realm["width"],
@@ -439,9 +515,16 @@ class Engine:
             raise ValueError("Клетка не существует")
         if target["owner_fief_id"] is not None and not target.get("is_overgrown"):
             raise ValueError("Клетка занята")
+        realm = self.db.get_realm(realm_id)
         views = {(t.x, t.y): t for t in self.tile_views(realm_id)}
         owned = {(t["x"], t["y"]) for t in tiles if not t.get("is_overgrown")}
-        if (x, y) not in adjacent_claimable(owned, views, for_fief_id=fief_id):
+        if (x, y) not in adjacent_claimable(
+            owned,
+            views,
+            width=realm["width"],
+            height=realm["height"],
+            for_fief_id=fief_id,
+        ):
             raise ValueError("Клетка не соседняя")
 
         is_wilds = target["tile_type"] == B.TILE_WILDS
@@ -471,6 +554,7 @@ class Engine:
                     for t in self.db.fief_tiles(fief_id):
                         self.db.update_tile(t["id"], is_core=True)
                 self.maybe_grow_map(realm_id)
+            self._onboard_claim(fief_id)
             return f"Занята заросшая клетка {coord_label(x, y)} (−{cost} товаров)."
 
         cost = B.claim_cost(n, is_wilds=is_wilds)
@@ -508,6 +592,7 @@ class Engine:
                     self.db.update_tile(t["id"], is_core=True)
 
             self.maybe_grow_map(realm_id)
+        self._onboard_claim(fief_id)
         extra = f" Находка в руинах: +{ruins_loot} товаров." if ruins_loot else ""
         if is_wilds:
             extra = f" Глушь расчищена → {B.TILE_NAMES_RU[new_type]}." + extra
@@ -570,15 +655,15 @@ class Engine:
         self._onboard_build(fief_id)
         return f"{B.BUILDING_NAMES_RU[building]} {target_level} на {coord_label(x, y)} (−{cost} товаров)."
 
-    def _onboard_build(self, fief_id: int) -> None:
+    def _onboard_claim(self, fief_id: int) -> None:
         fief = self.db.get_fief(fief_id)
-        patch = try_complete_onboard_build(fief)
+        patch = try_complete_onboard_claim(fief)
         if patch:
             self.db.update_fief(fief_id, **patch)
 
-    def _onboard_trade(self, fief_id: int) -> None:
+    def _onboard_build(self, fief_id: int) -> None:
         fief = self.db.get_fief(fief_id)
-        patch = try_complete_onboard_trade(fief)
+        patch = try_complete_onboard_build(fief)
         if patch:
             self.db.update_fief(fief_id, **patch)
 
@@ -643,9 +728,11 @@ class Engine:
                     interceptor = m
                     break
 
+        atk_label = self.fief_label(atk)
+        vic_label = self.fief_label(vic)
         result = resolve_raid(
-            attacker_name=atk["name"],
-            victim_name=vic["name"],
+            attacker_name=atk_label,
+            victim_name=vic_label,
             attack_might=might,
             watch_defense=watch_def,
             patrol_active=patrol,
@@ -705,8 +792,8 @@ class Engine:
             success=result.success,
             victim_fief_id=victim_id,
             victim_user_id=int(vic_final["user_id"]),
-            victim_name=str(vic_final["name"]),
-            attacker_name=str(atk_final["name"]),
+            victim_name=self.fief_label(vic_final),
+            attacker_name=self.fief_label(atk_final),
             grain_stolen=result.grain_stolen,
             goods_stolen=result.goods_stolen,
             intercept_applied=result.intercept_applied,
@@ -755,7 +842,6 @@ class Engine:
                 want_amt=want_amt,
                 expires_at=_utcnow() + timedelta(hours=B.TRADE_EXPIRE_HOURS),
             )
-            self._onboard_trade(fief_id)
         return f"Лот #{offer['id']}: отдаю {give_amt} {B.RES_NAMES_RU[give_res]} за {want_amt} {B.RES_NAMES_RU[want_res]}."
 
     def accept_trade(self, fief_id: int, trade_id: int) -> str:
@@ -840,9 +926,6 @@ class Engine:
                     for fid in (fief_id, trade["offerer_fief_id"]):
                         f = self.db.get_fief(fid)
                         self.db.update_fief(fid, grain=f["grain"] + 8)
-
-                for fid in (fief_id, trade["offerer_fief_id"]):
-                    self._onboard_trade(fid)
         if expired:
             raise ValueError("Лот истёк")
         return f"Сделка #{trade_id} закрыта."
@@ -887,7 +970,7 @@ class Engine:
         if not name:
             raise ValueError("Нужно имя")
         pact = self.db.create_pact(fief["realm_id"], name, fief_id)
-        return f"Пакт «{pact['name']}» создан. Приглашайте союзников."
+        return f"Пакт \"{pact['name']}\" создан. Приглашайте союзников."
 
     def invite_to_pact(self, founder_fief_id: int, target_fief_id: int) -> str:
         founder = self.db.get_fief(founder_fief_id)
@@ -905,7 +988,7 @@ class Engine:
         if target["realm_id"] != founder["realm_id"]:
             raise ValueError("Другая долина")
         self.db.update_fief(target_fief_id, pact_id=pact["id"])
-        return f"{target['name']} в пакте «{pact['name']}»."
+        return f"{self.fief_label(target)} в пакте \"{pact['name']}\"."
 
     def leave_pact(self, fief_id: int) -> str:
         fief = self.db.get_fief(fief_id)
@@ -1077,6 +1160,7 @@ class Engine:
             sunday_extra = self._sunday_extra(realm_id)
 
         grow_msg = self.maybe_grow_map(realm_id)
+        rumor_lines = roll_daily_rumors(self._rumor_snapshots(realm_id), random.Random())
         digest = format_digest(
             realm_title=realm["title"],
             day=day,
@@ -1085,11 +1169,16 @@ class Engine:
             market_line=market_line,
             feud_lines=feud_lines,
             sunday_extra=sunday_extra,
+            rumor_lines=rumor_lines,
         )
         if grow_msg:
             digest += f"\n📜 {grow_msg}"
 
-        self.db.update_realm(realm_id, last_digest_text=digest)
+        self.db.update_realm(
+            realm_id,
+            last_digest_text=digest,
+            last_rumor_lines=rumor_lines,
+        )
 
         return {
             "digest": digest,
@@ -1208,7 +1297,7 @@ class Engine:
         return int(fief_id) not in self._drought_mitigated_fief_ids(fief["realm_id"], realm)
 
     def claim_deserter(self, event_id: int, user_id: int) -> str:
-        """Первый клейм в группе: +might. Повтор/опоздание — дружеский отказ."""
+        """Первый клейм в группе: +might. Повтор/опоздание - дружеский отказ."""
         ev = self.db.get_event(event_id)
         if not ev or ev.get("event_key") != "deserter":
             return "already_taken"
@@ -1280,7 +1369,7 @@ class Engine:
                 af = self.db.get_fief(a)
                 vf = self.db.get_fief(v)
                 if af and vf:
-                    lines.append(f"{af['name']} против {vf['name']}")
+                    lines.append(f"{self.fief_label(af)} против {self.fief_label(vf)}")
         return lines
 
     def _sunday_extra(self, realm_id: int) -> str:
@@ -1293,7 +1382,42 @@ class Engine:
             reverse=True,
         )
         top = by_tiles[0]
-        return f"Титулы: больше всех земель — {top['name']}."
+        return f"Титулы: больше всех земель - {self.fief_label(top)}."
+
+    def _rumor_snapshots(self, realm_id: int) -> list[FiefRumorSnapshot]:
+        now = _utcnow()
+        out: list[FiefRumorSnapshot] = []
+        for fief in self.db.list_fiefs(realm_id):
+            if fief.get("frozen"):
+                continue
+            buildings = tuple(
+                (str(t["building"]), int(t["building_level"]))
+                for t in self.db.fief_tiles(fief["id"])
+                if t.get("building")
+                and int(t.get("building_level") or 0) > 0
+                and not t.get("is_overgrown")
+            )
+            out.append(
+                FiefRumorSnapshot(
+                    fief_id=int(fief["id"]),
+                    name=self.fief_label(fief),
+                    grain=int(fief["grain"]),
+                    goods=int(fief["goods"]),
+                    might=int(fief["might"]),
+                    buildings=buildings,
+                    patrol_active=bool(
+                        fief.get("patrol_until") and fief["patrol_until"] > now
+                    ),
+                )
+            )
+        return out
+
+    def rumors_text(self, realm_id: int) -> str:
+        realm = self.db.get_realm(realm_id)
+        if not realm:
+            return format_rumors_pull([])
+        lines = list(realm.get("last_rumor_lines") or [])
+        return format_rumors_pull(lines)
 
     def help_text(self) -> str:
         from app.domain.guide import short_help

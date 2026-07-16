@@ -17,6 +17,14 @@ from app.handlers import admin, callbacks, dm, group
 from app.scheduler import scheduler_loop
 
 
+def register_routers(dp: Dispatcher) -> None:
+    """Порядок важен: admin до dm, иначе F.text перехватывает /команды."""
+    dp.include_router(group.router)
+    dp.include_router(admin.router)
+    dp.include_router(dm.router)
+    dp.include_router(callbacks.router)
+
+
 def setup_logging() -> None:
     log_dir = Path(LOG_DIRECTORY)
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -59,10 +67,7 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher()
-    dp.include_router(group.router)
-    dp.include_router(dm.router)
-    dp.include_router(callbacks.router)
-    dp.include_router(admin.router)
+    register_routers(dp)
 
     stop_event = asyncio.Event()
     sched_task = asyncio.create_task(scheduler_loop(bot, stop_event), name="scheduler")

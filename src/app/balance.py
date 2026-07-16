@@ -6,9 +6,9 @@ from typing import Any
 
 
 # --- Карта ---
-TILES_PER_PLAYER = 3.5
-MAP_MIN_TILES = 12
-MAP_MAX_TILES = 64
+TILES_PER_PLAYER = 9
+MAP_MIN_TILES = 36  # 6×6
+MAP_MAX_TILES = 100
 MAP_GROWTH_CLAIMED_RATIO = 0.70
 
 TILE_FIELD = "field"
@@ -51,6 +51,8 @@ TILE_CLUSTER_BONUS = 0.15
 
 RIVER_PASSIVE_GRAIN = 3
 ROAD_PASSIVE_GOODS = 3
+# Базовый доход усадьбы (не от зданий): соло-старт без рынка не зависает.
+FIEF_BASE_GOODS = 3
 RUINS_LOOT_MIN = 30
 RUINS_LOOT_MAX = 80
 WILDS_CLAIM_MULT = 2
@@ -85,7 +87,7 @@ DEFAULT_STASH_CAP = 150  # зерно/товары без амбара
 COLLECT_CAP_DAYS_BASE = 3
 
 STARTING_GRAIN = 30
-STARTING_GOODS = 20
+STARTING_GOODS = 30
 STARTING_MIGHT = 5
 STARTING_FARM_LEVEL = 1
 
@@ -164,6 +166,15 @@ FEUD_WINDOW_DAYS = 7
 PACT_SIZE_MIN = 2
 PACT_SIZE_MAX = 5
 
+# --- Слухи (сплетни в утренней сводке; не разведка) ---
+RUMOR_MAX_PER_DAY = 2
+RUMOR_LINE_CHANCE = 0.70
+RUMOR_TRUTH_FULL = 0.50
+RUMOR_TRUTH_FUZZY = 0.35
+# остаток (~0.15) - ложный слух
+RUMOR_WEALTH_BANDS = (40, 120, 300)  # границы: тощая / сытая / тугая / ломится
+RUMOR_MIGHT_BANDS = (8, 20)  # thrонь / крепкая / много копий
+
 # --- Торговля ---
 TRADE_EXPIRE_HOURS = 48
 TRADEABLE = (RES_GRAIN, RES_GOODS)
@@ -187,6 +198,7 @@ OVERGROWN_DAYS = 21
 OVERGROWN_COMPENSATION = 0.5
 
 # --- Онбординг ---
+# шаг 2 (занять землю) → товары; шаг 3 (стройка) → зерно; готово при >= 4
 ONBOARD_DAY2_GOODS = 15
 ONBOARD_DAY3_GRAIN = 10
 
@@ -265,6 +277,60 @@ def building_upgrade_cost(building: str, target_level: int) -> int:
 def repair_cost(building: str, level_to_restore: int) -> int:
     """Стоимость починки до level_to_restore (= апгрейд на этот уровень × 0.5)."""
     return int(building_upgrade_cost(building, level_to_restore) * REPAIR_COST_MULT)
+
+
+def scaled_building_cost(base: int, cost_mult: float = 1.0) -> int:
+    if cost_mult == 1.0:
+        return int(base)
+    return int(base * cost_mult)
+
+
+def build_action_cost(
+    building: str,
+    tile: dict,
+    *,
+    cost_mult: float = 1.0,
+) -> int | None:
+    """Стоимость постройки/апгрейда/ремонта выбранного типа на клетке, или None."""
+    current = tile.get("building")
+    level = int(tile.get("building_level") or 0)
+    damaged = bool(tile.get("damaged"))
+    if damaged:
+        if current == building:
+            return repair_cost(current, level)
+        return None
+    if current and current != building:
+        return None
+    if not current:
+        return scaled_building_cost(building_upgrade_cost(building, 1), cost_mult)
+    if level >= 3:
+        return None
+    return scaled_building_cost(building_upgrade_cost(building, level + 1), cost_mult)
+
+
+def cheapest_build_action_cost(
+    building: str,
+    tiles: list[dict],
+    *,
+    cost_mult: float = 1.0,
+) -> int | None:
+    """Минимальная доступная цена по типу здания среди клеток усадьбы."""
+    costs = [
+        c
+        for t in tiles
+        if (c := build_action_cost(building, t, cost_mult=cost_mult)) is not None
+    ]
+    return min(costs) if costs else None
+
+
+def min_any_build_action_cost(tiles: list[dict], *, cost_mult: float = 1.0) -> int | None:
+    """Минимальная цена любого доступного строительства/апгрейда/ремонта."""
+    costs = [
+        c
+        for building in BUILDING_COSTS
+        if (c := cheapest_build_action_cost(building, tiles, cost_mult=cost_mult)) is not None
+    ]
+    return min(costs) if costs else None
 
 
 def map_target_tiles(player_count: int) -> int:

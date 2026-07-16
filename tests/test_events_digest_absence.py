@@ -131,7 +131,7 @@ def test_gated_content_remains_in_tables():
 
 def test_roll_minor_event_quiet_and_hit():
     quiet = events.roll_minor_event(Random(0))
-    # seed 0: first random() is below chance on CPython — verify distribution instead
+    # seed 0: first random() is below chance on CPython - verify distribution instead
     hits = 0
     none_count = 0
     for seed in range(200):
@@ -177,7 +177,7 @@ def test_pick_catastrophe_never_returns_gated_keys():
 def test_pick_catastrophe_avoids_last_when_possible():
     shipped = sorted(events.SHIPPED_CATASTROPHE_KEYS)
     if len(shipped) < 2:
-        # один ключ в пуле — повтор last допустим
+        # один ключ в пуле - повтор last допустим
         for seed in range(20):
             assert events.pick_catastrophe(Random(seed), shipped[0]) == shipped[0]
         return
@@ -213,16 +213,16 @@ def test_format_digest_gdd_shape():
             "Саша ограбил Кирилла (−34 товара).",
             "Набег Оли на Иру отбит.",
         ],
-        event_line="Засуха — урожай слабее; полив за товары в личке.",
+        event_line="Засуха - урожай слабее; полив за товары в личке.",
         market_line="3 лота. Лучший: 40 зерна за 25 товаров (Ваня).",
-        feud_lines=["Саша против Кирилла — неделя вторая."],
+        feud_lines=["Саша против Кирилла - неделя вторая."],
         sunday_extra=None,
     )
-    assert text.startswith("🏰 Долина друзей — день 43")
+    assert text.startswith("🏰 Долина друзей - день 43")
     assert "🌙 Ночью: Саша ограбил Кирилла (−34 товара). Набег Оли на Иру отбит." in text
-    assert "📜 Сегодня: Засуха — урожай слабее; полив за товары в личке." in text
+    assert "📜 Сегодня: Засуха - урожай слабее; полив за товары в личке." in text
     assert "🛒 Рынок: 3 лота. Лучший: 40 зерна за 25 товаров (Ваня)." in text
-    assert "⚔️ Вражда: Саша против Кирилла — неделя вторая." in text
+    assert "⚔️ Вражда: Саша против Кирилла - неделя вторая." in text
     assert "Вражда: Вражда:" not in text
     assert "farm_mult" not in text
 
@@ -249,13 +249,13 @@ def test_format_digest_quiet_night_and_sunday():
         event_line=None,
         market_line=None,
         feud_lines=[],
-        sunday_extra="🏅 Титулы: Хлебный барон — Ваня.",
+        sunday_extra="🏅 Титулы: Хлебный барон - Ваня.",
     )
     assert "🌙 Ночью: тихо." in text
     assert "📜" not in text
     assert "🛒" not in text
     assert "⚔️" not in text
-    assert "🏅 Титулы: Хлебный барон — Ваня." in text
+    assert "🏅 Титулы: Хлебный барон - Ваня." in text
 
 
 def test_format_decree():

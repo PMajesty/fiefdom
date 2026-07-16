@@ -14,10 +14,16 @@ from app.domain.map_gen import coord_label
 from app.domain.economy import adjacent_claimable
 from app.engine import raid_pact_lock_message
 from app.handlers.shared import (
+    announce_realm,
     fief_home_kb,
     fief_raid_pact_state,
+    format_pact_create_announce,
+    format_pact_join_announce,
+    format_raid_announce,
+    format_trade_post_announce,
     get_engine,
     parse_start_payload,
+    realm_upgrade_cost_mult,
     reply_game,
     resolve_fief_for_user,
 )
@@ -58,6 +64,11 @@ _MENU_WORDS = {
     "гайд": "guide",
     "правила": "guide",
     "guide": "guide",
+    "слухи": "rumors",
+    "слух": "rumors",
+    "сплетни": "rumors",
+    "rumors": "rumors",
+    "rumor": "rumors",
     "меню": "menu",
     "menu": "menu",
 }
@@ -76,7 +87,7 @@ def is_pending_cancel_text(text: str) -> bool:
 
 
 async def _notify_raid_parties(bot, result) -> None:
-    """DM жертве (и перехватчику); блок бота — только warning."""
+    """DM жертве (и перехватчику); блок бота - только warning."""
     targets: list[tuple[int, str]] = [
         (int(result.victim_user_id), result.victim_dm_text()),
     ]
@@ -103,22 +114,45 @@ def format_claim_button(
     *,
     is_overgrown: bool = False,
 ) -> str:
-    """Подпись кнопки занятия: «А3 Поле · 30 тов.» (глушь ×2, кроме заросших)."""
+    """Подпись кнопки занятия: \"А3 Поле · 30 тов.\" (глушь ×2, кроме заросших)."""
     name = B.TILE_NAMES_RU.get(tile_type, tile_type)
     is_wilds = (not is_overgrown) and tile_type == B.TILE_WILDS
     cost = B.claim_cost(next_tile_count, is_wilds=is_wilds)
     return f"{coord_label(x, y)} {name} · {cost} тов."
 
 
-def format_building_type_label(building: str) -> str:
-    """Подпись типа здания с ценой 1-го уровня."""
+def format_building_type_label(
+    building: str,
+    tiles: list[dict] | None = None,
+    *,
+    cost_mult: float = 1.0,
+) -> str:
+    """Подпись типа здания с минимальной реальной ценой по клеткам усадьбы."""
     name = B.BUILDING_NAMES_RU.get(building, building)
-    cost = B.building_upgrade_cost(building, 1)
-    return f"{name} · {cost} тов."
+    if tiles is None:
+        cost = B.scaled_building_cost(B.building_upgrade_cost(building, 1), cost_mult)
+        return f"{name} · {cost} тов."
+    cost = B.cheapest_build_action_cost(building, tiles, cost_mult=cost_mult)
+    if cost is not None:
+        return f"{name} · {cost} тов."
+    has_maxed = any(
+        t.get("building") == building
+        and int(t.get("building_level") or 0) >= 3
+        and not t.get("damaged")
+        for t in tiles
+    )
+    if has_maxed:
+        return f"{name} · макс."
+    return name
 
 
-def format_build_cost_label(building: str, tile: dict) -> str:
-    """Стоимость постройки/апгрейда/ремонта на клетке (без учёта событий)."""
+def format_build_cost_label(
+    building: str,
+    tile: dict,
+    *,
+    cost_mult: float = 1.0,
+) -> str:
+    """Стоимость постройки/апгрейда/ремонта на клетке."""
     current = tile.get("building")
     level = int(tile.get("building_level") or 0)
     damaged = bool(tile.get("damaged"))
@@ -127,17 +161,24 @@ def format_build_cost_label(building: str, tile: dict) -> str:
     if current and current != building:
         return "занято"
     if not current:
-        return f"{B.building_upgrade_cost(building, 1)} тов."
+        cost = B.scaled_building_cost(B.building_upgrade_cost(building, 1), cost_mult)
+        return f"{cost} тов."
     target = level + 1
     if target > 3:
         return "макс."
-    return f"{B.building_upgrade_cost(building, target)} тов."
+    cost = B.scaled_building_cost(B.building_upgrade_cost(building, target), cost_mult)
+    return f"{cost} тов."
 
 
-def format_build_tile_button(building: str, tile: dict) -> str:
+def format_build_tile_button(
+    building: str,
+    tile: dict,
+    *,
+    cost_mult: float = 1.0,
+) -> str:
     """Подпись клетки при выборе места стройки."""
     coord = coord_label(tile["x"], tile["y"])
-    cost_label = format_build_cost_label(building, tile)
+    cost_label = format_build_cost_label(building, tile, cost_mult=cost_mult)
     current = tile.get("building")
     level = int(tile.get("building_level") or 0)
     damaged = bool(tile.get("damaged"))
@@ -211,7 +252,7 @@ def starter_tiles_kb(realm_id: int, tiles: list[dict]) -> InlineKeyboardMarkup:
     rows = []
     for t in tiles:
         label = (
-            f"{coord_label(t['x'], t['y'])} — "
+            f"{coord_label(t['x'], t['y'])} - "
             f"{B.TILE_NAMES_RU.get(t['tile_type'], t['tile_type'])}"
         )
         rows.append(
@@ -233,7 +274,7 @@ def realm_picker_kb(fiefs: list[dict], engine) -> InlineKeyboardMarkup:
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"{f['name']} ({title})",
+                    text=f"{engine.fief_label(f)} ({title})",
                     callback_data=f"st:{f['id']}",
                 )
             ]
@@ -266,32 +307,43 @@ def claimable_kb(
             row = []
     if row:
         rows.append(row)
-    rows.append([InlineKeyboardButton(text="« Меню", callback_data=f"st:{fief_id}")])
+    rows.append([InlineKeyboardButton(text="< Меню", callback_data=f"st:{fief_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def building_types_kb(fief_id: int) -> InlineKeyboardMarkup:
+def building_types_kb(
+    fief_id: int,
+    tiles: list[dict] | None = None,
+    *,
+    cost_mult: float = 1.0,
+) -> InlineKeyboardMarkup:
     rows = []
     for key in B.BUILDING_NAMES_RU:
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=format_building_type_label(key),
+                    text=format_building_type_label(key, tiles, cost_mult=cost_mult),
                     callback_data=f"bld:{fief_id}:{key}",
                 )
             ]
         )
-    rows.append([InlineKeyboardButton(text="« Меню", callback_data=f"st:{fief_id}")])
+    rows.append([InlineKeyboardButton(text="< Меню", callback_data=f"st:{fief_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def build_tiles_kb(fief_id: int, building: str, tiles: list[dict]) -> InlineKeyboardMarkup:
+def build_tiles_kb(
+    fief_id: int,
+    building: str,
+    tiles: list[dict],
+    *,
+    cost_mult: float = 1.0,
+) -> InlineKeyboardMarkup:
     rows = []
     row: list[InlineKeyboardButton] = []
     for t in tiles[:24]:
         row.append(
             InlineKeyboardButton(
-                text=format_build_tile_button(building, t),
+                text=format_build_tile_button(building, t, cost_mult=cost_mult),
                 callback_data=f"bld:{fief_id}:{building}:{t['x']}:{t['y']}",
             )
         )
@@ -300,22 +352,23 @@ def build_tiles_kb(fief_id: int, building: str, tiles: list[dict]) -> InlineKeyb
             row = []
     if row:
         rows.append(row)
-    rows.append([InlineKeyboardButton(text="« Назад", callback_data=f"bld:{fief_id}")])
+    rows.append([InlineKeyboardButton(text="< Назад", callback_data=f"bld:{fief_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def raid_targets_kb(fief_id: int, others: list[dict]) -> InlineKeyboardMarkup:
+def raid_targets_kb(fief_id: int, others: list[dict], engine=None) -> InlineKeyboardMarkup:
     rows = []
     for o in others[:20]:
+        label = engine.fief_label(o) if engine is not None else o["name"]
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"{o['name']} (сила {o['might']})",
+                    text=f"{label} (сила {o['might']})",
                     callback_data=f"rad:{fief_id}:{o['id']}",
                 )
             ]
         )
-    rows.append([InlineKeyboardButton(text="« Меню", callback_data=f"st:{fief_id}")])
+    rows.append([InlineKeyboardButton(text="< Меню", callback_data=f"st:{fief_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -345,7 +398,7 @@ def market_kb(fief_id: int, offers: list[dict]) -> InlineKeyboardMarkup:
                     )
                 ]
             )
-    rows.append([InlineKeyboardButton(text="« Меню", callback_data=f"st:{fief_id}")])
+    rows.append([InlineKeyboardButton(text="< Меню", callback_data=f"st:{fief_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -374,7 +427,7 @@ def pact_kb(fief_id: int, in_pact: bool, is_founder: bool) -> InlineKeyboardMark
         rows.append(
             [InlineKeyboardButton(text="Выйти из пакта", callback_data=f"pct:leave:{fief_id}")]
         )
-    rows.append([InlineKeyboardButton(text="« Меню", callback_data=f"st:{fief_id}")])
+    rows.append([InlineKeyboardButton(text="< Меню", callback_data=f"st:{fief_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -402,7 +455,7 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
                 return
             await answer_html(
                 message,
-                f"Выберите стартовую клетку в долине «{realm['title']}»:",
+                f"Выберите стартовую клетку в долине \"{realm['title']}\":",
                 reply_markup=starter_tiles_kb(rid, tiles),
             )
             return
@@ -423,7 +476,7 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
                     return
                 await answer_html(
                     message,
-                    f"Усадьбы ещё нет. Выберите клетку в «{realm['title']}»:",
+                    f"Усадьбы ещё нет. Выберите клетку в \"{realm['title']}\":",
                     reply_markup=starter_tiles_kb(rid, tiles),
                 )
             return
@@ -433,7 +486,7 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
             await answer_html(
                 message,
                 "У вас пока нет усадьбы.\n"
-                "В групповом чате долины нажмите «Моё владение» или /вч_я.",
+                "В групповом чате долины нажмите \"Моё владение\" или /вч_я.",
             )
             return
         if len(fiefs) > 1:
@@ -471,10 +524,10 @@ async def cmd_menu(message: Message) -> None:
     await show_status(message, fief["id"])
 
 
-@router.message(F.text)
+@router.message(F.text, ~F.text.startswith("/"))
 async def dm_text(message: Message) -> None:
-    """FSM ввода + текстовое меню."""
-    if not message.text or message.text.startswith("/"):
+    """FSM ввода + текстовое меню (slash-команды не перехватываем)."""
+    if not message.text:
         return
     user_id = message.from_user.id
     text = message.text.strip()
@@ -500,7 +553,8 @@ async def dm_text(message: Message) -> None:
     if not key:
         await answer_html(
             message,
-            "Команды: статус, карта, рынок, земля, строить, дозор, набег, сделка, пакт, устав, меню.",
+            "Команды: статус, карта, рынок, земля, строить, дозор, набег, "
+            "сделка, пакт, слухи, устав, меню.",
         )
         return
 
@@ -527,6 +581,12 @@ async def dm_text(message: Message) -> None:
                 engine.guide_text(),
                 reply_markup=fief_home_kb(engine, fid),
             )
+        elif key == "rumors":
+            await reply_game(
+                message,
+                engine.rumors_text(fief["realm_id"]),
+                reply_markup=fief_home_kb(engine, fid),
+            )
         elif key == "market":
             offers = engine.db.list_open_trades(fief["realm_id"], fid)
             await reply_game(
@@ -537,10 +597,17 @@ async def dm_text(message: Message) -> None:
         elif key == "claim":
             await _offer_claim(message, engine, fief)
         elif key == "build":
+            tiles = [
+                t
+                for t in engine.db.fief_tiles(fid)
+                if not t.get("is_overgrown")
+            ]
+            realm = engine.db.get_realm(fief["realm_id"])
+            cost_mult = realm_upgrade_cost_mult(realm)
             await answer_html(
                 message,
                 "Выберите здание:",
-                reply_markup=building_types_kb(fid),
+                reply_markup=building_types_kb(fid, tiles, cost_mult=cost_mult),
             )
         elif key == "patrol":
             await answer_html(
@@ -574,7 +641,16 @@ async def _offer_claim(message: Message, engine, fief: dict) -> None:
         if t.owner_fief_id == fief["id"] and not t.is_overgrown
     }
     by_xy = {(t.x, t.y): t for t in views}
-    claimable = sorted(adjacent_claimable(owned, by_xy, for_fief_id=fief["id"]))
+    realm = engine.db.get_realm(fief["realm_id"])
+    claimable = sorted(
+        adjacent_claimable(
+            owned,
+            by_xy,
+            width=realm["width"],
+            height=realm["height"],
+            for_fief_id=fief["id"],
+        )
+    )
     if not claimable:
         await answer_html(message, "Нет соседних клеток для занятия.")
         return
@@ -620,7 +696,7 @@ async def _offer_raid(message: Message, engine, fief: dict) -> None:
     await answer_html(
         message,
         "Выберите цель набега:",
-        reply_markup=raid_targets_kb(fief["id"], others),
+        reply_markup=raid_targets_kb(fief["id"], others, engine),
     )
 
 
@@ -644,7 +720,7 @@ async def _offer_pact(message: Message, engine, fief: dict) -> None:
         pact = engine.db.get_pact(fief["pact_id"])
         is_founder = bool(pact and pact["founder_fief_id"] == fief["id"])
         name = pact["name"] if pact else "?"
-        text = f"Пакт «{name}»."
+        text = f"Пакт \"{name}\"."
     else:
         text = "Вы не в пакте."
     await answer_html(
@@ -677,6 +753,13 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
             reply_markup=fief_home_kb(engine, pending["fief_id"]),
         )
         await _notify_raid_parties(message.bot, result)
+        attacker = engine.db.get_fief(pending["fief_id"])
+        if attacker:
+            await announce_realm(
+                message.bot,
+                attacker["realm_id"],
+                format_raid_announce(result.public_line),
+            )
         return True
 
     if kind == "trade_create":
@@ -686,11 +769,12 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
             await reply_game(
                 message,
                 "Формат: <code>зерно 10 товары 5</code> (отдаю → хочу).\n"
-                "Или напишите «отмена».",
+                "Или напишите \"отмена\".",
                 reply_markup=pending_cancel_kb(pending["fief_id"]),
             )
             return True
         give_res, give_amt, want_res, want_amt = parsed
+        fief = engine.db.get_fief(pending["fief_id"])
         msg = engine.post_trade(
             pending["fief_id"], give_res, give_amt, want_res, want_amt
         )
@@ -698,14 +782,32 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
         await reply_game(
             message, msg, reply_markup=fief_home_kb(engine, pending["fief_id"])
         )
+        if fief:
+            engine.ensure_user(message.from_user)
+            await announce_realm(
+                message.bot,
+                fief["realm_id"],
+                format_trade_post_announce(
+                    engine.fief_label(fief), give_amt, give_res, want_amt, want_res
+                ),
+            )
         return True
 
     if kind == "pact_name":
+        fief = engine.db.get_fief(pending["fief_id"])
+        pact_name = text.strip()[:40]
         msg = engine.create_pact(pending["fief_id"], text)
         clear_pending(user_id)
         await reply_game(
             message, msg, reply_markup=fief_home_kb(engine, pending["fief_id"])
         )
+        if fief and pact_name:
+            engine.ensure_user(message.from_user)
+            await announce_realm(
+                message.bot,
+                fief["realm_id"],
+                format_pact_create_announce(engine.fief_label(fief), pact_name),
+            )
         return True
 
     if kind == "pact_invite":
@@ -714,15 +816,27 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
         if not target:
             await answer_html(
                 message,
-                "Усадьба не найдена. Укажите id или имя.\nИли напишите «отмена».",
+                "Усадьба не найдена. Укажите id или имя.\nИли напишите \"отмена\".",
                 reply_markup=pending_cancel_kb(pending["fief_id"]),
             )
             return True
+        founder = engine.db.get_fief(pending["fief_id"])
+        pact = (
+            engine.db.get_pact(founder["pact_id"])
+            if founder and founder.get("pact_id")
+            else None
+        )
         msg = engine.invite_to_pact(pending["fief_id"], target["id"])
         clear_pending(user_id)
         await reply_game(
             message, msg, reply_markup=fief_home_kb(engine, pending["fief_id"])
         )
+        if founder and pact:
+            await announce_realm(
+                message.bot,
+                founder["realm_id"],
+                format_pact_join_announce(engine.fief_label(target), pact["name"]),
+            )
         return True
 
     return False
@@ -757,7 +871,13 @@ def _resolve_fief_ref(engine, realm_id: int, text: str) -> dict | None:
         if f and f["realm_id"] == realm_id:
             return f
         return None
+    needle = text.lower()
     for f in engine.db.list_fiefs(realm_id):
-        if f["name"].lower() == text.lower():
+        label = engine.fief_label(f)
+        if f["name"].lower() == needle or label.lower() == needle:
+            return f
+        user = engine.db.get_user(f["user_id"])
+        uname = (user.get("username") or "").strip().lower() if user else ""
+        if uname and needle in {uname, f"@{uname}", f"усадьба @{uname}"}:
             return f
     return None

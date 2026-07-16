@@ -109,11 +109,11 @@ async def cmd_digest(message: Message, bot: Bot) -> None:
             text = (
                 f"Сводка публикуется автоматически после дневного тика "
                 f"в {hour:02d}:{minute:02d} ({tz}).\n"
-                "Откройте усадьбу в личке — там задания, рынок и новости дня."
+                "Откройте усадьбу в личке - там задания, рынок и новости дня."
             )
         if is_admin(message.from_user.id if message.from_user else None):
             text += (
-                f"\nАдмин: форс-тик — <code>/вч_tick {realm['id']}</code> в личке бота."
+                f"\nАдмин: форс-тик - <code>/вч_tick {realm['id']}</code> в личке бота."
             )
         kb = None
         username = await _bot_username(message, bot)
