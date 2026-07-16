@@ -612,7 +612,7 @@ def test_raid_does_not_bank_victim_pending_might():
 
 def test_raid_bidirectional_pair_cooldown_blocks_revenge():
     engine, fiefs, B = _raid_stateful_engine(
-        reverse_pair_at=9,
+        reverse_pair_at=10,
         vic_extra={"pending_grain": 0.0, "pending_goods": 0.0, "pending_might": 0.0},
     )
     try:
@@ -621,6 +621,29 @@ def test_raid_bidirectional_pair_cooldown_blocks_revenge():
     except ValueError as e:
         assert "пару" in str(e).lower() or "кулдаун" in str(e).lower()
     assert fiefs[1]["might"] == 20
+
+
+def test_raid_has_no_personal_attacker_cooldown():
+    """Личный кулдаун нападающего снят: недавний last_raid_tick сам по себе не блокирует."""
+    engine, fiefs, B = _raid_stateful_engine(
+        atk_extra={"last_raid_tick": 10, "might": 30},
+        vic_extra={"pending_grain": 0.0, "pending_goods": 0.0, "pending_might": 0.0},
+    )
+    with patch("app.engine.resolve_raid") as resolve:
+        resolve.return_value = RaidResult(
+            success=True,
+            ratio=1.0,
+            might_lost=5,
+            grain_stolen=1,
+            goods_stolen=0,
+            defense_used=1,
+            intercept_applied=False,
+            public_line="ok",
+        )
+        result = engine.raid(1, 2, might=10)
+    assert result.success is True
+    assert fiefs[1]["might"] == 25
+    assert not hasattr(B, "RAID_ATTACKER_COOLDOWN_TICKS")
 
 
 def test_raid_shield_blocks_outgoing():

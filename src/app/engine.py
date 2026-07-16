@@ -1142,12 +1142,6 @@ class Engine:
             raise ValueError("Пока действует щит, набеги недоступны")
         if tick_active(vic.get("shield_until_tick"), tick_index):
             raise ValueError("У жертвы щит после набега")
-        last_raid_tick = atk.get("last_raid_tick")
-        if (
-            last_raid_tick is not None
-            and int(last_raid_tick) + B.RAID_ATTACKER_COOLDOWN_TICKS > tick_index
-        ):
-            raise ValueError("Ещё рано для нового набега")
         last_pair = self.db.last_raid_attacker_victim(attacker_id, victim_id)
         last_reverse = self.db.last_raid_attacker_victim(victim_id, attacker_id)
         for raid_tick in (last_pair, last_reverse):
