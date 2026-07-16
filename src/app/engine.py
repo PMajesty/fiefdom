@@ -26,10 +26,11 @@ from app.domain.events import (
     MINOR_EVENTS,
     event_digest_line,
     minor_effect,
-    next_catastrophe_delay_days,
+    next_catastrophe_delay_ticks,
     pick_catastrophe,
     roll_minor_event,
 )
+from app.domain.ticks import tick_active
 from app.balance import best_rectangle
 from app.domain.map_gen import GenTile, append_strip, coord_label, generate_map
 from app.domain.raids import RaidActionResult, resolve_raid
@@ -195,8 +196,7 @@ class Engine:
         width, height = best_rectangle(B.MAP_MIN_TILES)
         tiles = generate_map(width, height)
         tz = TIMEZONE
-        delay = next_catastrophe_delay_days(random.Random())
-        next_cat = _utcnow() + timedelta(days=delay)
+        delay = next_catastrophe_delay_ticks(random.Random())
         realm = self.db.create_realm(
             chat_id=chat_id,
             title=title or "Долина",
@@ -206,7 +206,7 @@ class Engine:
             tick_hour=TICK_HOUR,
             tick_minute=TICK_MINUTE,
             feature_flags=dict(B.DEFAULT_FEATURE_FLAGS),
-            next_catastrophe_at=next_cat,
+            next_catastrophe_tick=delay,
         )
         # первый тик - завтра (не сразу после основания днём)
         from zoneinfo import ZoneInfo
@@ -434,6 +434,9 @@ class Engine:
             pending_goods=pd,
             pending_might=pm,
             last_active_at=_utcnow(),
+            last_active_tick=int(
+                (self.db.get_realm(fief["realm_id"]) or {}).get("tick_index") or 0
+            ),
         )
         return notes
 
@@ -445,18 +448,24 @@ class Engine:
             self.db.update_fief(fief_id, onboard_step=2)
             fief = self.db.get_fief(fief_id)
         realm = self.db.get_realm(fief["realm_id"])
+        tick_index = int(realm.get("tick_index") or 0)
         tiles = self.db.fief_tiles(fief_id)
         prod = self.fief_prod(fief)
         barn = self.barn_level(fief_id)
         flags = []
         if fief["hungry"]:
             flags.append("Голод")
-        if fief.get("patrol_until") and fief["patrol_until"] > _utcnow():
+        if tick_active(fief.get("patrol_until_tick"), tick_index):
             flags.append("Дозор")
-        if fief.get("shield_until") and fief["shield_until"] > _utcnow():
+        if tick_active(fief.get("shield_until_tick"), tick_index):
             flags.append("Щит")
-        inactive_days = (_utcnow() - fief["last_active_at"]).days if fief.get("last_active_at") else 0
-        tier = absence_mod.inactivity_tier(inactive_days)
+        last_active_tick = fief.get("last_active_tick")
+        inactive_ticks = (
+            tick_index - int(last_active_tick)
+            if last_active_tick is not None
+            else B.OVERGROWN_TICKS
+        )
+        tier = absence_mod.inactivity_tier(inactive_ticks)
         if tier == "dormant":
             flags.append("Дремлет")
         flag_s = (", ".join(flags)) if flags else "-"
@@ -561,7 +570,13 @@ class Engine:
             raise ValueError("Нет действий на сегодня (макс. запас 3)")
         if fief["frozen"]:
             raise ValueError("Усадьба заморожена")
-        self.db.update_fief(fief["id"], actions=fief["actions"] - 1, last_active_at=_utcnow())
+        realm = self.db.get_realm(fief["realm_id"]) or {}
+        self.db.update_fief(
+            fief["id"],
+            actions=fief["actions"] - 1,
+            last_active_at=_utcnow(),
+            last_active_tick=int(realm.get("tick_index") or 0),
+        )
 
     def claim_tile(self, fief_id: int, x: int, y: int) -> str:
         fief = self.db.get_fief(fief_id)
@@ -701,7 +716,7 @@ class Engine:
         # если damaged сбросили выше; апгрейд
         cost = B.building_upgrade_cost(building, target_level)
         realm = self.db.get_realm(fief["realm_id"])
-        if realm.get("active_minor_key") == "good_stone" and realm.get("active_minor_until") and realm["active_minor_until"] > _utcnow():
+        if realm.get("active_minor_key") == "good_stone":
             cost = int(cost * 0.75)
         if fief["goods"] < cost:
             raise ValueError(f"Нужно {cost} товаров")
@@ -735,12 +750,15 @@ class Engine:
             raise ValueError(f"Нужно {B.PATROL_COST_MIGHT} силы")
         self._spend_action(fief)
         fief = self.db.get_fief(fief_id)
+        realm = self.db.get_realm(fief["realm_id"]) or {}
+        tick_index = int(realm.get("tick_index") or 0)
         self.db.update_fief(
             fief_id,
             might=fief["might"] - B.PATROL_COST_MIGHT,
-            patrol_until=_utcnow() + timedelta(hours=B.PATROL_HOURS),
+            patrol_until=None,
+            patrol_until_tick=tick_index + B.PATROL_TICKS,
         )
-        return f"Дозор выставлен на {B.PATROL_HOURS}ч (−{B.PATROL_COST_MIGHT} силы)."
+        return f"Дозор выставлен на {B.PATROL_TICKS} тик(а) (−{B.PATROL_COST_MIGHT} силы)."
 
     def raid(self, attacker_id: int, victim_id: int, might: int) -> RaidActionResult:
         if might < B.RAID_MIN_MIGHT:
@@ -755,38 +773,34 @@ class Engine:
             raise ValueError("Голодные мужики не воюют")
         if atk["might"] < might:
             raise ValueError("Недостаточно силы")
-        now = _utcnow()
-        if atk.get("shield_until") and atk["shield_until"] > now:
+        realm = self.db.get_realm(atk["realm_id"]) or {}
+        tick_index = int(realm.get("tick_index") or 0)
+        if tick_active(atk.get("shield_until_tick"), tick_index):
             raise ValueError("Пока действует щит, набеги недоступны")
-        if vic.get("shield_until") and vic["shield_until"] > now:
+        if tick_active(vic.get("shield_until_tick"), tick_index):
             raise ValueError("У жертвы щит после набега")
-        if atk.get("last_raid_at") and atk["last_raid_at"] + timedelta(hours=B.RAID_ATTACKER_COOLDOWN_HOURS) > now:
+        last_raid_tick = atk.get("last_raid_tick")
+        if (
+            last_raid_tick is not None
+            and int(last_raid_tick) + B.RAID_ATTACKER_COOLDOWN_TICKS > tick_index
+        ):
             raise ValueError("Ещё рано для нового набега")
         last_pair = self.db.last_raid_attacker_victim(attacker_id, victim_id)
         last_reverse = self.db.last_raid_attacker_victim(victim_id, attacker_id)
-        pair_until = None
-        for ts in (last_pair, last_reverse):
-            if ts is None:
+        for raid_tick in (last_pair, last_reverse):
+            if raid_tick is None:
                 continue
-            until = ts + timedelta(hours=B.RAID_SAME_VICTIM_HOURS)
-            if pair_until is None or until > pair_until:
-                pair_until = until
-        if pair_until and pair_until > now:
-            raise ValueError("Кулдаун на эту пару усадеб")
+            if int(raid_tick) + B.RAID_SAME_VICTIM_TICKS > tick_index:
+                raise ValueError("Кулдаун на эту пару усадеб")
 
         self.collect_for_fief(attacker_id)
         self.collect_for_fief(victim_id, include_might=False)
         atk = self.db.get_fief(attacker_id)
         vic = self.db.get_fief(victim_id)
 
-        realm = self.db.get_realm(atk["realm_id"])
-        fog = (
-            realm.get("active_minor_key") == "fog"
-            and realm.get("active_minor_until")
-            and realm["active_minor_until"] > now
-        )
+        fog = realm.get("active_minor_key") == "fog"
         watch_def = self.fief_prod(vic).defense
-        patrol = bool(vic.get("patrol_until") and vic["patrol_until"] > now)
+        patrol = tick_active(vic.get("patrol_until_tick"), tick_index)
         intercept = False
         interceptor = None
         if vic.get("pact_id"):
@@ -823,7 +837,8 @@ class Engine:
             self.db.update_fief(
                 attacker_id,
                 might=atk["might"] - result.might_lost,
-                last_raid_at=now,
+                last_raid_at=_utcnow(),
+                last_raid_tick=tick_index,
             )
             if interceptor:
                 self.db.update_fief(interceptor["id"], might=interceptor["might"] - B.INTERCEPT_MIGHT)
@@ -835,7 +850,8 @@ class Engine:
                     victim_id,
                     grain=vic["grain"] - result.grain_stolen,
                     goods=vic["goods"] - result.goods_stolen,
-                    shield_until=now + timedelta(hours=B.RAID_VICTIM_SHIELD_HOURS),
+                    shield_until=None,
+                    shield_until_tick=tick_index + B.RAID_VICTIM_SHIELD_TICKS,
                 )
                 barn = self.barn_level(attacker_id)
                 cap = B.stash_cap(barn)
@@ -852,6 +868,7 @@ class Engine:
                 grain_stolen=result.grain_stolen,
                 goods_stolen=result.goods_stolen,
                 public_line=result.public_line,
+                tick_index=tick_index,
             )
             lines = list(realm.get("pending_raid_lines") or [])
             lines.append(result.public_line)
@@ -904,6 +921,8 @@ class Engine:
                 self.db.update_fief(fief_id, grain=fief["grain"] - give_amt)
             else:
                 self.db.update_fief(fief_id, goods=fief["goods"] - give_amt)
+            realm = self.db.get_realm(fief["realm_id"]) or {}
+            tick_index = int(realm.get("tick_index") or 0)
             offer = self.db.create_trade(
                 realm_id=fief["realm_id"],
                 offerer_fief_id=fief_id,
@@ -912,7 +931,7 @@ class Engine:
                 give_amt=give_amt,
                 want_res=want_res,
                 want_amt=want_amt,
-                expires_at=_utcnow() + timedelta(hours=B.TRADE_EXPIRE_HOURS),
+                expires_tick=tick_index + B.TRADE_EXPIRE_TICKS,
             )
         return f"Лот #{offer['id']}: отдаю {give_amt} {B.RES_NAMES_RU[give_res]} за {want_amt} {B.RES_NAMES_RU[want_res]}."
 
@@ -938,24 +957,16 @@ class Engine:
             raise ValueError("Недостаточно ресурса для оплаты")
 
         realm = self.db.get_realm(buyer["realm_id"])
-        bonus = 0.0
-        if (
-            realm.get("active_minor_key") == "fair"
-            and realm.get("active_minor_until")
-            and realm["active_minor_until"] > _utcnow()
-        ):
-            bonus = 0.05
-        wedding = (
-            realm.get("active_minor_key") == "wedding"
-            and realm.get("active_minor_until")
-            and realm["active_minor_until"] > _utcnow()
-        )
+        tick_index = int(realm.get("tick_index") or 0)
+        bonus = 0.05 if realm.get("active_minor_key") == "fair" else 0.0
+        wedding = realm.get("active_minor_key") == "wedding"
 
         with self.db.transaction():
             live = self.db.get_trade(trade_id)
             if not live or live["status"] != "open":
                 return "Лот уже закрыт или недоступен."
-            if live["expires_at"] < _utcnow():
+            expires_tick = live.get("expires_tick")
+            if expires_tick is None or int(expires_tick) <= tick_index:
                 self._refund_trade(live)
                 expired = True
             else:
@@ -1124,12 +1135,14 @@ class Engine:
             raise ValueError("Нельзя пригласить себя")
         if self.db.get_open_pact_invite(pact["id"], target_fief_id):
             raise ValueError("Приглашение уже отправлено")
+        realm = self.db.get_realm(founder["realm_id"]) or {}
+        tick_index = int(realm.get("tick_index") or 0)
         invite = self.db.create_pact_invite(
             realm_id=founder["realm_id"],
             pact_id=pact["id"],
             inviter_fief_id=founder_fief_id,
             target_fief_id=target_fief_id,
-            expires_at=_utcnow() + timedelta(hours=B.PACT_INVITE_EXPIRE_HOURS),
+            expires_tick=tick_index + B.PACT_INVITE_EXPIRE_TICKS,
         )
         return invite
 
@@ -1137,7 +1150,10 @@ class Engine:
         invite = self.db.get_pact_invite(invite_id)
         if not invite or invite["status"] != "open":
             raise ValueError("Приглашение недоступно")
-        if invite["expires_at"] and invite["expires_at"] < _utcnow():
+        realm = self.db.get_realm(invite["realm_id"]) or {}
+        tick_index = int(realm.get("tick_index") or 0)
+        expires_tick = invite.get("expires_tick")
+        if expires_tick is None or int(expires_tick) <= tick_index:
             self.db.update_pact_invite(invite_id, status="expired")
             raise ValueError("Приглашение истекло")
         if int(invite["target_fief_id"]) != int(target_fief_id):
@@ -1235,10 +1251,16 @@ class Engine:
         return "Разведчики открыли новые земли."
 
     def apply_absence(self, realm_id: int) -> None:
-        now = _utcnow()
+        realm = self.db.get_realm(realm_id) or {}
+        tick_index = int(realm.get("tick_index") or 0)
         for fief in self.db.list_fiefs(realm_id):
-            days = (now - fief["last_active_at"]).days if fief.get("last_active_at") else 0
-            tier = absence_mod.inactivity_tier(days)
+            last_active_tick = fief.get("last_active_tick")
+            ticks = (
+                tick_index - int(last_active_tick)
+                if last_active_tick is not None
+                else B.OVERGROWN_TICKS
+            )
+            tier = absence_mod.inactivity_tier(ticks)
             if tier != "overgrown":
                 continue
             tiles = self.db.fief_tiles(fief["id"])
@@ -1333,11 +1355,16 @@ class Engine:
         forced: bool = False,
     ) -> dict:
         realm = self.db.get_realm(realm_id)
+        tick_index = int(realm.get("tick_index") or 0) + 1
+        self.db.update_realm(
+            realm_id,
+            tick_index=tick_index,
+            active_minor_until=None,
+        )
+        realm = self.db.get_realm(realm_id) or realm
         self.apply_absence(realm_id)
-        # expire trades
-        for t in self.db.list_open_trades(realm_id):
-            if t["expires_at"] < _utcnow():
-                self._refund_trade(t)
+        for t in self.db.list_expired_open_trades(realm_id, tick_index):
+            self._refund_trade(t)
 
         # Событие до производства: объявленный harvest/drought совпадает с farm_mult тика.
         event_line, deserter_event = self._prepare_tick_minor(realm_id)
@@ -1362,9 +1389,20 @@ class Engine:
                 )
                 for t in self.db.fief_tiles(fief["id"])
             ]
-            # expire patrol
-            if fief.get("patrol_until") and fief["patrol_until"] < _utcnow():
-                self.db.update_fief(fief["id"], patrol_until=None)
+            if not tick_active(fief.get("patrol_until_tick"), tick_index):
+                if fief.get("patrol_until_tick") is not None or fief.get("patrol_until"):
+                    self.db.update_fief(
+                        fief["id"],
+                        patrol_until=None,
+                        patrol_until_tick=None,
+                    )
+            if not tick_active(fief.get("shield_until_tick"), tick_index):
+                if fief.get("shield_until_tick") is not None or fief.get("shield_until"):
+                    self.db.update_fief(
+                        fief["id"],
+                        shield_until=None,
+                        shield_until_tick=None,
+                    )
 
             farm_mult = base_farm_mult
             if (
@@ -1469,19 +1507,12 @@ class Engine:
         }
 
     def _prepare_tick_minor(self, realm_id: int) -> tuple[str | None, dict | None]:
-        """Ролл/продление минора до производства. Не сбрасывает ещё действующий until."""
+        """Новый ролл минора на каждый тик."""
         realm = self.db.get_realm(realm_id)
         if not realm:
             return None, None
 
-        until = realm.get("active_minor_until")
-        key = realm.get("active_minor_key")
-        still_active = bool(key and until and until > _utcnow())
-
-        if still_active:
-            meta = MINOR_EVENTS.get(key)
-            return (event_digest_line(meta) if meta else None), None
-
+        tick_index = int(realm.get("tick_index") or 0)
         self._resolve_active_minor_events(realm_id)
         minor_key = roll_minor_event(random.Random())
         if not minor_key:
@@ -1490,11 +1521,12 @@ class Engine:
 
         meta = MINOR_EVENTS[minor_key]
         narrative = meta["canned_narrative"]
-        duration_h = int(minor_effect(minor_key).get("duration_hours") or 24)
+        duration_t = int(minor_effect(minor_key).get("duration_ticks") or 1)
+        resolves_tick = tick_index + duration_t
         self.db.update_realm(
             realm_id,
             active_minor_key=minor_key,
-            active_minor_until=_utcnow() + timedelta(hours=duration_h),
+            active_minor_until=None,
         )
         event_line = event_digest_line(meta)
         self._apply_instant_minor(realm_id, minor_key)
@@ -1507,7 +1539,7 @@ class Engine:
                 payload={},
                 narrative=narrative,
                 status="active",
-                resolves_at=_utcnow() + timedelta(hours=24),
+                resolves_tick=resolves_tick,
             )
         elif minor_key == "drought":
             self.db.create_event(
@@ -1517,7 +1549,7 @@ class Engine:
                 payload={"mitigated_fief_ids": []},
                 narrative=narrative,
                 status="active",
-                resolves_at=_utcnow() + timedelta(hours=duration_h),
+                resolves_tick=resolves_tick,
             )
         else:
             self.db.create_event(
@@ -1527,14 +1559,11 @@ class Engine:
                 payload={},
                 narrative=narrative,
                 status="resolved",
-                resolves_at=_utcnow() + timedelta(hours=duration_h),
+                resolves_tick=resolves_tick,
             )
         return event_line, deserter_event
 
     def _realm_farm_mult(self, realm: dict) -> float:
-        until = realm.get("active_minor_until")
-        if not until or until <= _utcnow():
-            return 1.0
         key = realm.get("active_minor_key")
         if key == "harvest":
             return float(minor_effect("harvest").get("farm_mult") or 1.25)
@@ -1544,10 +1573,7 @@ class Engine:
 
     def _drought_mitigated_fief_ids(self, realm_id: int, realm: dict | None = None) -> set[int]:
         realm = realm or self.db.get_realm(realm_id)
-        if not realm:
-            return set()
-        until = realm.get("active_minor_until")
-        if realm.get("active_minor_key") != "drought" or not until or until <= _utcnow():
+        if not realm or realm.get("active_minor_key") != "drought":
             return set()
         for ev in self.db.get_active_events(realm_id, kind="minor"):
             if ev.get("event_key") != "drought":
@@ -1570,10 +1596,7 @@ class Engine:
         if not fief or fief.get("frozen"):
             return False
         realm = self.db.get_realm(fief["realm_id"])
-        if not realm:
-            return False
-        until = realm.get("active_minor_until")
-        if realm.get("active_minor_key") != "drought" or not until or until <= _utcnow():
+        if not realm or realm.get("active_minor_key") != "drought":
             return False
         return int(fief_id) not in self._drought_mitigated_fief_ids(fief["realm_id"], realm)
 
@@ -1605,8 +1628,7 @@ class Engine:
         realm = self.db.get_realm(fief["realm_id"])
         if not realm:
             raise ValueError("Долина не найдена")
-        until = realm.get("active_minor_until")
-        if realm.get("active_minor_key") != "drought" or not until or until <= _utcnow():
+        if realm.get("active_minor_key") != "drought":
             raise ValueError("Сейчас нет засухи")
         cost = int((minor_effect("drought").get("mitigate") or {}).get("goods") or 10)
         if int(fief["goods"]) < cost:
@@ -1638,15 +1660,17 @@ class Engine:
                     self.db.update_fief(fief["id"], grain=max(0, fief["grain"] - loss))
 
     def _feud_lines(self, realm_id: int) -> list[str]:
-        since = _utcnow() - timedelta(days=B.FEUD_WINDOW_DAYS)
-        raids = self.db.raids_since(realm_id, since)
+        realm = self.db.get_realm(realm_id) or {}
+        tick_index = int(realm.get("tick_index") or 0)
+        since_tick = max(0, tick_index - B.FEUD_WINDOW_TICKS)
+        raids = self.db.raids_since_tick(realm_id, since_tick)
         counts: dict[tuple[int, int], int] = {}
         for r in raids:
             key = (r["attacker_fief_id"], r["victim_fief_id"])
             counts[key] = counts.get(key, 0) + 1
         lines = []
         for (a, v), c in counts.items():
-            if c >= B.FEUD_RAIDS_IN_DAYS:
+            if c >= B.FEUD_RAIDS_IN_WINDOW:
                 af = self.db.get_fief(a)
                 vf = self.db.get_fief(v)
                 if af and vf:
@@ -1666,7 +1690,8 @@ class Engine:
         return f"Титулы: больше всех земель - {self.fief_label(top)}."
 
     def _rumor_snapshots(self, realm_id: int) -> list[FiefRumorSnapshot]:
-        now = _utcnow()
+        realm = self.db.get_realm(realm_id) or {}
+        tick_index = int(realm.get("tick_index") or 0)
         out: list[FiefRumorSnapshot] = []
         for fief in self.db.list_fiefs(realm_id):
             if fief.get("frozen"):
@@ -1686,9 +1711,7 @@ class Engine:
                     goods=int(fief["goods"]),
                     might=int(fief["might"]),
                     buildings=buildings,
-                    patrol_active=bool(
-                        fief.get("patrol_until") and fief["patrol_until"] > now
-                    ),
+                    patrol_active=tick_active(fief.get("patrol_until_tick"), tick_index),
                 )
             )
         return out

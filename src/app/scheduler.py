@@ -5,7 +5,7 @@ import asyncio
 import logging
 import math
 import random
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
@@ -15,7 +15,7 @@ from app.config import TIMEZONE, tick_slots
 from app.domain.events import (
     CATASTROPHES,
     MINOR_EVENTS,
-    next_catastrophe_delay_days,
+    next_catastrophe_delay_ticks,
     pick_catastrophe,
 )
 from app.domain.tick_schedule import due_tick_slot
@@ -101,7 +101,7 @@ async def _process_realm(bot: Bot, engine, realm: dict) -> None:
         )
         realm = engine.db.get_realm(realm_id) or realm
 
-    await _maybe_post_catastrophe(bot, engine, realm, local_now)
+    await _maybe_post_catastrophe(bot, engine, realm)
     await _resolve_expired_catastrophes(bot, engine, realm)
 
 
@@ -125,17 +125,12 @@ async def post_deserter_race(bot: Bot, chat_id: int, event: dict) -> None:
     await send_game(bot, chat_id, text, reply_markup=kb)
 
 
-async def _maybe_post_catastrophe(bot: Bot, engine, realm: dict, local_now: datetime) -> None:
-    next_at = realm.get("next_catastrophe_at")
-    if not next_at:
+async def _maybe_post_catastrophe(bot: Bot, engine, realm: dict) -> None:
+    tick_index = int(realm.get("tick_index") or 0)
+    next_tick = realm.get("next_catastrophe_tick")
+    if next_tick is None:
         return
-    if next_at.tzinfo is None:
-        next_at = next_at.replace(tzinfo=timezone.utc)
-    if _utcnow() < next_at:
-        return
-
-    hour = local_now.hour
-    if hour < B.CATASTROPHE_POST_HOUR_START or hour >= B.CATASTROPHE_POST_HOUR_END:
+    if tick_index < int(next_tick):
         return
 
     # уже есть активная катастрофа - не дублируем
@@ -146,8 +141,8 @@ async def _maybe_post_catastrophe(bot: Bot, engine, realm: dict, local_now: date
     rng = random.Random()
     key = pick_catastrophe(rng, realm.get("last_catastrophe_key"))
     meta = CATASTROPHES[key]
-    window_h = rng.randint(B.CATASTROPHE_WINDOW_HOURS_MIN, B.CATASTROPHE_WINDOW_HOURS_MAX)
-    resolves_at = _utcnow() + timedelta(hours=window_h)
+    window_t = rng.randint(B.CATASTROPHE_WINDOW_TICKS_MIN, B.CATASTROPHE_WINDOW_TICKS_MAX)
+    resolves_tick = tick_index + window_t
     narrative = meta["canned_narrative"]
     event = engine.db.create_event(
         realm_id=realm["id"],
@@ -156,14 +151,15 @@ async def _maybe_post_catastrophe(bot: Bot, engine, realm: dict, local_now: date
         payload={"threshold_hint": True},
         narrative=narrative,
         status="active",
-        resolves_at=resolves_at,
+        resolves_tick=resolves_tick,
     )
 
-    delay = next_catastrophe_delay_days(rng)
+    delay = next_catastrophe_delay_ticks(rng)
     engine.db.update_realm(
         realm["id"],
         last_catastrophe_key=key,
-        next_catastrophe_at=_utcnow() + timedelta(days=delay),
+        next_catastrophe_tick=tick_index + delay,
+        next_catastrophe_at=None,
     )
 
     players = max(1, len(engine.db.list_fiefs(realm["id"])))
@@ -175,7 +171,7 @@ async def _maybe_post_catastrophe(bot: Bot, engine, realm: dict, local_now: date
     text = (
         f"⚠️ <b>{meta['name_ru']}</b>\n"
         f"{narrative}{extra}\n"
-        f"Окно до {resolves_at.astimezone(local_now.tzinfo).strftime('%d.%m %H:%M')}."
+        f"Окно: {window_t} тик(а)."
     )
     chat_id = realm.get("chat_id")
     if chat_id:
@@ -197,15 +193,13 @@ async def _maybe_post_catastrophe(bot: Bot, engine, realm: dict, local_now: date
 
 
 async def _resolve_expired_catastrophes(bot: Bot, engine, realm: dict) -> None:
-    now = _utcnow()
+    tick_index = int(realm.get("tick_index") or 0)
     events = engine.db.get_active_events(realm["id"], kind="catastrophe")
     for ev in events:
-        resolves_at = ev.get("resolves_at")
-        if not resolves_at:
+        resolves_tick = ev.get("resolves_tick")
+        if resolves_tick is None:
             continue
-        if resolves_at.tzinfo is None:
-            resolves_at = resolves_at.replace(tzinfo=timezone.utc)
-        if resolves_at > now:
+        if int(resolves_tick) > tick_index:
             continue
 
         key = ev.get("event_key")
@@ -244,7 +238,6 @@ def _resolve_bandit_night(engine, realm: dict, event: dict) -> str:
             f"Участники получили добычу."
         )
 
-    # провал: потери зерна у не-вкладчиков
     loss_note = []
     for f in fiefs:
         if f["id"] in contributors:

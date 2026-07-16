@@ -323,6 +323,7 @@ def test_accept_trade_does_not_advance_onboard():
         "id": 5,
         "status": "open",
         "expires_at": expires,
+        "expires_tick": 10,
         "offerer_fief_id": 2,
         "target_fief_id": None,
         "realm_id": 9,
@@ -338,6 +339,7 @@ def test_accept_trade_does_not_advance_onboard():
         "id": 9,
         "active_minor_key": None,
         "active_minor_until": None,
+        "tick_index": 0,
     }
 
     def _update(fid, **fields):
@@ -574,7 +576,7 @@ def test_guide_explains_patrol():
     assert "<b>Дозор</b>" in text
     assert f"{B.PATROL_COST_MIGHT} силы" in text
     assert f"+{B.PATROL_DEFENSE_BONUS} к защите" in text
-    assert f"на {B.PATROL_HOURS}ч" in text
+    assert f"на {B.PATROL_TICKS} тик(а)" in text
     assert "сторожка даёт защиту постоянно" in text
     assert "тумане" in text and "дозор почти бесполезен" in text
 
@@ -587,7 +589,7 @@ def test_guide_explains_core_systems():
     assert "Ферма" in text and "Мастерская" in text
     assert "Сторожка" in text and "Амбар" in text
     assert "щит" in text
-    assert f"{B.RAID_VICTIM_SHIELD_HOURS}ч" in text
+    assert f"{B.RAID_VICTIM_SHIELD_TICKS} тик(а)" in text
     assert "перехват" in text
     assert "зарастают" in text or "зарос" in text.lower()
     assert "/вч_я" in text

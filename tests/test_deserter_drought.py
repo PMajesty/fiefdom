@@ -1,15 +1,10 @@
 """Клейм дезертира и полив засухи (Issue 6)."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 from app.domain.events import minor_effect
 from app.engine import Engine
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def test_claim_deserter_first_wins_second_fails():
@@ -50,7 +45,6 @@ def test_claim_deserter_resolved_event_already_taken():
 
 
 def test_mitigate_drought_spends_goods_and_marks_fief():
-    until = _utcnow() + timedelta(hours=12)
     db = MagicMock()
     db.get_fief.return_value = {
         "id": 7,
@@ -61,7 +55,7 @@ def test_mitigate_drought_spends_goods_and_marks_fief():
     db.get_realm.return_value = {
         "id": 3,
         "active_minor_key": "drought",
-        "active_minor_until": until,
+        "tick_index": 5,
     }
     db.get_active_events.return_value = [
         {
@@ -84,7 +78,6 @@ def test_mitigate_drought_spends_goods_and_marks_fief():
 
 
 def test_mitigate_drought_second_call_already():
-    until = _utcnow() + timedelta(hours=12)
     db = MagicMock()
     db.get_fief.return_value = {
         "id": 7,
@@ -95,7 +88,7 @@ def test_mitigate_drought_second_call_already():
     db.get_realm.return_value = {
         "id": 3,
         "active_minor_key": "drought",
-        "active_minor_until": until,
+        "tick_index": 5,
     }
     db.get_active_events.return_value = [
         {
@@ -112,7 +105,6 @@ def test_mitigate_drought_second_call_already():
 
 
 def test_mitigate_drought_insufficient_goods():
-    until = _utcnow() + timedelta(hours=12)
     db = MagicMock()
     db.get_fief.return_value = {
         "id": 7,
@@ -123,7 +115,7 @@ def test_mitigate_drought_insufficient_goods():
     db.get_realm.return_value = {
         "id": 3,
         "active_minor_key": "drought",
-        "active_minor_until": until,
+        "tick_index": 5,
     }
     engine = Engine(db)
     try:
@@ -134,13 +126,12 @@ def test_mitigate_drought_insufficient_goods():
 
 
 def test_fief_can_mitigate_drought():
-    until = _utcnow() + timedelta(hours=6)
     db = MagicMock()
     db.get_fief.return_value = {"id": 2, "realm_id": 1, "frozen": False}
     db.get_realm.return_value = {
         "id": 1,
         "active_minor_key": "drought",
-        "active_minor_until": until,
+        "tick_index": 3,
     }
     db.get_active_events.return_value = [
         {"id": 1, "event_key": "drought", "payload": {"mitigated_fief_ids": []}}

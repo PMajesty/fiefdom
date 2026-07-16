@@ -25,6 +25,7 @@ def _base_realm(**overrides):
         "pending_raid_lines": [],
         "active_minor_key": None,
         "active_minor_until": None,
+        "tick_index": 0,
     }
     data.update(overrides)
     return data
@@ -58,6 +59,7 @@ def test_tick_applies_harvest_mult_same_day():
     fief = _base_fief()
     db.get_realm.return_value = realm
     db.list_open_trades.return_value = []
+    db.list_expired_open_trades.return_value = []
     db.list_fiefs.return_value = [fief]
     db.fief_tiles.return_value = [
         {
@@ -72,7 +74,7 @@ def test_tick_applies_harvest_mult_same_day():
         }
     ]
     db.get_active_events.return_value = []
-    db.raids_since.return_value = []
+    db.raids_since_tick.return_value = []
 
     captured = {}
 
@@ -113,14 +115,14 @@ def test_tick_applies_harvest_mult_same_day():
 
 
 def test_tick_drought_mitigated_fief_gets_full_mult():
-    """При действующей засухе политая усадьба тикает с farm_mult=1.0."""
-    until = _utcnow() + timedelta(hours=6)
+    """При засухе этого тика политая усадьба тикает с farm_mult=1.0."""
     db = MagicMock()
-    realm = _base_realm(active_minor_key="drought", active_minor_until=until)
+    realm = _base_realm()
     watered = _base_fief(id=10, name="Политая")
     dry = _base_fief(id=11, user_id=1002, name="Сухая")
     db.get_realm.return_value = realm
     db.list_open_trades.return_value = []
+    db.list_expired_open_trades.return_value = []
     db.list_fiefs.return_value = [watered, dry]
     db.fief_tiles.return_value = [
         {
@@ -142,7 +144,12 @@ def test_tick_drought_mitigated_fief_gets_full_mult():
             "payload": {"mitigated_fief_ids": [10]},
         }
     ]
-    db.raids_since.return_value = []
+    db.raids_since_tick.return_value = []
+
+    def update_realm(rid, **fields):
+        realm.update(fields)
+
+    db.update_realm.side_effect = update_realm
 
     mults: list[float] = []
 
@@ -165,40 +172,50 @@ def test_tick_drought_mitigated_fief_gets_full_mult():
     engine.maybe_grow_map = MagicMock(return_value=None)
     engine._feud_lines = MagicMock(return_value=[])
 
-    with patch("app.engine.apply_fief_tick", side_effect=fake_apply):
+    with (
+        patch("app.engine.roll_minor_event", return_value="drought"),
+        patch("app.engine.apply_fief_tick", side_effect=fake_apply),
+    ):
         engine.run_realm_tick(1)
 
     drought_mult = float(minor_effect("drought")["farm_mult"])
     assert mults == [1.0, drought_mult]
 
-def test_tick_continuing_drought_does_not_reroll():
-    """Пока until в будущем - новый ролл не сбрасывает засуху и полив."""
-    until = _utcnow() + timedelta(hours=8)
+
+def test_tick_always_rerolls_minor_even_if_key_active():
+    """Каждый тик закрывает старый минор и крутит новый."""
     db = MagicMock()
-    realm = _base_realm(active_minor_key="drought", active_minor_until=until)
+    realm = _base_realm(active_minor_key="harvest", tick_index=3)
     db.get_realm.return_value = realm
     db.list_open_trades.return_value = []
+    db.list_expired_open_trades.return_value = []
     db.list_fiefs.return_value = []
     db.get_active_events.return_value = [
         {
             "id": 44,
-            "event_key": "drought",
-            "payload": {"mitigated_fief_ids": [7]},
+            "event_key": "harvest",
+            "status": "active",
+            "payload": {},
         }
     ]
-    db.raids_since.return_value = []
+    db.raids_since_tick.return_value = []
+
+    def update_realm(rid, **fields):
+        realm.update(fields)
+
+    db.update_realm.side_effect = update_realm
 
     engine = Engine(db)
     engine.apply_absence = MagicMock()
     engine.maybe_grow_map = MagicMock(return_value=None)
     engine._feud_lines = MagicMock(return_value=[])
 
-    with patch("app.engine.roll_minor_event") as roll:
+    with patch("app.engine.roll_minor_event", return_value="fog") as roll:
         engine.run_realm_tick(1)
-        roll.assert_not_called()
+        roll.assert_called_once()
 
-    db.update_event.assert_not_called()
-    assert realm["active_minor_key"] == "drought"
+    db.update_event.assert_called_once_with(44, status="resolved")
+    assert realm["active_minor_key"] == "fog"
 
 
 def test_raid_action_result_includes_victim_and_dm_texts():
@@ -249,13 +266,16 @@ def test_engine_raid_returns_victim_user_id():
         "might": 20,
         "hungry": False,
         "last_raid_at": None,
+        "last_raid_tick": None,
         "actions": 2,
         "pending_grain": 0,
         "pending_goods": 0,
         "pending_might": 0,
         "pact_id": None,
         "shield_until": None,
+        "shield_until_tick": None,
         "patrol_until": None,
+        "patrol_until_tick": None,
     }
     vic = {
         "id": 2,
@@ -267,14 +287,16 @@ def test_engine_raid_returns_victim_user_id():
         "might": 5,
         "hungry": False,
         "shield_until": None,
+        "shield_until_tick": None,
         "patrol_until": None,
+        "patrol_until_tick": None,
         "pact_id": None,
         "pending_grain": 0,
         "pending_goods": 0,
         "pending_might": 0,
         "actions": 1,
     }
-    realm = _base_realm(id=1, active_minor_key=None, active_minor_until=None)
+    realm = _base_realm(id=1, active_minor_key=None, active_minor_until=None, tick_index=4)
 
     def get_fief(fid):
         return dict(atk) if fid == 1 else dict(vic)
@@ -308,6 +330,7 @@ def _tick_engine_with_schedule(realm: dict):
     fief = _base_fief()
     db.get_realm.return_value = realm
     db.list_open_trades.return_value = []
+    db.list_expired_open_trades.return_value = []
     db.list_fiefs.return_value = [fief]
     db.fief_tiles.return_value = [
         {
@@ -322,7 +345,7 @@ def _tick_engine_with_schedule(realm: dict):
         }
     ]
     db.get_active_events.return_value = []
-    db.raids_since.return_value = []
+    db.raids_since_tick.return_value = []
 
     def update_realm(rid, **fields):
         realm.update(fields)
@@ -413,14 +436,18 @@ def _raid_stateful_engine(*, atk_extra=None, vic_extra=None, reverse_pair_at=Non
         "might": 20,
         "hungry": False,
         "last_raid_at": None,
+        "last_raid_tick": None,
         "actions": 2,
         "pending_grain": 0.0,
         "pending_goods": 0.0,
         "pending_might": 0.0,
         "pact_id": None,
         "shield_until": None,
+        "shield_until_tick": None,
         "patrol_until": None,
+        "patrol_until_tick": None,
         "last_active_at": _utcnow(),
+        "last_active_tick": 0,
     }
     if atk_extra:
         atk.update(atk_extra)
@@ -434,19 +461,22 @@ def _raid_stateful_engine(*, atk_extra=None, vic_extra=None, reverse_pair_at=Non
         "might": 10,
         "hungry": False,
         "shield_until": None,
+        "shield_until_tick": None,
         "patrol_until": None,
+        "patrol_until_tick": None,
         "pact_id": None,
         "pending_grain": 30.0,
         "pending_goods": 12.0,
         "pending_might": 8.0,
         "actions": 1,
         "last_active_at": _utcnow(),
+        "last_active_tick": 0,
     }
     if vic_extra:
         vic.update(vic_extra)
     fiefs = {1: atk, 2: vic}
-    realm = _base_realm(id=1, active_minor_key=None, active_minor_until=None)
-    pair_log: dict[tuple[int, int], datetime] = {}
+    realm = _base_realm(id=1, active_minor_key=None, active_minor_until=None, tick_index=10)
+    pair_log: dict[tuple[int, int], int] = {}
     if reverse_pair_at is not None:
         pair_log[(2, 1)] = reverse_pair_at
 
@@ -464,7 +494,9 @@ def _raid_stateful_engine(*, atk_extra=None, vic_extra=None, reverse_pair_at=Non
         return pair_log.get((a, v))
 
     def log_raid(**kwargs):
-        pair_log[(kwargs["attacker_fief_id"], kwargs["victim_fief_id"])] = _utcnow()
+        pair_log[(kwargs["attacker_fief_id"], kwargs["victim_fief_id"])] = int(
+            kwargs.get("tick_index") or 10
+        )
 
     db.get_fief.side_effect = get_fief
     db.update_fief.side_effect = update_fief
@@ -500,7 +532,7 @@ def test_raid_does_not_bank_victim_pending_might():
 
 def test_raid_bidirectional_pair_cooldown_blocks_revenge():
     engine, fiefs, B = _raid_stateful_engine(
-        reverse_pair_at=_utcnow() - timedelta(hours=1),
+        reverse_pair_at=9,
         vic_extra={"pending_grain": 0.0, "pending_goods": 0.0, "pending_might": 0.0},
     )
     try:
@@ -513,7 +545,7 @@ def test_raid_bidirectional_pair_cooldown_blocks_revenge():
 
 def test_raid_shield_blocks_outgoing():
     engine, fiefs, B = _raid_stateful_engine(
-        atk_extra={"shield_until": _utcnow() + timedelta(hours=12)},
+        atk_extra={"shield_until_tick": 20},
         vic_extra={"pending_grain": 0.0, "pending_goods": 0.0, "pending_might": 0.0},
     )
     try:

@@ -4,10 +4,10 @@ from __future__ import annotations
 from app import balance as B
 
 
-def inactivity_tier(days: int) -> str:
-    if days >= B.OVERGROWN_DAYS:
+def inactivity_tier(ticks: int) -> str:
+    if ticks >= B.OVERGROWN_TICKS:
         return "overgrown"
-    if days >= B.DORMANT_DAYS:
+    if ticks >= B.DORMANT_TICKS:
         return "dormant"
     return "ok"
 

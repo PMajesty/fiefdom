@@ -65,7 +65,7 @@ All in private chat with the bot. Use `/вч_admin_help` for examples.
 - `/вч_realms` - list valley ids (`#1` = realm_id)
 - `/вч_tick [realm_id]` - run daily tick (all realms if omitted)
 - `/вч_grant realm_id fief_id grain goods might` - add resources
-- `/вч_event realm_id key` - force minor event 24h
+- `/вч_event realm_id key` - force minor event until next tick
 - Wipe (two steps): `/вч_wipe_start 1` then paste the command the bot returns
 - `/вч_freeze fief_id 0|1` - freeze/unfreeze estate
 - `/вч_decree realm_id text` - post decree to the group

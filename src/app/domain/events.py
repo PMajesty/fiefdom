@@ -17,7 +17,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
             "лишнее зерно быстро находит хозяина с острым мечом."
         ),
         "button_labels": None,
-        "mechanics": "farm_mult+25%/1d",
+        "mechanics": "farm_mult+25%/1t",
     },
     "fog": {
         "id": "fog",
@@ -29,7 +29,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
             "мало чем помогут."
         ),
         "button_labels": None,
-        "mechanics": "raids_ignore_patrol/1d",
+        "mechanics": "raids_ignore_patrol/1t",
     },
     "trader": {
         "id": "trader",
@@ -41,7 +41,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
             "на виду у долины торговаться неприлично."
         ),
         "button_labels": None,
-        "mechanics": "dm_deals:2/24h",
+        "mechanics": "dm_deals:2/1t",
     },
     "rats": {
         "id": "rats",
@@ -65,7 +65,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
             "жадности и собственного вина."
         ),
         "button_labels": None,
-        "mechanics": "trade_bonus+5%/1d",
+        "mechanics": "trade_bonus+5%/1t",
     },
     "deserter": {
         "id": "deserter",
@@ -89,7 +89,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
             "Сегодня надстройки обходятся дешевле."
         ),
         "button_labels": None,
-        "mechanics": "upgrade_cost-25%/1d",
+        "mechanics": "upgrade_cost-25%/1t",
     },
     "drought": {
         "id": "drought",
@@ -101,7 +101,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
             "ещё может спасти свой край."
         ),
         "button_labels": ["Полив (10 товаров)"],
-        "mechanics": "farm_mult-30%/24h;mitigate:10_goods",
+        "mechanics": "farm_mult-30%/1t;mitigate:10_goods",
     },
     "wedding": {
         "id": "wedding",
@@ -113,7 +113,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
             "Завтра счастье кончится, зерно - останется."
         ),
         "button_labels": None,
-        "mechanics": "trade_complete:+8_grain/1d",
+        "mechanics": "trade_complete:+8_grain/1t",
     },
     "omen": {
         "id": "omen",
@@ -161,7 +161,7 @@ CATASTROPHES: dict[str, dict[str, Any]] = {
             "оборвёт мор у себя раньше остальных."
         ),
         "button_labels": ["Забить скот (20 зерна)"],
-        "mechanics": "farm_mult-50%/48h;mitigate:20_grain",
+        "mechanics": "farm_mult-50%/4t;mitigate:20_grain",
     },
     "rat_king": {
         "id": "rat_king",
@@ -172,7 +172,7 @@ CATASTROPHES: dict[str, dict[str, Any]] = {
             "Первый удачный набег на короля срывает награду долины."
         ),
         "button_labels": None,
-        "mechanics": "top_raider:+30%_loot/48h;bounty:players*5_goods",
+        "mechanics": "top_raider:+30%_loot/4t;bounty:players*5_goods",
     },
     "dragon_rumors": {
         "id": "dragon_rumors",
@@ -194,7 +194,7 @@ CATASTROPHES: dict[str, dict[str, Any]] = {
             "Честь здесь товар самый дешёвый."
         ),
         "button_labels": ["Открыть предложение"],
-        "mechanics": "dm_shady_offer:1/24h",
+        "mechanics": "dm_shady_offer:1/1t",
     },
 }
 
@@ -218,19 +218,19 @@ SHIPPED_MINOR_KEYS: frozenset[str] = frozenset(
 SHIPPED_CATASTROPHE_KEYS: frozenset[str] = frozenset({"bandit_night"})
 
 _MINOR_EFFECTS: dict[str, dict[str, Any]] = {
-    "harvest": {"farm_mult": 1.25, "duration_hours": 24},
-    "fog": {"raids_ignore_patrol": True, "duration_hours": 24},
-    "trader": {"dm_deals": 2, "duration_hours": 24},
+    "harvest": {"farm_mult": 1.25, "duration_ticks": 1},
+    "fog": {"raids_ignore_patrol": True, "duration_ticks": 1},
+    "trader": {"dm_deals": 2, "duration_ticks": 1},
     "rats": {"unprot_grain_threshold": 150, "loss_frac": 0.10},
-    "fair": {"trade_bonus_frac": 0.05, "duration_hours": 24},
+    "fair": {"trade_bonus_frac": 0.05, "duration_ticks": 1},
     "deserter": {"first_claim_might": 10, "group_message": True},
-    "good_stone": {"upgrade_cost_mult": 0.75, "duration_hours": 24},
+    "good_stone": {"upgrade_cost_mult": 0.75, "duration_ticks": 1},
     "drought": {
         "farm_mult": 0.70,
-        "duration_hours": 24,
+        "duration_ticks": 1,
         "mitigate": {"goods": 10, "action": "полив"},
     },
-    "wedding": {"trade_gift_grain": 8, "duration_hours": 24},
+    "wedding": {"trade_gift_grain": 8, "duration_ticks": 1},
     "omen": {"foreshadow": True},
 }
 
@@ -250,12 +250,12 @@ _CATASTROPHE_EFFECTS: dict[str, dict[str, Any]] = {
     },
     "cattle_plague": {
         "farm_mult": 0.50,
-        "duration_hours": 48,
+        "duration_ticks": 4,
         "mitigate": {"grain": 20, "action": "забить_скот"},
     },
     "rat_king": {
         "loot_bonus_frac": 0.30,
-        "duration_hours": 48,
+        "duration_ticks": 4,
         "select": "most_raid_attempts_this_week",
         "bounty_goods_per_player": 5,
     },
@@ -263,11 +263,11 @@ _CATASTROPHE_EFFECTS: dict[str, dict[str, Any]] = {
         "pledge_might": 10,
         "min_players": 3,
         "success_might_threshold": 40,
-        "fail_hunger_hours": 24,
+        "fail_hunger_ticks": 2,
     },
     "black_fair": {
         "dm_offers": 1,
-        "duration_hours": 24,
+        "duration_ticks": 1,
         "offer_kinds": ("smoke_bomb", "denunciation"),
     },
 }
@@ -313,8 +313,8 @@ def pick_catastrophe(rng: Random, last_key: str | None) -> str:
     return rng.choice(keys)
 
 
-def next_catastrophe_delay_days(rng: Random) -> int:
-    return rng.randint(B.CATASTROPHE_MIN_DAYS, B.CATASTROPHE_MAX_DAYS)
+def next_catastrophe_delay_ticks(rng: Random) -> int:
+    return rng.randint(B.CATASTROPHE_MIN_TICKS, B.CATASTROPHE_MAX_TICKS)
 
 
 def minor_effect(key: str) -> dict[str, Any]:

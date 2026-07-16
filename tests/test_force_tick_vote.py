@@ -33,6 +33,7 @@ def _realm(**overrides):
         "pending_raid_lines": [],
         "active_minor_key": None,
         "active_minor_until": None,
+        "tick_index": 0,
         "last_tick_local_date": date(2026, 7, 16),
         "last_tick_slot": 0,
         "forced_tick_count": 0,
@@ -71,8 +72,9 @@ def _engine_with_votes(fiefs: list[dict], votes: set[int] | None = None):
     db.list_fiefs.return_value = fiefs
     db.transaction.return_value = nullcontext()
     db.list_open_trades.return_value = []
+    db.list_expired_open_trades.return_value = []
     db.get_active_events.return_value = []
-    db.raids_since.return_value = []
+    db.raids_since_tick.return_value = []
     db.fief_tiles.return_value = [
         {
             "x": 0,

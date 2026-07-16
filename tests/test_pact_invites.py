@@ -42,6 +42,7 @@ def _pact_engine():
 
     db = MagicMock()
     db.transaction = lambda: nullcontext()
+    db.get_realm.return_value = {"id": 9, "tick_index": 5}
 
     def get_fief(fid):
         row = fiefs.get(fid)
@@ -56,7 +57,7 @@ def _pact_engine():
                 inv["pact_id"] == pact_id
                 and inv["target_fief_id"] == target_id
                 and inv["status"] == "open"
-                and inv["expires_at"] > _utcnow()
+                and int(inv["expires_tick"]) > 5
             ):
                 return dict(inv)
         return None
@@ -78,7 +79,7 @@ def _pact_engine():
 
     def claim(iid, status):
         inv = invites.get(iid)
-        if not inv or inv["status"] != "open" or inv["expires_at"] <= _utcnow():
+        if not inv or inv["status"] != "open" or int(inv["expires_tick"]) <= 5:
             return None
         inv["status"] = status
         return dict(inv)
@@ -142,7 +143,7 @@ def test_accept_rejects_wrong_fief():
 def test_accept_rejects_expired_invite():
     engine, fiefs, invites, _pact = _pact_engine()
     invite = engine.invite_to_pact(1, 2)
-    invites[invite["id"]]["expires_at"] = _utcnow() - timedelta(hours=1)
+    invites[invite["id"]]["expires_tick"] = 0
     try:
         engine.accept_pact_invite(2, invite["id"])
         raise AssertionError("expected expired")

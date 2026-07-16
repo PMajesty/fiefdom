@@ -127,6 +127,7 @@ def test_accept_trade_claim_miss_inside_tx_is_noop():
         "id": 5,
         "status": "open",
         "expires_at": expires,
+        "expires_tick": 10,
         "offerer_fief_id": 2,
         "target_fief_id": None,
         "realm_id": 9,
@@ -144,6 +145,7 @@ def test_accept_trade_claim_miss_inside_tx_is_noop():
         "id": 9,
         "active_minor_key": None,
         "active_minor_until": None,
+        "tick_index": 0,
     }
 
     engine = Engine(db)

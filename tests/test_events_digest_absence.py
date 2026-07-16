@@ -228,10 +228,10 @@ def test_pick_catastrophe_allows_shipped_when_last_none():
     assert events.pick_catastrophe(Random(1), None) in events.SHIPPED_CATASTROPHE_KEYS
 
 
-def test_next_catastrophe_delay_days_range():
+def test_next_catastrophe_delay_ticks_range():
     for seed in range(40):
-        delay = events.next_catastrophe_delay_days(Random(seed))
-        assert B.CATASTROPHE_MIN_DAYS <= delay <= B.CATASTROPHE_MAX_DAYS
+        delay = events.next_catastrophe_delay_ticks(Random(seed))
+        assert B.CATASTROPHE_MIN_TICKS <= delay <= B.CATASTROPHE_MAX_TICKS
 
 
 def test_minor_effect_unknown():
@@ -306,10 +306,10 @@ def test_format_decree():
 
 def test_inactivity_tiers():
     assert absence.inactivity_tier(0) == "ok"
-    assert absence.inactivity_tier(B.DORMANT_DAYS - 1) == "ok"
-    assert absence.inactivity_tier(B.DORMANT_DAYS) == "dormant"
-    assert absence.inactivity_tier(B.OVERGROWN_DAYS - 1) == "dormant"
-    assert absence.inactivity_tier(B.OVERGROWN_DAYS) == "overgrown"
+    assert absence.inactivity_tier(B.DORMANT_TICKS - 1) == "ok"
+    assert absence.inactivity_tier(B.DORMANT_TICKS) == "dormant"
+    assert absence.inactivity_tier(B.OVERGROWN_TICKS - 1) == "dormant"
+    assert absence.inactivity_tier(B.OVERGROWN_TICKS) == "overgrown"
 
 
 def test_compensation_for_claim():

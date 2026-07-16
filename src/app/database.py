@@ -98,9 +98,11 @@ class Database:
                     last_tick_at TIMESTAMPTZ,
                     last_tick_local_date DATE,
                     next_catastrophe_at TIMESTAMPTZ,
+                    next_catastrophe_tick INT,
                     last_catastrophe_key TEXT,
                     active_minor_key TEXT,
                     active_minor_until TIMESTAMPTZ,
+                    tick_index INT NOT NULL DEFAULT 0,
                     balance_overrides JSONB NOT NULL DEFAULT '{}',
                     feature_flags JSONB NOT NULL DEFAULT '{}',
                     pending_raid_lines JSONB NOT NULL DEFAULT '[]',
@@ -127,10 +129,14 @@ class Database:
                     hungry BOOLEAN NOT NULL DEFAULT FALSE,
                     patrol_until TIMESTAMPTZ,
                     shield_until TIMESTAMPTZ,
+                    patrol_until_tick INT,
+                    shield_until_tick INT,
                     last_raid_at TIMESTAMPTZ,
+                    last_raid_tick INT,
                     onboard_step INT NOT NULL DEFAULT 1,
                     joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     last_active_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    last_active_tick INT,
                     pact_id BIGINT,
                     cover_allies BOOLEAN NOT NULL DEFAULT TRUE,
                     frozen BOOLEAN NOT NULL DEFAULT FALSE,
@@ -173,7 +179,8 @@ class Database:
                     target_fief_id BIGINT NOT NULL REFERENCES fiefs(id) ON DELETE CASCADE,
                     status TEXT NOT NULL DEFAULT 'open',
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    expires_at TIMESTAMPTZ NOT NULL
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    expires_tick INT
                 );
                 """,
                 """
@@ -188,7 +195,8 @@ class Database:
                     want_amt INT NOT NULL,
                     status TEXT NOT NULL DEFAULT 'open',
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    expires_at TIMESTAMPTZ NOT NULL
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    expires_tick INT
                 );
                 """,
                 """
@@ -202,7 +210,8 @@ class Database:
                     grain_stolen INT NOT NULL DEFAULT 0,
                     goods_stolen INT NOT NULL DEFAULT 0,
                     public_line TEXT NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    tick_index INT
                 );
                 """,
                 """
@@ -215,7 +224,8 @@ class Database:
                     narrative TEXT,
                     status TEXT NOT NULL DEFAULT 'active',
                     posted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    resolves_at TIMESTAMPTZ
+                    resolves_at TIMESTAMPTZ,
+                    resolves_tick INT
                 );
                 """,
                 """
@@ -248,6 +258,7 @@ class Database:
                     want_res TEXT NOT NULL,
                     want_amt INT NOT NULL,
                     expires_at TIMESTAMPTZ NOT NULL,
+                    expires_tick INT,
                     status TEXT NOT NULL DEFAULT 'open'
                 );
                 """,
@@ -312,6 +323,50 @@ class Database:
                 "ALTER TABLE realms ADD COLUMN IF NOT EXISTS forced_tick_count "
                 "INT NOT NULL DEFAULT 0;"
             )
+            for stmt in (
+                "ALTER TABLE realms ADD COLUMN IF NOT EXISTS tick_index INT NOT NULL DEFAULT 0;",
+                "ALTER TABLE realms ADD COLUMN IF NOT EXISTS next_catastrophe_tick INT;",
+                "ALTER TABLE fiefs ADD COLUMN IF NOT EXISTS patrol_until_tick INT;",
+                "ALTER TABLE fiefs ADD COLUMN IF NOT EXISTS shield_until_tick INT;",
+                "ALTER TABLE fiefs ADD COLUMN IF NOT EXISTS last_raid_tick INT;",
+                "ALTER TABLE fiefs ADD COLUMN IF NOT EXISTS last_active_tick INT;",
+                "ALTER TABLE trade_offers ADD COLUMN IF NOT EXISTS expires_tick INT;",
+                "ALTER TABLE pact_invites ADD COLUMN IF NOT EXISTS expires_tick INT;",
+                "ALTER TABLE personal_deals ADD COLUMN IF NOT EXISTS expires_tick INT;",
+                "ALTER TABLE realm_events ADD COLUMN IF NOT EXISTS resolves_tick INT;",
+                "ALTER TABLE raids_log ADD COLUMN IF NOT EXISTS tick_index INT;",
+            ):
+                self.cursor.execute(stmt)
+            # Старые wall-clock сроки без тика - считаем уже истёкшими.
+            self.cursor.execute(
+                "UPDATE trade_offers SET expires_tick = 0 "
+                "WHERE expires_tick IS NULL AND status = 'open';"
+            )
+            self.cursor.execute(
+                "UPDATE pact_invites SET expires_tick = 0 "
+                "WHERE expires_tick IS NULL AND status = 'open';"
+            )
+            self.cursor.execute(
+                "UPDATE personal_deals SET expires_tick = 0 "
+                "WHERE expires_tick IS NULL AND status = 'open';"
+            )
+            self.cursor.execute(
+                """
+                UPDATE realms
+                SET next_catastrophe_tick = tick_index + 10
+                WHERE next_catastrophe_tick IS NULL
+                  AND next_catastrophe_at IS NOT NULL;
+                """
+            )
+            # Сброс устаревших wall-clock ворот миноров/щитов/дозора.
+            self.cursor.execute(
+                "UPDATE realms SET active_minor_until = NULL "
+                "WHERE active_minor_until IS NOT NULL;"
+            )
+            self.cursor.execute(
+                "UPDATE fiefs SET patrol_until = NULL, shield_until = NULL "
+                "WHERE patrol_until IS NOT NULL OR shield_until IS NOT NULL;"
+            )
 
     # --- users ---
     def upsert_user(self, telegram_id: int, username: str | None, display_name: str) -> None:
@@ -366,15 +421,15 @@ class Database:
         tick_hour: int,
         tick_minute: int,
         feature_flags: dict,
-        next_catastrophe_at: datetime,
+        next_catastrophe_tick: int,
     ) -> dict:
         with self.lock:
             self.cursor.execute(
                 """
                 INSERT INTO realms (
                     chat_id, title, width, height, timezone, tick_hour, tick_minute,
-                    feature_flags, next_catastrophe_at
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)
+                    feature_flags, next_catastrophe_tick, tick_index
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,0)
                 RETURNING *;
                 """,
                 (
@@ -386,7 +441,7 @@ class Database:
                     tick_hour,
                     tick_minute,
                     json.dumps(feature_flags),
-                    next_catastrophe_at,
+                    next_catastrophe_tick,
                 ),
             )
             row = self.cursor.fetchone()
@@ -470,10 +525,17 @@ class Database:
     def create_fief(self, realm_id: int, user_id: int, name: str, **resources: Any) -> dict:
         with self.lock:
             self.cursor.execute(
+                "SELECT tick_index FROM realms WHERE id=%s;",
+                (realm_id,),
+            )
+            row_tick = self.cursor.fetchone()
+            tick_index = int(row_tick[0]) if row_tick else 0
+            self.cursor.execute(
                 """
                 INSERT INTO fiefs (
-                    realm_id, user_id, name, grain, goods, might, actions, onboard_step
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                    realm_id, user_id, name, grain, goods, might, actions,
+                    onboard_step, last_active_tick
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 RETURNING *;
                 """,
                 (
@@ -485,6 +547,7 @@ class Database:
                     resources.get("might", 0),
                     resources.get("actions", 1),
                     resources.get("onboard_step", 1),
+                    resources.get("last_active_tick", tick_index),
                 ),
             )
             row = self.cursor.fetchone()
@@ -574,15 +637,17 @@ class Database:
             self.cursor.execute(
                 """
                 INSERT INTO pact_invites (
-                    realm_id, pact_id, inviter_fief_id, target_fief_id, expires_at
-                ) VALUES (%s,%s,%s,%s,%s) RETURNING *;
+                    realm_id, pact_id, inviter_fief_id, target_fief_id,
+                    expires_at, expires_tick
+                ) VALUES (%s,%s,%s,%s,%s,%s) RETURNING *;
                 """,
                 (
                     fields["realm_id"],
                     fields["pact_id"],
                     fields["inviter_fief_id"],
                     fields["target_fief_id"],
-                    fields["expires_at"],
+                    fields.get("expires_at") or (_utcnow() + timedelta(days=3650)),
+                    fields["expires_tick"],
                 ),
             )
             row = self.cursor.fetchone()
@@ -596,9 +661,10 @@ class Database:
     def get_open_pact_invite(self, pact_id: int, target_fief_id: int) -> dict | None:
         return self._fetchone(
             """
-            SELECT * FROM pact_invites
-            WHERE pact_id=%s AND target_fief_id=%s AND status='open'
-              AND expires_at > NOW();
+            SELECT i.* FROM pact_invites i
+            JOIN realms r ON r.id = i.realm_id
+            WHERE i.pact_id=%s AND i.target_fief_id=%s AND i.status='open'
+              AND i.expires_tick > r.tick_index;
             """,
             (pact_id, target_fief_id),
         )
@@ -608,9 +674,11 @@ class Database:
         with self.lock:
             self.cursor.execute(
                 """
-                UPDATE pact_invites SET status=%s
-                WHERE id=%s AND status='open' AND expires_at > NOW()
-                RETURNING *;
+                UPDATE pact_invites i SET status=%s
+                FROM realms r
+                WHERE i.id=%s AND i.status='open' AND r.id = i.realm_id
+                  AND i.expires_tick > r.tick_index
+                RETURNING i.*;
                 """,
                 (new_status, invite_id),
             )
@@ -631,8 +699,8 @@ class Database:
                 """
                 INSERT INTO trade_offers (
                     realm_id, offerer_fief_id, target_fief_id,
-                    give_res, give_amt, want_res, want_amt, expires_at
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *;
+                    give_res, give_amt, want_res, want_amt, expires_at, expires_tick
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *;
                 """,
                 (
                     fields["realm_id"],
@@ -642,7 +710,8 @@ class Database:
                     fields["give_amt"],
                     fields["want_res"],
                     fields["want_amt"],
-                    fields["expires_at"],
+                    fields.get("expires_at") or (_utcnow() + timedelta(days=3650)),
+                    fields["expires_tick"],
                 ),
             )
             row = self.cursor.fetchone()
@@ -654,21 +723,32 @@ class Database:
         if for_fief_id is None:
             return self._fetchall(
                 """
-                SELECT * FROM trade_offers
-                WHERE realm_id=%s AND status='open' AND expires_at > NOW()
-                  AND target_fief_id IS NULL
-                ORDER BY id DESC;
+                SELECT t.* FROM trade_offers t
+                JOIN realms r ON r.id = t.realm_id
+                WHERE t.realm_id=%s AND t.status='open' AND t.expires_tick > r.tick_index
+                  AND t.target_fief_id IS NULL
+                ORDER BY t.id DESC;
                 """,
                 (realm_id,),
             )
         return self._fetchall(
             """
-            SELECT * FROM trade_offers
-            WHERE realm_id=%s AND status='open' AND expires_at > NOW()
-              AND (target_fief_id IS NULL OR target_fief_id=%s OR offerer_fief_id=%s)
-            ORDER BY id DESC;
+            SELECT t.* FROM trade_offers t
+            JOIN realms r ON r.id = t.realm_id
+            WHERE t.realm_id=%s AND t.status='open' AND t.expires_tick > r.tick_index
+              AND (t.target_fief_id IS NULL OR t.target_fief_id=%s OR t.offerer_fief_id=%s)
+            ORDER BY t.id DESC;
             """,
             (realm_id, for_fief_id, for_fief_id),
+        )
+
+    def list_expired_open_trades(self, realm_id: int, tick_index: int) -> list[dict]:
+        return self._fetchall(
+            """
+            SELECT * FROM trade_offers
+            WHERE realm_id=%s AND status='open' AND expires_tick <= %s;
+            """,
+            (realm_id, tick_index),
         )
 
     def get_trade(self, trade_id: int) -> dict | None:
@@ -702,8 +782,8 @@ class Database:
                 """
                 INSERT INTO raids_log (
                     realm_id, attacker_fief_id, victim_fief_id, success,
-                    might_spent, grain_stolen, goods_stolen, public_line
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *;
+                    might_spent, grain_stolen, goods_stolen, public_line, tick_index
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *;
                 """,
                 (
                     fields["realm_id"],
@@ -714,6 +794,7 @@ class Database:
                     fields.get("grain_stolen", 0),
                     fields.get("goods_stolen", 0),
                     fields["public_line"],
+                    fields.get("tick_index"),
                 ),
             )
             row = self.cursor.fetchone()
@@ -721,34 +802,41 @@ class Database:
             self.commit()
             return dict(zip(cols, row))
 
-    def count_raids_between(self, attacker_id: int, victim_id: int, since: datetime) -> int:
+    def count_raids_between(self, attacker_id: int, victim_id: int, since_tick: int) -> int:
         with self.lock:
             self.cursor.execute(
                 """
                 SELECT COUNT(*) FROM raids_log
-                WHERE attacker_fief_id=%s AND victim_fief_id=%s AND created_at >= %s;
+                WHERE attacker_fief_id=%s AND victim_fief_id=%s
+                  AND tick_index >= %s;
                 """,
-                (attacker_id, victim_id, since),
+                (attacker_id, victim_id, since_tick),
             )
             return int(self.cursor.fetchone()[0])
 
-    def last_raid_attacker_victim(self, attacker_id: int, victim_id: int) -> datetime | None:
+    def last_raid_attacker_victim(self, attacker_id: int, victim_id: int) -> int | None:
+        """Тик последнего набега пары, либо None."""
         with self.lock:
             self.cursor.execute(
                 """
-                SELECT created_at FROM raids_log
+                SELECT tick_index FROM raids_log
                 WHERE attacker_fief_id=%s AND victim_fief_id=%s
-                ORDER BY created_at DESC LIMIT 1;
+                  AND tick_index IS NOT NULL
+                ORDER BY id DESC LIMIT 1;
                 """,
                 (attacker_id, victim_id),
             )
             row = self.cursor.fetchone()
-            return row[0] if row else None
+            return int(row[0]) if row and row[0] is not None else None
 
-    def raids_since(self, realm_id: int, since: datetime) -> list[dict]:
+    def raids_since_tick(self, realm_id: int, since_tick: int) -> list[dict]:
         return self._fetchall(
-            "SELECT * FROM raids_log WHERE realm_id=%s AND created_at >= %s ORDER BY created_at;",
-            (realm_id, since),
+            """
+            SELECT * FROM raids_log
+            WHERE realm_id=%s AND tick_index >= %s
+            ORDER BY id;
+            """,
+            (realm_id, since_tick),
         )
 
     # --- events ---
@@ -757,8 +845,9 @@ class Database:
             self.cursor.execute(
                 """
                 INSERT INTO realm_events (
-                    realm_id, kind, event_key, payload, narrative, status, resolves_at
-                ) VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s) RETURNING *;
+                    realm_id, kind, event_key, payload, narrative, status,
+                    resolves_at, resolves_tick
+                ) VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s,%s) RETURNING *;
                 """,
                 (
                     fields["realm_id"],
@@ -768,6 +857,7 @@ class Database:
                     fields.get("narrative"),
                     fields.get("status", "active"),
                     fields.get("resolves_at"),
+                    fields.get("resolves_tick"),
                 ),
             )
             row = self.cursor.fetchone()

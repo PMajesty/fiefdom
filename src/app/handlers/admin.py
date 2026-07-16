@@ -51,8 +51,8 @@ ADMIN_HELP_TEXT = (
     "<b>Выдать ресурсы</b> усадьбе (зерно товары сила):\n"
     "<code>/вч_grant 1 3 50 20 10</code>\n"
     "\n"
-    "<b>Событие</b> на 24ч (ключ из списка при ошибке):\n"
-    "<code>/вч_event 1 harvest_day</code>\n"
+    "<b>Событие</b> до следующего тика (ключ из списка при ошибке):\n"
+    "<code>/вч_event 1 harvest</code>\n"
     "\n"
     "<b>Удалить долину</b> - два шага:\n"
     "1) <code>/вч_wipe_start 1</code> - бот пришлёт готовую команду с кодом\n"
@@ -169,23 +169,21 @@ async def cmd_event(message: Message) -> None:
         realm = engine.db.get_realm(realm_id)
         if not realm:
             raise ValueError("Долина не найдена")
-        from datetime import datetime, timedelta, timezone
-
         if key in MINOR_EVENTS:
             meta = MINOR_EVENTS[key]
             engine.db.update_realm(
                 realm_id,
                 active_minor_key=key,
-                active_minor_until=datetime.now(timezone.utc) + timedelta(hours=24),
+                active_minor_until=None,
             )
-            note = f"Событие \"{meta['name_ru']}\" активно 24ч. {meta['mechanics']}"
+            note = f"Событие \"{meta['name_ru']}\" до следующего тика. {meta['mechanics']}"
         else:
             engine.db.update_realm(
                 realm_id,
                 active_minor_key=key,
-                active_minor_until=datetime.now(timezone.utc) + timedelta(hours=24),
+                active_minor_until=None,
             )
-            note = f"Установлен ключ события \"{key}\" на 24ч."
+            note = f"Установлен ключ события \"{key}\" до следующего тика."
         await answer_html(message, note)
     except ValueError as exc:
         await answer_html(message, str(exc))

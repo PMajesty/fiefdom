@@ -451,7 +451,7 @@ def test_patrol_confirm_callback_shape():
     text = patrol_confirm_text()
     assert f"−{B.PATROL_COST_MIGHT} силы" in text
     assert "1 действие" in text
-    assert f"на {B.PATROL_HOURS}ч" in text
+    assert f"на {B.PATROL_TICKS} тик(а)" in text
     assert f"+{B.PATROL_DEFENSE_BONUS} защиты" in text
     assert "защиту от набегов" in text
 

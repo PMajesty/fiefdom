@@ -201,7 +201,7 @@ def format_build_tile_button(
 
 def patrol_confirm_text() -> str:
     return (
-        f"Выставить дозор? Усилит защиту от набегов на {B.PATROL_HOURS}ч "
+        f"Выставить дозор? Усилит защиту от набегов на {B.PATROL_TICKS} тик(а) "
         f"(−{B.PATROL_COST_MIGHT} силы, 1 действие, +{B.PATROL_DEFENSE_BONUS} защиты)."
     )
 

@@ -38,14 +38,11 @@ def get_engine() -> Engine:
 
 def realm_upgrade_cost_mult(realm: dict | None, *, now: datetime | None = None) -> float:
     """Множитель стоимости стройки/апгрейда по активному мелкому событию."""
+    del now  # совместимость вызовов; срок минора - тиковый
     if not realm:
         return 1.0
     key = realm.get("active_minor_key")
-    until = realm.get("active_minor_until")
-    if not key or not until:
-        return 1.0
-    current = now or datetime.now(timezone.utc)
-    if until <= current:
+    if not key:
         return 1.0
     try:
         return float(minor_effect(key).get("upgrade_cost_mult", 1.0))
