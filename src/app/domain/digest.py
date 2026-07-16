@@ -2,6 +2,24 @@
 from __future__ import annotations
 
 
+def ru_plural(n: int, one: str, few: str, many: str) -> str:
+    """Русское склонение для целого числа: 1 лот / 2 лота / 5 лотов."""
+    n_abs = abs(int(n)) % 100
+    if 11 <= n_abs <= 14:
+        return many
+    last = n_abs % 10
+    if last == 1:
+        return one
+    if 2 <= last <= 4:
+        return few
+    return many
+
+
+def format_lots_count(n: int) -> str:
+    n = int(n)
+    return f"{n} {ru_plural(n, 'лот', 'лота', 'лотов')}"
+
+
 def format_digest(
     *,
     realm_title: str,

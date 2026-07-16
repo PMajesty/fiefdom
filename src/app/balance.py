@@ -190,6 +190,9 @@ OVERGROWN_COMPENSATION = 0.5
 ONBOARD_DAY2_GOODS = 15
 ONBOARD_DAY3_GRAIN = 10
 
+# Набег/Пакт в UI: после квестов (onboard_step >= 4) и с этого дня долины.
+RAID_PACT_UNLOCK_DAY = 3
+
 # Feature flags по умолчанию
 DEFAULT_FEATURE_FLAGS = {
     "relics": False,

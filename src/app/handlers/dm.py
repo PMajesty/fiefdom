@@ -12,9 +12,11 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from app import balance as B
 from app.domain.map_gen import coord_label
 from app.domain.economy import adjacent_claimable
+from app.engine import raid_pact_lock_message
 from app.handlers.shared import (
+    fief_home_kb,
+    fief_raid_pact_state,
     get_engine,
-    main_menu_kb,
     parse_start_payload,
     reply_game,
     resolve_fief_for_user,
@@ -36,8 +38,12 @@ _MENU_WORDS = {
     "map": "map",
     "рынок": "market",
     "market": "market",
+    "земля": "claim",
+    "занять": "claim",
+    "расширить": "claim",
     "клейм": "claim",
     "claim": "claim",
+    "строить": "build",
     "стройка": "build",
     "build": "build",
     "дозор": "patrol",
@@ -48,6 +54,10 @@ _MENU_WORDS = {
     "trade": "trade",
     "пакт": "pact",
     "pact": "pact",
+    "устав": "guide",
+    "гайд": "guide",
+    "правила": "guide",
+    "guide": "guide",
     "меню": "menu",
     "menu": "menu",
 }
@@ -61,10 +71,139 @@ def set_pending(user_id: int, data: dict) -> None:
     pending_actions[user_id] = data
 
 
+def is_pending_cancel_text(text: str) -> bool:
+    return text.strip().lower() in {"отмена", "cancel"}
+
+
+async def _notify_raid_parties(bot, result) -> None:
+    """DM жертве (и перехватчику); блок бота — только warning."""
+    targets: list[tuple[int, str]] = [
+        (int(result.victim_user_id), result.victim_dm_text()),
+    ]
+    interceptor_text = result.interceptor_dm_text()
+    if (
+        interceptor_text
+        and result.interceptor_user_id is not None
+        and int(result.interceptor_user_id) != int(result.victim_user_id)
+    ):
+        targets.append((int(result.interceptor_user_id), interceptor_text))
+
+    for chat_id, text in targets:
+        try:
+            await bot.send_message(chat_id, text)
+        except Exception:
+            logger.warning("raid DM failed chat_id=%s", chat_id, exc_info=True)
+
+
+def format_claim_button(
+    x: int,
+    y: int,
+    tile_type: str,
+    next_tile_count: int,
+    *,
+    is_overgrown: bool = False,
+) -> str:
+    """Подпись кнопки занятия: «А3 Поле · 30 тов.» (глушь ×2, кроме заросших)."""
+    name = B.TILE_NAMES_RU.get(tile_type, tile_type)
+    is_wilds = (not is_overgrown) and tile_type == B.TILE_WILDS
+    cost = B.claim_cost(next_tile_count, is_wilds=is_wilds)
+    return f"{coord_label(x, y)} {name} · {cost} тов."
+
+
+def format_building_type_label(building: str) -> str:
+    """Подпись типа здания с ценой 1-го уровня."""
+    name = B.BUILDING_NAMES_RU.get(building, building)
+    cost = B.building_upgrade_cost(building, 1)
+    return f"{name} · {cost} тов."
+
+
+def format_build_cost_label(building: str, tile: dict) -> str:
+    """Стоимость постройки/апгрейда/ремонта на клетке (без учёта событий)."""
+    current = tile.get("building")
+    level = int(tile.get("building_level") or 0)
+    damaged = bool(tile.get("damaged"))
+    if damaged and current:
+        return f"{B.repair_cost(current, level)} тов."
+    if current and current != building:
+        return "занято"
+    if not current:
+        return f"{B.building_upgrade_cost(building, 1)} тов."
+    target = level + 1
+    if target > 3:
+        return "макс."
+    return f"{B.building_upgrade_cost(building, target)} тов."
+
+
+def format_build_tile_button(building: str, tile: dict) -> str:
+    """Подпись клетки при выборе места стройки."""
+    coord = coord_label(tile["x"], tile["y"])
+    cost_label = format_build_cost_label(building, tile)
+    current = tile.get("building")
+    level = int(tile.get("building_level") or 0)
+    damaged = bool(tile.get("damaged"))
+    if damaged and current:
+        bname = B.BUILDING_NAMES_RU.get(current, current)
+        return f"{coord} ремонт {bname}{level} · {cost_label}"
+    if current and current != building:
+        bname = B.BUILDING_NAMES_RU.get(current, current)
+        return f"{coord} {bname}{level} · {cost_label}"
+    if current:
+        return f"{coord} →{level + 1} · {cost_label}"
+    return f"{coord} · {cost_label}"
+
+
+def patrol_confirm_text() -> str:
+    return (
+        f"Выставить дозор? (−{B.PATROL_COST_MIGHT} силы, 1 действие)"
+    )
+
+
+def patrol_confirm_callback(fief_id: int) -> str:
+    return f"pat:{int(fief_id)}:ok"
+
+
+def patrol_prompt_callback(fief_id: int) -> str:
+    return f"pat:{int(fief_id)}"
+
+
+def pending_cancel_callback(fief_id: int) -> str:
+    return f"pend:cancel:{int(fief_id)}"
+
+
 async def show_status(message: Message, fief_id: int) -> None:
     engine = get_engine()
     text = engine.status_card(fief_id)
-    await reply_game(message, text, reply_markup=main_menu_kb(fief_id))
+    await reply_game(message, text, reply_markup=fief_home_kb(engine, fief_id))
+
+
+def pending_cancel_kb(fief_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Отмена",
+                    callback_data=pending_cancel_callback(fief_id),
+                )
+            ]
+        ]
+    )
+
+
+def patrol_confirm_kb(fief_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Подтвердить",
+                    callback_data=patrol_confirm_callback(fief_id),
+                ),
+                InlineKeyboardButton(
+                    text="Отмена",
+                    callback_data=f"st:{int(fief_id)}",
+                ),
+            ]
+        ]
+    )
 
 
 def starter_tiles_kb(realm_id: int, tiles: list[dict]) -> InlineKeyboardMarkup:
@@ -101,17 +240,27 @@ def realm_picker_kb(fiefs: list[dict], engine) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def claimable_kb(fief_id: int, coords: list[tuple[int, int]]) -> InlineKeyboardMarkup:
+def claimable_kb(
+    fief_id: int,
+    coords: list[tuple[int, int]],
+    *,
+    next_tile_count: int,
+    tile_meta: dict[tuple[int, int], tuple[str, bool]],
+) -> InlineKeyboardMarkup:
+    """tile_meta: (x,y) → (tile_type, is_overgrown)."""
     rows = []
     row: list[InlineKeyboardButton] = []
     for x, y in coords[:24]:
+        tile_type, is_overgrown = tile_meta.get((x, y), (B.TILE_FIELD, False))
         row.append(
             InlineKeyboardButton(
-                text=coord_label(x, y),
+                text=format_claim_button(
+                    x, y, tile_type, next_tile_count, is_overgrown=is_overgrown
+                ),
                 callback_data=f"clm:{fief_id}:{x}:{y}",
             )
         )
-        if len(row) >= 4:
+        if len(row) >= 2:
             rows.append(row)
             row = []
     if row:
@@ -122,11 +271,11 @@ def claimable_kb(fief_id: int, coords: list[tuple[int, int]]) -> InlineKeyboardM
 
 def building_types_kb(fief_id: int) -> InlineKeyboardMarkup:
     rows = []
-    for key, name in B.BUILDING_NAMES_RU.items():
+    for key in B.BUILDING_NAMES_RU:
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=name,
+                    text=format_building_type_label(key),
                     callback_data=f"bld:{fief_id}:{key}",
                 )
             ]
@@ -139,16 +288,13 @@ def build_tiles_kb(fief_id: int, building: str, tiles: list[dict]) -> InlineKeyb
     rows = []
     row: list[InlineKeyboardButton] = []
     for t in tiles[:24]:
-        bl = t.get("building")
-        lvl = int(t.get("building_level") or 0)
-        suffix = f" {B.BUILDING_NAMES_RU.get(bl, bl)}{lvl}" if bl else ""
         row.append(
             InlineKeyboardButton(
-                text=f"{coord_label(t['x'], t['y'])}{suffix}",
+                text=format_build_tile_button(building, t),
                 callback_data=f"bld:{fief_id}:{building}:{t['x']}:{t['y']}",
             )
         )
-        if len(row) >= 3:
+        if len(row) >= 2:
             rows.append(row)
             row = []
     if row:
@@ -305,6 +451,15 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
         await answer_html(message, "Ошибка /start.")
 
 
+# В личке также: /вч_гайд через общий текст устава
+@router.message(Command("вч_гайд", "вч_устав", "vch_guide", "vch_rules", "гайд", "устав"))
+async def cmd_dm_guide(message: Message) -> None:
+    engine = get_engine()
+    fief = resolve_fief_for_user(engine, message.from_user.id)
+    kb = fief_home_kb(engine, fief["id"]) if fief else None
+    await reply_game(message, engine.guide_text(), reply_markup=kb)
+
+
 @router.message(Command("меню", "menu"))
 async def cmd_menu(message: Message) -> None:
     engine = get_engine()
@@ -312,7 +467,7 @@ async def cmd_menu(message: Message) -> None:
     if not fief:
         await answer_html(message, "Усадьба не найдена. /start")
         return
-    await answer_html(message, "Меню усадьбы:", reply_markup=main_menu_kb(fief["id"]))
+    await show_status(message, fief["id"])
 
 
 @router.message(F.text)
@@ -344,7 +499,7 @@ async def dm_text(message: Message) -> None:
     if not key:
         await answer_html(
             message,
-            "Команды: статус, карта, рынок, клейм, стройка, дозор, набег, сделка, пакт, меню.",
+            "Команды: статус, карта, рынок, земля, строить, дозор, набег, сделка, пакт, устав, меню.",
         )
         return
 
@@ -356,14 +511,20 @@ async def dm_text(message: Message) -> None:
 
     try:
         if key == "menu":
-            await answer_html(message, "Меню:", reply_markup=main_menu_kb(fid))
+            await show_status(message, fid)
         elif key == "status":
             await show_status(message, fid)
         elif key == "map":
             await reply_game(
                 message,
                 engine.map_text(fief["realm_id"], highlight_fief_id=fid),
-                reply_markup=main_menu_kb(fid),
+                reply_markup=fief_home_kb(engine, fid),
+            )
+        elif key == "guide":
+            await reply_game(
+                message,
+                engine.guide_text(),
+                reply_markup=fief_home_kb(engine, fid),
             )
         elif key == "market":
             offers = engine.db.list_open_trades(fief["realm_id"], fid)
@@ -381,8 +542,11 @@ async def dm_text(message: Message) -> None:
                 reply_markup=building_types_kb(fid),
             )
         elif key == "patrol":
-            msg = engine.patrol(fid)
-            await reply_game(message, msg, reply_markup=main_menu_kb(fid))
+            await answer_html(
+                message,
+                patrol_confirm_text(),
+                reply_markup=patrol_confirm_kb(fid),
+            )
         elif key == "raid":
             await _offer_raid(message, engine, fief)
         elif key == "trade":
@@ -395,7 +559,7 @@ async def dm_text(message: Message) -> None:
         elif key == "pact":
             await _offer_pact(message, engine, fief)
     except ValueError as exc:
-        await answer_html(message, str(exc), reply_markup=main_menu_kb(fid))
+        await answer_html(message, str(exc), reply_markup=fief_home_kb(engine, fid))
     except Exception:
         logger.exception("dm_text menu")
         await answer_html(message, "Ошибка команды.")
@@ -408,20 +572,42 @@ async def _offer_claim(message: Message, engine, fief: dict) -> None:
         for t in views
         if t.owner_fief_id == fief["id"] and not t.is_overgrown
     }
-    claimable = sorted(
-        adjacent_claimable(owned, {(t.x, t.y): t for t in views}, for_fief_id=fief["id"])
-    )
+    by_xy = {(t.x, t.y): t for t in views}
+    claimable = sorted(adjacent_claimable(owned, by_xy, for_fief_id=fief["id"]))
     if not claimable:
-        await answer_html(message, "Нет соседних клеток для клейма.")
+        await answer_html(message, "Нет соседних клеток для занятия.")
         return
+    tile_meta = {
+        (x, y): (by_xy[(x, y)].tile_type, by_xy[(x, y)].is_overgrown)
+        for x, y in claimable
+        if (x, y) in by_xy
+    }
     await answer_html(
         message,
-        "Выберите клетку:",
-        reply_markup=claimable_kb(fief["id"], claimable),
+        "Выберите клетку для занятия:",
+        reply_markup=claimable_kb(
+            fief["id"],
+            claimable,
+            next_tile_count=len(owned) + 1,
+            tile_meta=tile_meta,
+        ),
     )
 
 
 async def _offer_raid(message: Message, engine, fief: dict) -> None:
+    open_, _hint = fief_raid_pact_state(engine, fief)
+    if not open_:
+        realm = engine.db.get_realm(fief["realm_id"])
+        day_number = int(realm["day_number"]) if realm else 1
+        await answer_html(
+            message,
+            raid_pact_lock_message(
+                onboard_step=int(fief.get("onboard_step") or 0),
+                day_number=day_number,
+            ),
+            reply_markup=fief_home_kb(engine, fief["id"]),
+        )
+        return
     others = [
         o
         for o in engine.db.list_fiefs(fief["realm_id"])
@@ -438,6 +624,19 @@ async def _offer_raid(message: Message, engine, fief: dict) -> None:
 
 
 async def _offer_pact(message: Message, engine, fief: dict) -> None:
+    open_, _hint = fief_raid_pact_state(engine, fief)
+    if not open_:
+        realm = engine.db.get_realm(fief["realm_id"])
+        day_number = int(realm["day_number"]) if realm else 1
+        await answer_html(
+            message,
+            raid_pact_lock_message(
+                onboard_step=int(fief.get("onboard_step") or 0),
+                day_number=day_number,
+            ),
+            reply_markup=fief_home_kb(engine, fief["id"]),
+        )
+        return
     in_pact = bool(fief.get("pact_id"))
     is_founder = False
     if in_pact:
@@ -458,11 +657,25 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
     kind = pending.get("kind")
     user_id = message.from_user.id
 
+    if is_pending_cancel_text(text):
+        clear_pending(user_id)
+        fid = pending.get("fief_id")
+        if fid is not None:
+            await show_status(message, int(fid))
+        else:
+            await answer_html(message, "Отменено.")
+        return True
+
     if kind == "raid_might":
         might = int(text.strip())
-        msg = engine.raid(pending["fief_id"], pending["victim_id"], might)
+        result = engine.raid(pending["fief_id"], pending["victim_id"], might)
         clear_pending(user_id)
-        await reply_game(message, msg, reply_markup=main_menu_kb(pending["fief_id"]))
+        await reply_game(
+            message,
+            result.public_line,
+            reply_markup=fief_home_kb(engine, pending["fief_id"]),
+        )
+        await _notify_raid_parties(message.bot, result)
         return True
 
     if kind == "trade_create":
@@ -471,7 +684,9 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
         if not parsed:
             await reply_game(
                 message,
-                "Формат: <code>зерно 10 товары 5</code> (отдаю → хочу).",
+                "Формат: <code>зерно 10 товары 5</code> (отдаю → хочу).\n"
+                "Или напишите «отмена».",
+                reply_markup=pending_cancel_kb(pending["fief_id"]),
             )
             return True
         give_res, give_amt, want_res, want_amt = parsed
@@ -479,24 +694,34 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
             pending["fief_id"], give_res, give_amt, want_res, want_amt
         )
         clear_pending(user_id)
-        await reply_game(message, msg, reply_markup=main_menu_kb(pending["fief_id"]))
+        await reply_game(
+            message, msg, reply_markup=fief_home_kb(engine, pending["fief_id"])
+        )
         return True
 
     if kind == "pact_name":
         msg = engine.create_pact(pending["fief_id"], text)
         clear_pending(user_id)
-        await reply_game(message, msg, reply_markup=main_menu_kb(pending["fief_id"]))
+        await reply_game(
+            message, msg, reply_markup=fief_home_kb(engine, pending["fief_id"])
+        )
         return True
 
     if kind == "pact_invite":
         # id усадьбы или имя
         target = _resolve_fief_ref(engine, pending["realm_id"], text)
         if not target:
-            await answer_html(message, "Усадьба не найдена. Укажите id или имя.")
+            await answer_html(
+                message,
+                "Усадьба не найдена. Укажите id или имя.\nИли напишите «отмена».",
+                reply_markup=pending_cancel_kb(pending["fief_id"]),
+            )
             return True
         msg = engine.invite_to_pact(pending["fief_id"], target["id"])
         clear_pending(user_id)
-        await reply_game(message, msg, reply_markup=main_menu_kb(pending["fief_id"]))
+        await reply_game(
+            message, msg, reply_markup=fief_home_kb(engine, pending["fief_id"])
+        )
         return True
 
     return False

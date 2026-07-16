@@ -10,6 +10,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
     "harvest": {
         "id": "harvest",
         "name_ru": "Урожайный день",
+        "digest_line": "Урожайный день — фермы дают больше зерна.",
         "canned_narrative": (
             "Солнце встало раньше петухов, и колосья налились так, будто сами "
             "просили серпа. Крестьяне бормочут про удачный знак, но прячут улыбки — "
@@ -21,6 +22,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
     "fog": {
         "id": "fog",
         "name_ru": "Туман",
+        "digest_line": "Туман — дозор сегодня почти бесполезен.",
         "canned_narrative": (
             "Долина утонула в молочной мгле: дозорные видят лишь собственные носы. "
             "В тумане ступают тихо те, кому есть что украсть. Сегодня стена и факел "
@@ -32,6 +34,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
     "trader": {
         "id": "trader",
         "name_ru": "Бродячий торговец",
+        "digest_line": "Бродячий торговец — особые сделки ждут в личке.",
         "canned_narrative": (
             "У дороги остановился воз с тряпьём и пряностями; хозяин щурится и "
             "называет цены, от которых стынет кровь. Сделки шепчут в личке — "
@@ -43,6 +46,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
     "rats": {
         "id": "rats",
         "name_ru": "Крысы в амбарах",
+        "digest_line": "Крысы в амбарах — незащищённое зерно под угрозой.",
         "canned_narrative": (
             "Ночью в закромах зашуршало так, будто молотили невидимым цепом. "
             "Крысы любят богатых: где зерно лежит без охраны, там пир до утра. "
@@ -54,6 +58,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
     "fair": {
         "id": "fair",
         "name_ru": "Ярмарка",
+        "digest_line": "Ярмарка — обмены сегодня чуть выгоднее.",
         "canned_narrative": (
             "На площади подняли шатры, зазвенели гири и чужие акценты. "
             "Сегодня всякий обмен чуть щедрее обычного — торговцы пьяны от чужой "
@@ -65,6 +70,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
     "deserter": {
         "id": "deserter",
         "name_ru": "Дезертир",
+        "digest_line": "Дезертир — кто первый в чате, возьмёт воина в дружину.",
         "canned_narrative": (
             "Из леса вышел оборванец с чужим щитом и взглядом человека, который "
             "уже однажды предал. Он готов служить первому, кто крикнет громче. "
@@ -76,6 +82,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
     "good_stone": {
         "id": "good_stone",
         "name_ru": "Хороший камень",
+        "digest_line": "Хороший камень — надстройки сегодня дешевле.",
         "canned_narrative": (
             "В карьере нашли пласт, который ложится в стену сам, будто помнит форму. "
             "Каменщики работают дешевле и злее — боятся, что удача кончится к вечеру. "
@@ -87,6 +94,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
     "drought": {
         "id": "drought",
         "name_ru": "Засуха",
+        "digest_line": "Засуха — урожай слабее; полив за товары в личке.",
         "canned_narrative": (
             "Земля потрескалась, как старая кожа, и ручьи стали пыльными бороздами. "
             "Без полива нива отдаст едва ли две трети. У кого есть товары на воду — "
@@ -98,6 +106,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
     "wedding": {
         "id": "wedding",
         "name_ru": "Свадьба в деревне",
+        "digest_line": "Свадьба в деревне — завершённый обмен дарит зерно.",
         "canned_narrative": (
             "В деревне гуляют свадьбу: льётся брага, сыплются подарки и чужие долги. "
             "Кто сегодня завершит обмен, получит горсть зерна «на счастье молодых». "
@@ -109,6 +118,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
     "omen": {
         "id": "omen",
         "name_ru": "Знамение",
+        "digest_line": "Знамение — долина ждёт беды, но пока тихо.",
         "canned_narrative": (
             "Над холмами прошла тень без тучи, и вороны сели молча, как судьи. "
             "Старики шепчут, какая беда бродит на краю долины, но цифр не называют. "
@@ -188,6 +198,25 @@ CATASTROPHES: dict[str, dict[str, Any]] = {
     },
 }
 
+# Живой ролл: только события с реальной механикой/UI (omen — намеренный flavor).
+# Вне пула, но в таблицах: trader — до проводки DM-сделок.
+SHIPPED_MINOR_KEYS: frozenset[str] = frozenset(
+    {
+        "harvest",
+        "fog",
+        "rats",
+        "fair",
+        "deserter",
+        "good_stone",
+        "drought",
+        "wedding",
+        "omen",
+    }
+)
+
+# Живой ролл катастроф: только с contribute/resolve UI. Остальные — stub до проводки.
+SHIPPED_CATASTROPHE_KEYS: frozenset[str] = frozenset({"bandit_night"})
+
 _MINOR_EFFECTS: dict[str, dict[str, Any]] = {
     "harvest": {"farm_mult": 1.25, "duration_hours": 24},
     "fog": {"raids_ignore_patrol": True, "duration_hours": 24},
@@ -244,17 +273,43 @@ _CATASTROPHE_EFFECTS: dict[str, dict[str, Any]] = {
 }
 
 
+def event_digest_line(meta: dict[str, Any]) -> str:
+    """Игровая строка сводки: никогда не отдаёт mechanics."""
+    line = meta.get("digest_line")
+    if line:
+        return str(line)
+    name = meta.get("name_ru")
+    if name:
+        return str(name)
+    return str(meta.get("id") or "событие")
+
+
+def _shipped_minor_pool() -> list[str]:
+    return [k for k in SHIPPED_MINOR_KEYS if k in MINOR_EVENTS]
+
+
+def _shipped_catastrophe_pool() -> list[str]:
+    return [k for k in SHIPPED_CATASTROPHE_KEYS if k in CATASTROPHES]
+
+
 def roll_minor_event(rng: Random) -> str | None:
-    """С вероятностью MINOR_EVENT_CHANCE возвращает ключ события, иначе тихий день."""
+    """С вероятностью MINOR_EVENT_CHANCE возвращает ключ отгруженного события, иначе тихий день."""
     if rng.random() >= B.MINOR_EVENT_CHANCE:
         return None
-    return rng.choice(list(MINOR_EVENTS.keys()))
+    pool = _shipped_minor_pool()
+    if not pool:
+        return None
+    return rng.choice(pool)
 
 
 def pick_catastrophe(rng: Random, last_key: str | None) -> str:
-    keys = [k for k in CATASTROPHES if k != last_key]
+    """Выбирает отгруженную катастрофу; повторяет last, если в пуле один ключ."""
+    shipped = _shipped_catastrophe_pool()
+    if not shipped:
+        raise RuntimeError("Нет отгруженных катастроф для ролла")
+    keys = [k for k in shipped if k != last_key]
     if not keys:
-        keys = list(CATASTROPHES.keys())
+        keys = shipped
     return rng.choice(keys)
 
 

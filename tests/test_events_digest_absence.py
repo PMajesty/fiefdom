@@ -26,9 +26,46 @@ def test_minor_events_table_complete():
     for key, row in events.MINOR_EVENTS.items():
         assert row["id"] == key
         assert row["name_ru"]
+        assert row["digest_line"]
         assert row["canned_narrative"]
         assert "mechanics" in row
         assert isinstance(events.minor_effect(key), dict)
+
+
+def test_event_digest_line_never_leaks_mechanics():
+    for key, row in events.MINOR_EVENTS.items():
+        line = events.event_digest_line(row)
+        assert line
+        assert "_" not in line
+        assert "farm_mult" not in line
+        assert "trade_bonus" not in line
+        assert row["mechanics"] not in line
+        assert line == row["digest_line"]
+
+
+def test_deserter_digest_line_true_agency():
+    line = events.MINOR_EVENTS["deserter"]["digest_line"]
+    assert "личк" not in line.lower()
+    assert "чат" in line.lower()
+    assert "дружин" in line.lower()
+
+
+def test_event_digest_line_fallback_without_digest_field():
+    meta = {"name_ru": "Тест", "mechanics": "farm_mult+1"}
+    assert events.event_digest_line(meta) == "Тест"
+    assert "farm_mult" not in events.event_digest_line(meta)
+
+
+def test_format_lots_count_pluralization():
+    assert digest.format_lots_count(1) == "1 лот"
+    assert digest.format_lots_count(2) == "2 лота"
+    assert digest.format_lots_count(3) == "3 лота"
+    assert digest.format_lots_count(4) == "4 лота"
+    assert digest.format_lots_count(5) == "5 лотов"
+    assert digest.format_lots_count(11) == "11 лотов"
+    assert digest.format_lots_count(21) == "21 лот"
+    assert digest.format_lots_count(22) == "22 лота"
+    assert digest.ru_plural(0, "лот", "лота", "лотов") == "лотов"
 
 
 def test_catastrophes_table_complete():
@@ -48,6 +85,50 @@ def test_catastrophes_table_complete():
         assert isinstance(events.catastrophe_effect(key), dict)
 
 
+def test_shipped_minor_keys_documented_and_subset():
+    assert events.SHIPPED_MINOR_KEYS == frozenset(
+        {
+            "harvest",
+            "fog",
+            "rats",
+            "fair",
+            "deserter",
+            "good_stone",
+            "drought",
+            "wedding",
+            "omen",
+        }
+    )
+    assert events.SHIPPED_MINOR_KEYS <= set(events.MINOR_EVENTS)
+    gated = set(events.MINOR_EVENTS) - events.SHIPPED_MINOR_KEYS
+    assert gated == {"trader"}
+
+
+def test_shipped_catastrophe_keys_documented_and_subset():
+    assert events.SHIPPED_CATASTROPHE_KEYS == frozenset({"bandit_night"})
+    assert events.SHIPPED_CATASTROPHE_KEYS <= set(events.CATASTROPHES)
+    gated = set(events.CATASTROPHES) - events.SHIPPED_CATASTROPHE_KEYS
+    assert gated == {
+        "flood",
+        "cattle_plague",
+        "rat_king",
+        "dragon_rumors",
+        "black_fair",
+    }
+
+
+def test_gated_content_remains_in_tables():
+    assert "trader" in events.MINOR_EVENTS
+    assert isinstance(events.minor_effect("trader"), dict)
+    for key in ("deserter", "drought"):
+        assert key in events.MINOR_EVENTS
+        assert key in events.SHIPPED_MINOR_KEYS
+        assert isinstance(events.minor_effect(key), dict)
+    for key in ("flood", "cattle_plague", "rat_king", "dragon_rumors", "black_fair"):
+        assert key in events.CATASTROPHES
+        assert isinstance(events.catastrophe_effect(key), dict)
+
+
 def test_roll_minor_event_quiet_and_hit():
     quiet = events.roll_minor_event(Random(0))
     # seed 0: first random() is below chance on CPython — verify distribution instead
@@ -59,24 +140,58 @@ def test_roll_minor_event_quiet_and_hit():
             none_count += 1
         else:
             hits += 1
+            assert result in events.SHIPPED_MINOR_KEYS
             assert result in events.MINOR_EVENTS
     assert hits > 0 and none_count > 0
     assert abs(hits / 200 - B.MINOR_EVENT_CHANCE) < 0.15
-    assert quiet is None or quiet in events.MINOR_EVENTS
+    assert quiet is None or quiet in events.SHIPPED_MINOR_KEYS
 
 
-def test_pick_catastrophe_avoids_last():
+def test_roll_minor_event_never_returns_gated_keys():
+    gated = set(events.MINOR_EVENTS) - events.SHIPPED_MINOR_KEYS
+    for seed in range(500):
+        result = events.roll_minor_event(Random(seed))
+        if result is not None:
+            assert result not in gated
+            assert result in events.SHIPPED_MINOR_KEYS
+
+
+def test_pick_catastrophe_only_shipped():
     rng = Random(42)
-    last = "flood"
-    for _ in range(50):
+    last = None
+    for _ in range(80):
         picked = events.pick_catastrophe(rng, last)
-        assert picked != last
+        assert picked in events.SHIPPED_CATASTROPHE_KEYS
         assert picked in events.CATASTROPHES
         last = picked
 
 
-def test_pick_catastrophe_allows_any_when_last_none():
-    assert events.pick_catastrophe(Random(1), None) in events.CATASTROPHES
+def test_pick_catastrophe_never_returns_gated_keys():
+    gated = set(events.CATASTROPHES) - events.SHIPPED_CATASTROPHE_KEYS
+    for seed in range(200):
+        picked = events.pick_catastrophe(Random(seed), "bandit_night")
+        assert picked not in gated
+        assert picked in events.SHIPPED_CATASTROPHE_KEYS
+
+
+def test_pick_catastrophe_avoids_last_when_possible():
+    shipped = sorted(events.SHIPPED_CATASTROPHE_KEYS)
+    if len(shipped) < 2:
+        # один ключ в пуле — повтор last допустим
+        for seed in range(20):
+            assert events.pick_catastrophe(Random(seed), shipped[0]) == shipped[0]
+        return
+    rng = Random(42)
+    last = shipped[0]
+    for _ in range(50):
+        picked = events.pick_catastrophe(rng, last)
+        assert picked != last
+        assert picked in events.SHIPPED_CATASTROPHE_KEYS
+        last = picked
+
+
+def test_pick_catastrophe_allows_shipped_when_last_none():
+    assert events.pick_catastrophe(Random(1), None) in events.SHIPPED_CATASTROPHE_KEYS
 
 
 def test_next_catastrophe_delay_days_range():
@@ -98,16 +213,32 @@ def test_format_digest_gdd_shape():
             "Саша ограбил Кирилла (−34 товара).",
             "Набег Оли на Иру отбит.",
         ],
-        event_line="Засуха — фермы −30%. Полив: 10 товаров (в личке).",
+        event_line="Засуха — урожай слабее; полив за товары в личке.",
         market_line="3 лота. Лучший: 40 зерна за 25 товаров (Ваня).",
         feud_lines=["Саша против Кирилла — неделя вторая."],
         sunday_extra=None,
     )
     assert text.startswith("🏰 Долина друзей — день 43")
     assert "🌙 Ночью: Саша ограбил Кирилла (−34 товара). Набег Оли на Иру отбит." in text
-    assert "📜 Сегодня: Засуха — фермы −30%. Полив: 10 товаров (в личке)." in text
+    assert "📜 Сегодня: Засуха — урожай слабее; полив за товары в личке." in text
     assert "🛒 Рынок: 3 лота. Лучший: 40 зерна за 25 товаров (Ваня)." in text
     assert "⚔️ Вражда: Саша против Кирилла — неделя вторая." in text
+    assert "Вражда: Вражда:" not in text
+    assert "farm_mult" not in text
+
+
+def test_format_digest_feud_single_prefix():
+    text = digest.format_digest(
+        realm_title="Тест",
+        day=2,
+        night_lines=[],
+        event_line=None,
+        market_line=None,
+        feud_lines=["Саша против Кирилла"],
+        sunday_extra=None,
+    )
+    assert "⚔️ Вражда: Саша против Кирилла" in text
+    assert text.count("Вражда:") == 1
 
 
 def test_format_digest_quiet_night_and_sunday():

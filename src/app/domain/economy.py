@@ -129,13 +129,16 @@ def render_map(
             row.append(cell)
         lines.append("".join(row))
 
-    leg_lines = []
+    from app.domain.guide import map_tile_legend
+
+    owner_lines = []
     for fid in fief_ids:
         name = legend.get(fid, f"#{fid}")
-        leg_lines.append(f"{marks[fid]} = {name}")
+        owner_lines.append(f"{marks[fid]} = {name}")
     body = "\n".join(lines)
-    if leg_lines:
-        body += "\n\n" + "\n".join(leg_lines)
+    body += "\n\n" + map_tile_legend()
+    if owner_lines:
+        body += "\n\nВладельцы:\n" + "\n".join(owner_lines)
     return body
 
 

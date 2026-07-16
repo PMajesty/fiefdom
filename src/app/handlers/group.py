@@ -12,6 +12,7 @@ from app.handlers.shared import (
     deep_link_url,
     get_engine,
     is_admin,
+    open_estate_kb,
     reply_game,
     resolve_fief_for_user,
 )
@@ -91,7 +92,7 @@ async def cmd_market(message: Message) -> None:
 
 
 @router.message(Command("вч_сводка", "vch_digest"))
-async def cmd_digest(message: Message) -> None:
+async def cmd_digest(message: Message, bot: Bot) -> None:
     engine = get_engine()
     try:
         realm = engine.db.get_realm_by_chat(message.chat.id)
@@ -101,15 +102,24 @@ async def cmd_digest(message: Message) -> None:
         hour = int(realm.get("tick_hour") or 13)
         minute = int(realm.get("tick_minute") or 0)
         tz = realm.get("timezone") or "Europe/Moscow"
-        text = (
-            f"Сводка публикуется автоматически после дневного тика "
-            f"в {hour:02d}:{minute:02d} ({tz})."
-        )
-        if is_admin(message.from_user.id):
+        last = (realm.get("last_digest_text") or "").strip()
+        if last:
+            text = last
+        else:
+            text = (
+                f"Сводка публикуется автоматически после дневного тика "
+                f"в {hour:02d}:{minute:02d} ({tz}).\n"
+                "Откройте усадьбу в личке — там задания, рынок и новости дня."
+            )
+        if is_admin(message.from_user.id if message.from_user else None):
             text += (
                 f"\nАдмин: форс-тик — <code>/вч_tick {realm['id']}</code> в личке бота."
             )
-        await reply_game(message, text)
+        kb = None
+        username = await _bot_username(message, bot)
+        if username and username != "bot":
+            kb = open_estate_kb(username, realm["id"])
+        await reply_game(message, text, reply_markup=kb)
     except ValueError as exc:
         await answer_html(message, str(exc))
     except Exception:
@@ -124,6 +134,15 @@ async def cmd_help(message: Message) -> None:
     except Exception:
         logger.exception("cmd_help")
         await answer_html(message, "Справка временно недоступна.")
+
+
+@router.message(Command("вч_гайд", "вч_устав", "vch_guide", "vch_rules"))
+async def cmd_guide(message: Message) -> None:
+    try:
+        await reply_game(message, get_engine().guide_text())
+    except Exception:
+        logger.exception("cmd_guide")
+        await answer_html(message, "Устав временно недоступен.")
 
 
 @router.message(Command("вч_я", "vch_me"))

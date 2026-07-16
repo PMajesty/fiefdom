@@ -10,7 +10,7 @@ from aiogram.types import Message
 
 from app.domain.digest import format_decree
 from app.domain.events import MINOR_EVENTS
-from app.handlers.shared import get_engine, is_admin, reply_game, send_game
+from app.handlers.shared import get_engine, is_admin, post_digest, reply_game, send_game
 from app.messaging import answer_html
 
 logger = logging.getLogger(__name__)
@@ -62,7 +62,7 @@ async def cmd_tick(message: Message, bot: Bot) -> None:
             digest = result.get("digest") or ""
             chat_id = result.get("chat_id") or realm["chat_id"]
             if digest and chat_id:
-                await send_game(bot, chat_id, digest)
+                await post_digest(bot, chat_id, realm["id"], digest)
             await answer_html(message, f"Тик realm={realm['id']} выполнен.")
     except ValueError as exc:
         await answer_html(message, str(exc))

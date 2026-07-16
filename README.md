@@ -38,9 +38,10 @@ pytest
 | `/вч_рынок` `/vch_market` | Market |
 | `/вч_сводка` `/vch_digest` | Digest hint |
 | `/вч_я` `/vch_me` | Deep-link to DM |
-| `/вч_помощь` `/vch_help` | Help |
+| `/вч_помощь` `/vch_help` | Short help |
+| `/вч_гайд` `/вч_устав` `/vch_guide` | Game rules |
 
-Personal play (build, claim, raid, patrol, trade, pacts) is in DM.
+Personal play (build, claim, raid, patrol, trade, pacts) is in DM. Map includes a tile legend.
 
 ## BotFather checklist
 

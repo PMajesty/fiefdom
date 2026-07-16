@@ -9,9 +9,14 @@ from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+from app import balance as B
 from app.config import ADMIN_USER_ID
 from app.database import get_db
-from app.engine import Engine
+from app.engine import (
+    Engine,
+    raid_pact_lock_hint,
+    raid_pact_unlocked,
+)
 from app.messaging import answer_html, send_html
 
 logger = logging.getLogger(__name__)
@@ -91,31 +96,221 @@ def deep_link_url(bot_username: str, payload: str) -> str:
     return f"https://t.me/{bot_username}?start={payload}"
 
 
-def main_menu_kb(fief_id: int) -> InlineKeyboardMarkup:
-    fid = int(fief_id)
+def open_estate_kb(bot_username: str, realm_id: int) -> InlineKeyboardMarkup:
+    """Кнопка deep-link в личку: «Открыть усадьбу»."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
+                InlineKeyboardButton(
+                    text="Открыть усадьбу",
+                    url=deep_link_url(bot_username, f"realm_{int(realm_id)}"),
+                )
+            ]
+        ]
+    )
+
+
+async def bot_username_or_none(bot) -> str | None:
+    try:
+        me = await bot.get_me()
+        return me.username or None
+    except Exception:
+        logger.warning("bot_username_or_none: get_me failed", exc_info=True)
+        return None
+
+
+async def post_digest(bot, chat_id: int, realm_id: int, digest: str) -> None:
+    """Публикует сводку в группу; кнопка deep-link — если есть username бота."""
+    kb = None
+    username = await bot_username_or_none(bot)
+    if username:
+        kb = open_estate_kb(username, realm_id)
+    await send_game(bot, chat_id, digest, reply_markup=kb)
+
+
+def choose_primary_cta(
+    fief_id: int,
+    *,
+    actions: int,
+    onboard_step: int,
+    tile_count: int = 2,
+    goods: int = 0,
+    might: int = 0,
+    day_number: int = B.RAID_PACT_UNLOCK_DAY,
+) -> tuple[str, str]:
+    """Эвристика «что делать сейчас»: (подпись кнопки, callback_data).
+
+    Набег в primary CTA только после unlock (квесты + день долины).
+    """
+    fid = int(fief_id)
+    actions = int(actions)
+    onboard_step = int(onboard_step)
+    tile_count = int(tile_count)
+    goods = int(goods)
+    might = int(might)
+    day_number = int(day_number)
+    unlocked = raid_pact_unlocked(onboard_step=onboard_step, day_number=day_number)
+
+    if actions > 0 and onboard_step == 2:
+        return "Квест: строить", f"bld:{fid}"
+    if actions > 0 and onboard_step == 3:
+        return "Квест: сделка", f"mkt:{fid}"
+    if actions > 0:
+        if tile_count < 3:
+            return "Занять землю", f"clm:{fid}"
+        if goods >= 20:
+            return "Строить", f"bld:{fid}"
+        if unlocked and might >= 5:
+            return "Набег", f"rad:{fid}"
+        return "Занять землю", f"clm:{fid}"
+    return "Рынок", f"mkt:{fid}"
+
+
+def home_kb(fief_id: int, primary_label: str, primary_callback: str) -> InlineKeyboardMarkup:
+    """Дом: один primary CTA + Статус + свёрнутое «Ещё»."""
+    fid = int(fief_id)
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=primary_label, callback_data=primary_callback)],
+            [
                 InlineKeyboardButton(text="Статус", callback_data=f"st:{fid}"),
-                InlineKeyboardButton(text="Карта", callback_data=f"map:{fid}"),
-            ],
-            [
-                InlineKeyboardButton(text="Рынок", callback_data=f"mkt:{fid}"),
-                InlineKeyboardButton(text="Клейм", callback_data=f"clm:{fid}"),
-            ],
-            [
-                InlineKeyboardButton(text="Стройка", callback_data=f"bld:{fid}"),
-                InlineKeyboardButton(text="Дозор", callback_data=f"pat:{fid}"),
-            ],
-            [
-                InlineKeyboardButton(text="Набег", callback_data=f"rad:{fid}"),
-                InlineKeyboardButton(text="Сделка", callback_data=f"trd:{fid}"),
-            ],
-            [
-                InlineKeyboardButton(text="Пакт", callback_data=f"pct:{fid}"),
+                InlineKeyboardButton(text="Ещё", callback_data=f"more:{fid}"),
             ],
         ]
     )
+
+
+def more_menu_kb(
+    fief_id: int,
+    *,
+    drought_mitigate: bool = False,
+    raid_pact_open: bool = True,
+    lock_hint: str | None = None,
+) -> InlineKeyboardMarkup:
+    """Полный набор действий (раскрытие «Ещё»).
+
+    Пока Набег/Пакт закрыты — подписи-замки с callback lock:… (пояснение без трат).
+    """
+    fid = int(fief_id)
+    rows: list[list[InlineKeyboardButton]] = []
+    if drought_mitigate:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="Полив (10 товаров)",
+                    callback_data=f"drt:{fid}",
+                )
+            ]
+        )
+    if raid_pact_open:
+        raid_btn = InlineKeyboardButton(text="Набег", callback_data=f"rad:{fid}")
+        pact_btn = InlineKeyboardButton(text="Пакт", callback_data=f"pct:{fid}")
+    else:
+        suffix = lock_hint or "закрыто"
+        raid_btn = InlineKeyboardButton(
+            text=f"Набег — {suffix}",
+            callback_data=f"lock:rad:{fid}",
+        )
+        pact_btn = InlineKeyboardButton(
+            text=f"Пакт — {suffix}",
+            callback_data=f"lock:pct:{fid}",
+        )
+    rows.extend(
+        [
+            [
+                InlineKeyboardButton(text="Карта", callback_data=f"map:{fid}"),
+                InlineKeyboardButton(text="Рынок", callback_data=f"mkt:{fid}"),
+            ],
+            [
+                InlineKeyboardButton(text="Земля", callback_data=f"clm:{fid}"),
+                InlineKeyboardButton(text="Строить", callback_data=f"bld:{fid}"),
+            ],
+            [
+                InlineKeyboardButton(text="Дозор", callback_data=f"pat:{fid}"),
+                raid_btn,
+            ],
+            [
+                InlineKeyboardButton(text="Сделка", callback_data=f"trd:{fid}"),
+                pact_btn,
+            ],
+            [
+                InlineKeyboardButton(text="Устав", callback_data=f"gd:{fid}"),
+                InlineKeyboardButton(text="« Назад", callback_data=f"home:{fid}"),
+            ],
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def main_menu_kb(
+    fief_id: int,
+    fief: dict | None = None,
+    tile_count: int = 2,
+    *,
+    drought_mitigate: bool = False,
+    day_number: int = B.RAID_PACT_UNLOCK_DAY,
+) -> InlineKeyboardMarkup:
+    """Домашняя клавиатура усадьбы (status-first). Без снимка fief — безопасный CTA."""
+    fid = int(fief_id)
+    if fief is None:
+        kb = home_kb(fid, "Обновить статус", f"st:{fid}")
+    else:
+        label, cb = choose_primary_cta(
+            fid,
+            actions=int(fief.get("actions") or 0),
+            onboard_step=int(fief.get("onboard_step") or 0),
+            tile_count=tile_count,
+            goods=int(fief.get("goods") or 0),
+            might=int(fief.get("might") or 0),
+            day_number=day_number,
+        )
+        kb = home_kb(fid, label, cb)
+    if not drought_mitigate:
+        return kb
+    rows = [list(row) for row in kb.inline_keyboard]
+    rows.insert(
+        1,
+        [
+            InlineKeyboardButton(
+                text="Полив (10 товаров)",
+                callback_data=f"drt:{fid}",
+            )
+        ],
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def fief_home_kb(engine: Engine, fief_id: int) -> InlineKeyboardMarkup:
+    """Дом с CTA по актуальному снимку усадьбы из БД."""
+    fief = engine.db.get_fief(fief_id)
+    can_water = False
+    try:
+        can_water = engine.fief_can_mitigate_drought(fief_id)
+    except Exception:
+        can_water = False
+    if not fief:
+        return main_menu_kb(fief_id, drought_mitigate=can_water)
+    tiles = engine.db.fief_tiles(fief_id)
+    n = sum(1 for t in tiles if not t.get("is_overgrown"))
+    realm = engine.db.get_realm(fief["realm_id"])
+    day_number = int(realm["day_number"]) if realm else 1
+    return main_menu_kb(
+        fief_id,
+        fief=fief,
+        tile_count=n,
+        drought_mitigate=can_water,
+        day_number=day_number,
+    )
+
+
+def fief_raid_pact_state(engine: Engine, fief: dict) -> tuple[bool, str | None]:
+    """(открыто?, хвост подписи замка) по усадьбе и дню долины."""
+    realm = engine.db.get_realm(fief["realm_id"])
+    day_number = int(realm["day_number"]) if realm else 1
+    step = int(fief.get("onboard_step") or 0)
+    open_ = raid_pact_unlocked(onboard_step=step, day_number=day_number)
+    hint = None if open_ else raid_pact_lock_hint(onboard_step=step, day_number=day_number)
+    return open_, hint
 
 
 async def reply_game(message: Message, text: str, **kwargs: Any) -> None:

@@ -18,6 +18,46 @@ class RaidResult:
     public_line: str = ""
 
 
+@dataclass
+class RaidActionResult:
+    """Итог engine.raid для хендлера (без Bot в движке)."""
+
+    public_line: str
+    success: bool
+    victim_fief_id: int
+    victim_user_id: int
+    victim_name: str
+    attacker_name: str
+    grain_stolen: int
+    goods_stolen: int
+    intercept_applied: bool = False
+    interceptor_fief_id: int | None = None
+    interceptor_user_id: int | None = None
+
+    def victim_dm_text(self) -> str:
+        if self.success:
+            return (
+                f"На ваш хутор напал {self.attacker_name}! "
+                f"Унесено {self.grain_stolen} зерна и {self.goods_stolen} товаров."
+            )
+        if self.intercept_applied:
+            return (
+                f"Набег {self.attacker_name} на ваш хутор отбит "
+                f"(союзник перехватил у ворот)."
+            )
+        return f"Набег {self.attacker_name} на ваш хутор отбит у ворот."
+
+    def interceptor_dm_text(self) -> str | None:
+        if not self.intercept_applied or self.interceptor_user_id is None:
+            return None
+        if self.success:
+            return (
+                f"Перехват не спас хутор {self.victim_name}: "
+                f"{self.attacker_name} всё же ушёл с добычей."
+            )
+        return f"Вы перехватили набег {self.attacker_name} на хутор {self.victim_name}."
+
+
 def raid_ratio(attack_might: int, defense: int) -> float:
     s = max(0, attack_might)
     d = max(0, defense)

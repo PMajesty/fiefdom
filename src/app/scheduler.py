@@ -14,10 +14,11 @@ from app import balance as B
 from app.config import TIMEZONE
 from app.domain.events import (
     CATASTROPHES,
+    MINOR_EVENTS,
     next_catastrophe_delay_days,
     pick_catastrophe,
 )
-from app.handlers.shared import get_engine, send_game
+from app.handlers.shared import get_engine, post_digest, send_game
 
 logger = logging.getLogger(__name__)
 
@@ -90,12 +91,35 @@ async def _process_realm(bot: Bot, engine, realm: dict) -> None:
         digest = result.get("digest")
         chat_id = result.get("chat_id") or realm.get("chat_id")
         if digest and chat_id:
-            await send_game(bot, chat_id, digest)
+            await post_digest(bot, chat_id, realm_id, digest)
+        deserter_event = result.get("deserter_event")
+        if deserter_event and chat_id:
+            await _post_deserter_race(bot, chat_id, deserter_event)
         logger.info("Tick ran for realm %s day digest posted", realm_id)
         realm = engine.db.get_realm(realm_id) or realm
 
     await _maybe_post_catastrophe(bot, engine, realm, local_now)
     await _resolve_expired_catastrophes(bot, engine, realm)
+
+
+async def _post_deserter_race(bot: Bot, chat_id: int, event: dict) -> None:
+    meta = MINOR_EVENTS["deserter"]
+    label = (meta.get("button_labels") or ["Взять в дружину"])[0]
+    narrative = event.get("narrative") or meta["canned_narrative"]
+    text = f"⚔️ <b>{meta['name_ru']}</b>\n{narrative}"
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=label,
+                    callback_data=f"des:{event['id']}",
+                )
+            ]
+        ]
+    )
+    await send_game(bot, chat_id, text, reply_markup=kb)
 
 
 async def _maybe_post_catastrophe(bot: Bot, engine, realm: dict, local_now: datetime) -> None:

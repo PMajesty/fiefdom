@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import json
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Iterator
 
 import pg8000
 
@@ -20,6 +21,7 @@ class Database:
         self.lock = threading.RLock()
         self.connection = None
         self.cursor = None
+        self._tx_depth = 0
         if connect:
             self.connect()
 
@@ -43,10 +45,30 @@ class Database:
                 self.cursor = None
 
     def commit(self) -> None:
+        # Внутри transaction() коммит откладывается до выхода из блока.
+        if self._tx_depth > 0:
+            return
         self.connection.commit()
 
     def rollback(self) -> None:
         self.connection.rollback()
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Атомарный блок: промежуточные commit() no-op, в конце COMMIT или ROLLBACK."""
+        with self.lock:
+            nested = self._tx_depth > 0
+            self._tx_depth += 1
+            try:
+                yield
+                if not nested:
+                    self.connection.commit()
+            except Exception:
+                if not nested:
+                    self.connection.rollback()
+                raise
+            finally:
+                self._tx_depth -= 1
 
     def create_tables(self) -> None:
         with self.lock:
@@ -82,6 +104,7 @@ class Database:
                     balance_overrides JSONB NOT NULL DEFAULT '{}',
                     feature_flags JSONB NOT NULL DEFAULT '{}',
                     pending_raid_lines JSONB NOT NULL DEFAULT '[]',
+                    last_digest_text TEXT,
                     wipe_confirm_code TEXT,
                     wipe_confirm_until TIMESTAMPTZ
                 );
@@ -234,6 +257,9 @@ class Database:
                 EXCEPTION WHEN duplicate_object THEN NULL;
                 END $$;
                 """
+            )
+            self.cursor.execute(
+                "ALTER TABLE realms ADD COLUMN IF NOT EXISTS last_digest_text TEXT;"
             )
 
     # --- users ---
@@ -524,6 +550,24 @@ class Database:
     def get_trade(self, trade_id: int) -> dict | None:
         return self._fetchone("SELECT * FROM trade_offers WHERE id=%s;", (trade_id,))
 
+    def claim_open_trade(self, trade_id: int) -> dict | None:
+        """Атомарно open→done. None если лот уже не open (безопасный no-op)."""
+        with self.lock:
+            self.cursor.execute(
+                """
+                UPDATE trade_offers SET status='done'
+                WHERE id=%s AND status='open'
+                RETURNING *;
+                """,
+                (trade_id,),
+            )
+            row = self.cursor.fetchone()
+            if not row:
+                return None
+            cols = [d[0] for d in self.cursor.description]
+            self.commit()
+            return self._normalize(dict(zip(cols, row)))
+
     def update_trade(self, trade_id: int, **fields: Any) -> None:
         self._update("trade_offers", trade_id, fields)
 
@@ -657,6 +701,30 @@ class Database:
             except Exception:
                 self.rollback()
                 return False
+
+    def try_claim_deserter(self, event_id: int, fief_id: int, might_bonus: int) -> bool:
+        """Атомарно: первый клейм резолвит дезертира и даёт силу. True если этот клейм победил."""
+        with self.transaction():
+            self.cursor.execute(
+                """
+                UPDATE realm_events
+                SET status='resolved',
+                    payload = COALESCE(payload, '{}'::jsonb) || %s::jsonb
+                WHERE id=%s AND status='active' AND event_key='deserter'
+                RETURNING id;
+                """,
+                (json.dumps({"claimer_fief_id": int(fief_id)}), event_id),
+            )
+            if not self.cursor.fetchone():
+                return False
+            self.cursor.execute(
+                "UPDATE fiefs SET might = might + %s WHERE id=%s;",
+                (int(might_bonus), int(fief_id)),
+            )
+            return True
+
+    def get_event(self, event_id: int) -> dict | None:
+        return self._fetchone("SELECT * FROM realm_events WHERE id=%s;", (event_id,))
 
     def event_actions(self, event_id: int) -> list[dict]:
         return self._fetchall(
