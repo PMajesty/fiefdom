@@ -70,7 +70,8 @@ def test_render_map_aligned_columns_with_owners():
     assert "[" not in body
     assert "К = Усадьба А (это вы)" in body
     assert "можно занять" in body
-    assert "свои постройки" in body
+    assert "Рамки:" in body
+    assert "только свои постройки" in body
 
 
 def test_render_map_parts_separates_grid_and_footer():
@@ -89,11 +90,14 @@ def test_map_tile_legend_reads_naturally():
     from app.domain.guide import map_tile_legend
 
     text = map_tile_legend()
-    assert "можно занять" in text
-    assert "рамка синяя" in text
+    assert "Рамки:" in text
+    assert "синяя - ваши" in text
+    assert "жёлтая - можно занять" in text
+    assert "Буква на клетке" in text
     assert "Д двор" in text
     assert "Ф ферма" in text
-    assert text.count("\n") <= 4
+    assert "· свободно" not in text
+    assert "+ можно" not in text
     assert "← вы" not in text
     assert "ферма ×" not in text
 
@@ -128,10 +132,10 @@ def test_map_text_wraps_only_grid_in_pre():
     text = engine.map_text(1, highlight_fief_id=1)
     assert text.startswith("🗺️ Долина (день 3)\n<pre>")
     assert "</pre>\n\nВладельцы:" in text
-    assert "можно занять" in text
+    assert "Рамки:" in text
     pre = text.split("<pre>", 1)[1].split("</pre>", 1)[0]
     assert "Владельцы:" not in pre
-    assert "можно занять" not in pre
+    assert "Рамки:" not in pre
 
 
 def test_toroidal_manhattan_wraps():

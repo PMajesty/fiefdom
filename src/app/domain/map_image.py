@@ -11,7 +11,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from app import balance as B
-from app.domain.economy import MAP_EMPTY_MARK, TileView, owner_mark
+from app.domain.economy import TileView, owner_mark
 from app.domain.map_gen import col_label
 
 CELL_PX = 56
@@ -19,34 +19,33 @@ LABEL_LEFT_PX = 36
 LABEL_TOP_PX = 28
 PAD_PX = 16
 GRID_LINE_PX = 2
+ICON_PX = 44
 # Меняйте при правках вида клетки - сброс кэша PNG/file_id.
-RENDER_REV = 4
+RENDER_REV = 5
 
-_FONT_PATH = Path(__file__).resolve().parents[1] / "assets" / "fonts" / "NotoSans-Regular.ttf"
+_ASSETS = Path(__file__).resolve().parents[1] / "assets"
+_FONT_PATH = _ASSETS / "fonts" / "NotoSans-Regular.ttf"
+_ICON_DIR = _ASSETS / "map_icons"
 
 TILE_COLORS: dict[str, tuple[int, int, int]] = {
-    B.TILE_FIELD: (210, 188, 110),
-    B.TILE_FOREST: (72, 118, 88),
-    B.TILE_HILLS: (156, 128, 96),
-    B.TILE_RIVER: (86, 152, 172),
-    B.TILE_ROAD: (196, 172, 124),
-    B.TILE_RUINS: (120, 104, 104),
-    B.TILE_WILDS: (98, 114, 82),
+    B.TILE_FIELD: (214, 192, 118),
+    B.TILE_FOREST: (78, 122, 92),
+    B.TILE_HILLS: (162, 134, 102),
+    B.TILE_RIVER: (90, 156, 176),
+    B.TILE_ROAD: (188, 166, 122),
+    B.TILE_RUINS: (126, 110, 110),
+    B.TILE_WILDS: (104, 118, 86),
 }
 
-# Пиктограммы - заметно темнее заливки, чтобы читались на телефоне.
-TILE_MOTIF: dict[str, tuple[int, int, int]] = {
-    B.TILE_FIELD: (120, 88, 28),
-    B.TILE_FOREST: (28, 58, 36),
-    B.TILE_HILLS: (86, 60, 36),
-    B.TILE_RIVER: (28, 78, 104),
-    B.TILE_ROAD: (96, 72, 40),
-    B.TILE_RUINS: (52, 40, 40),
-    B.TILE_WILDS: (44, 56, 32),
-}
-TILE_MOTIF_FILL: dict[str, tuple[int, int, int]] = {
-    B.TILE_FOREST: (48, 92, 60),
-    B.TILE_RUINS: (88, 72, 72),
+# Lucide-based PNG (ISC) + custom road.png
+TILE_ICONS: dict[str, str] = {
+    B.TILE_FIELD: "wheat.png",
+    B.TILE_FOREST: "trees.png",
+    B.TILE_HILLS: "mountain.png",
+    B.TILE_RIVER: "waves.png",
+    B.TILE_ROAD: "road.png",
+    B.TILE_RUINS: "landmark.png",
+    B.TILE_WILDS: "cloud-fog.png",
 }
 
 BUILDING_MARK: dict[str, str] = {
@@ -60,10 +59,13 @@ BUILDING_MARK: dict[str, str] = {
 BG_COLOR = (232, 220, 200)
 GRID_COLOR = (58, 47, 36)
 LABEL_COLOR = (42, 34, 28)
-OWNER_TEXT = (28, 22, 18)
+OWNER_TEXT = (22, 16, 12)
+OWNER_HALO = (245, 238, 220)
 CLAIM_BORDER = (214, 160, 40)
 HIGHLIGHT_BORDER = (40, 90, 160)
 OVERGROWN_TINT = (80, 140, 70, 110)
+
+_icon_cache: dict[str, Image.Image] = {}
 
 
 @dataclass(frozen=True)
@@ -202,79 +204,50 @@ def _draw_centered_text(
     draw.text((x, y), text, font=font, fill=fill)
 
 
-def _draw_terrain_motif(
-    draw: ImageDraw.ImageDraw,
-    left: int,
-    top: int,
-    tile_type: str,
-) -> None:
-    """Простые пиктограммы местности - узнаются без текстовой легенды."""
-    ink = TILE_MOTIF.get(tile_type, (80, 80, 80))
-    fill = TILE_MOTIF_FILL.get(tile_type)
-    x0, y0 = left + 4, top + 4
-    x1, y1 = left + CELL_PX - 5, top + CELL_PX - 5
-    cx = left + CELL_PX // 2
-    cy = top + CELL_PX // 2
-
-    if tile_type == B.TILE_FIELD:
-        for i, dx in enumerate((10, 20, 30, 40)):
-            bx = left + dx
-            head = y1 - 20 - (i % 2) * 3
-            draw.line((bx, y1 - 3, bx, head + 4), fill=ink, width=2)
-            draw.ellipse((bx - 4, head - 2, bx + 4, head + 6), outline=ink, width=2)
-    elif tile_type == B.TILE_FOREST:
-        for ox, oy in ((14, 20), (36, 16), (26, 34)):
-            tip = (left + ox, top + oy - 14)
-            base_l = (left + ox - 9, top + oy + 2)
-            base_r = (left + ox + 9, top + oy + 2)
-            draw.polygon([tip, base_l, base_r], fill=fill or ink, outline=ink)
-            draw.line((left + ox, top + oy + 2, left + ox, top + oy + 9), fill=ink, width=2)
-    elif tile_type == B.TILE_HILLS:
-        draw.arc((x0, cy - 8, cx + 6, y1), start=200, end=340, fill=ink, width=3)
-        draw.arc((cx - 10, cy - 2, x1, y1 + 2), start=200, end=340, fill=ink, width=3)
-    elif tile_type == B.TILE_RIVER:
-        for yy in (top + 14, top + 28, top + 42):
-            pts = [
-                (x0, yy),
-                (x0 + 12, yy - 5),
-                (x0 + 24, yy + 3),
-                (x0 + 36, yy - 4),
-                (x1, yy + 2),
-            ]
-            draw.line(pts, fill=ink, width=3)
-    elif tile_type == B.TILE_ROAD:
-        draw.line((x0 + 2, y1 - 6, x1 - 2, y0 + 8), fill=ink, width=5)
-        for t in (0.18, 0.4, 0.62, 0.84):
-            px = x0 + 2 + (x1 - 4 - x0) * t
-            py = y1 - 6 + (y0 + 8 - (y1 - 6)) * t
-            draw.ellipse((px - 2, py - 2, px + 2, py + 2), fill=(232, 220, 200))
-    elif tile_type == B.TILE_RUINS:
-        draw.rectangle((x0 + 2, y0 + 12, x0 + 20, y1 - 4), fill=fill, outline=ink, width=2)
-        draw.line((x0 + 2, y0 + 22, x0 + 20, y0 + 22), fill=ink, width=2)
-        draw.rectangle((cx, cy - 2, x1 - 2, y1 - 6), outline=ink, width=2)
-        draw.line((cx + 6, cy - 2, cx + 14, y0 + 4), fill=ink, width=3)
-    elif tile_type == B.TILE_WILDS:
-        for ox, oy in ((10, 12), (30, 10), (18, 26), (36, 28), (14, 38), (28, 40)):
-            draw.ellipse((left + ox, top + oy, left + ox + 7, top + oy + 5), outline=ink, width=2)
-        draw.arc((x0, y0 + 4, x1, cy + 6), start=10, end=170, fill=ink, width=2)
-    else:
-        draw.line((x0, y0, x1, y1), fill=ink, width=1)
+def _load_tile_icon(tile_type: str) -> Image.Image | None:
+    filename = TILE_ICONS.get(tile_type)
+    if not filename:
+        return None
+    cached = _icon_cache.get(filename)
+    if cached is not None:
+        return cached
+    path = _ICON_DIR / filename
+    if not path.is_file():
+        return None
+    icon = Image.open(path).convert("RGBA")
+    icon = icon.resize((ICON_PX, ICON_PX), Image.Resampling.LANCZOS)
+    _icon_cache[filename] = icon
+    return icon
 
 
-def _draw_mark_badge(
+def _paste_terrain_icon(image: Image.Image, left: int, top: int, tile_type: str) -> None:
+    icon = _load_tile_icon(tile_type)
+    if icon is None:
+        return
+    ox = left + (CELL_PX - ICON_PX) // 2
+    oy = top + (CELL_PX - ICON_PX) // 2
+    image.paste(icon, (ox, oy), icon)
+
+
+def _draw_owner_mark(
     draw: ImageDraw.ImageDraw,
     cx: float,
     cy: float,
     text: str,
     font: ImageFont.ImageFont,
 ) -> None:
-    """Светлый кружок под меткой, чтобы буква читалась поверх пиктограмм."""
-    draw.ellipse(
-        (cx - 11, cy - 11, cx + 11, cy + 11),
-        fill=(245, 236, 214),
-        outline=GRID_COLOR,
-        width=1,
-    )
+    """Буква владельца с лёгким ореолом - без белого круга."""
+    for dx, dy in (
+        (-1, 0),
+        (1, 0),
+        (0, -1),
+        (0, 1),
+        (-1, -1),
+        (1, -1),
+        (-1, 1),
+        (1, 1),
+    ):
+        _draw_centered_text(draw, (cx + dx, cy + dy), text, font, OWNER_HALO)
     _draw_centered_text(draw, (cx, cy), text, font, OWNER_TEXT)
 
 
@@ -286,7 +259,7 @@ def render_map_image(
     highlight_fief_id: int | None = None,
     claimable: set[tuple[int, int]] | None = None,
 ) -> bytes:
-    """Собирает PNG сетки: цвет местности, метка владельца, здание, + клейма."""
+    """PNG: заливка + иконка местности, рамки клейма/своих, буква владельца."""
     by_pos = {(t.x, t.y): t for t in tiles}
     fief_ids = sorted({t.owner_fief_id for t in tiles if t.owner_fief_id is not None})
     marks = {fid: owner_mark(i) for i, fid in enumerate(fief_ids)}
@@ -296,8 +269,8 @@ def render_map_image(
     image = Image.new("RGB", (img_w, img_h), BG_COLOR)
     draw = ImageDraw.Draw(image)
     font_label = _load_font(16)
-    font_owner = _load_font(20)
-    font_building = _load_font(14)
+    font_owner = _load_font(22)
+    font_building = _load_font(13)
 
     for x in range(width):
         _draw_centered_text(
@@ -327,7 +300,7 @@ def render_map_image(
             fill = TILE_COLORS.get(tile_type, (160, 160, 160))
             draw.rectangle((left, top, right, bottom), fill=fill)
             if tile_type:
-                _draw_terrain_motif(draw, left, top, tile_type)
+                _paste_terrain_icon(image, left, top, tile_type)
 
             if tile and tile.is_overgrown:
                 overlay = Image.new("RGBA", (CELL_PX, CELL_PX), OVERGROWN_TINT)
@@ -351,20 +324,23 @@ def render_map_image(
                 border_w = 3
             draw.rectangle((left, top, right - 1, bottom - 1), outline=border, width=border_w)
 
-            if not tile:
+            if not tile or tile.owner_fief_id is None:
                 continue
-            if tile.owner_fief_id is not None:
-                mark = marks[tile.owner_fief_id]
-            elif claimable and (x, y) in claimable:
-                mark = "+"
-            else:
-                mark = MAP_EMPTY_MARK
+            mark = marks[tile.owner_fief_id]
             cx = left + CELL_PX / 2
             cy = top + CELL_PX / 2
-            _draw_mark_badge(draw, cx, cy, mark, font_owner)
+            _draw_owner_mark(draw, cx, cy, mark, font_owner)
             if building_visible_on_map(tile, highlight_fief_id):
                 bmark = BUILDING_MARK.get(tile.building or "", "?")
                 label = f"{bmark}{tile.building_level}"
+                for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                    draw.text(
+                        (right - 5 + dx, bottom - 4 + dy),
+                        label,
+                        font=font_building,
+                        fill=OWNER_HALO,
+                        anchor="rb",
+                    )
                 draw.text(
                     (right - 5, bottom - 4),
                     label,

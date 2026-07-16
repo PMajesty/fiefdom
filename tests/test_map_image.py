@@ -73,8 +73,30 @@ def test_terrain_motifs_differ_by_tile_type():
     field = [_tile(0, 0, B.TILE_FIELD)]
     forest = [_tile(0, 0, B.TILE_FOREST)]
     river = [_tile(0, 0, B.TILE_RIVER)]
+    road = [_tile(0, 0, B.TILE_ROAD)]
     assert render_map_image(1, 1, field) != render_map_image(1, 1, forest)
     assert render_map_image(1, 1, forest) != render_map_image(1, 1, river)
+    assert render_map_image(1, 1, road) != render_map_image(1, 1, field)
+
+
+def test_unowned_cells_have_no_center_mark():
+    """Свободные и клеймабельные клетки без · и + - только рамка."""
+    tiles = [
+        _tile(0, 0, B.TILE_FIELD, owner=1),
+        _tile(1, 0, B.TILE_FOREST),
+    ]
+    with_claim = render_map_image(2, 1, tiles, highlight_fief_id=1, claimable={(1, 0)})
+    no_claim = render_map_image(2, 1, tiles, highlight_fief_id=1, claimable=set())
+    # рамка клейма меняет картинку, но на клеймабельной клетке нет отдельного символа
+    assert with_claim != no_claim
+    assert render_map_image(1, 1, [_tile(0, 0, B.TILE_FIELD)])[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_map_icon_assets_exist():
+    from app.domain.map_image import TILE_ICONS, _ICON_DIR
+
+    for name in TILE_ICONS.values():
+        assert (_ICON_DIR / name).is_file(), name
 
 
 def test_foreign_buildings_hidden_on_map_and_fingerprint():
@@ -180,10 +202,10 @@ def test_build_map_caption_splits_when_over_limit():
     caption, extra = build_map_caption(title="Долина", day_number=2, footer=footer, limit=1024)
     assert len(caption) <= 1024
     assert extra == footer
-    short, none = build_map_caption(title="Долина", day_number=2, footer="можно занять")
+    short, none = build_map_caption(title="Долина", day_number=2, footer="Рамки:\n  синяя - ваши")
     assert none is None
     assert "Долина" in short
-    assert "можно занять" in short
+    assert "Рамки:" in short
 
 
 def test_engine_map_photo_uses_cache_across_requests():
@@ -211,7 +233,7 @@ def test_engine_map_photo_uses_cache_across_requests():
     assert first.png_bytes == second.png_bytes
     assert first.png_bytes[:8] == b"\x89PNG\r\n\x1a\n"
     assert "Долина" in first.caption
-    assert "можно занять" in first.caption
+    assert "Рамки:" in first.caption
     assert "Владельцы:" in first.caption
 
     engine.remember_map_file_id(first.fingerprint, "AgADBAAD")
