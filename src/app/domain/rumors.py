@@ -55,7 +55,7 @@ class UpcomingEventHint:
 
 @dataclass(frozen=True)
 class DailyRumorBundle:
-    """Местные слухи + редкие сплетни с других долин континента."""
+    """Местные слухи + сплетни с других долин континента."""
 
     local: list[str] = field(default_factory=list)
     foreign: list[str] = field(default_factory=list)
@@ -74,14 +74,12 @@ def rumor_local_max_lines(player_count: int) -> int:
 
 
 def rumor_foreign_max_lines(foreign_player_count: int) -> int:
-    """Потолок чужих строк: 0 / 1 / до FOREIGN_MAX_CAP."""
+    """Потолок чужих строк - тот же масштаб, что у местных."""
     n = max(0, int(foreign_player_count))
     if n <= 0:
         return 0
-    lines = 1
-    if n >= int(B.RUMOR_FOREIGN_EXTRA_AT_PLAYERS):
-        lines += 1
-    return min(int(B.RUMOR_FOREIGN_MAX_CAP), lines)
+    extra = (n - 1) // max(1, int(B.RUMOR_PLAYERS_PER_EXTRA_LINE))
+    return min(int(B.RUMOR_FOREIGN_MAX_CAP), int(B.RUMOR_MAX_PER_DAY) + extra)
 
 
 def parse_stored_rumors(raw: Any) -> DailyRumorBundle:
@@ -381,7 +379,7 @@ def roll_valley_day_rumors(
     *,
     event_hints: Sequence[UpcomingEventHint] | None = None,
 ) -> DailyRumorBundle:
-    """Местные слухи (масштаб от числа игроков) + редкий чужой блок."""
+    """Местные слухи и чужой блок - один масштаб от числа усадеб."""
     rng = rng or Random()
     local = roll_daily_rumors(
         local_fiefs,
@@ -413,7 +411,7 @@ def format_rumor_section(
         parts.append(f"{RUMOR_FOREIGN_SECTION_HEADER}\n{body}")
     if not parts:
         return None
-    return "\n".join(parts)
+    return "\n\n".join(parts)
 
 
 def format_rumors_pull(

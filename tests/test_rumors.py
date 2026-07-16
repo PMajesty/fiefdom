@@ -55,12 +55,17 @@ def test_rumor_local_max_scales_with_players():
     assert rumors.rumor_local_max_lines(100) == B.RUMOR_MAX_CAP
 
 
-def test_rumor_foreign_max_lines():
+def test_rumor_foreign_max_lines_matches_local_scale():
     assert rumors.rumor_foreign_max_lines(0) == 0
-    assert rumors.rumor_foreign_max_lines(1) == 1
-    assert rumors.rumor_foreign_max_lines(B.RUMOR_FOREIGN_EXTRA_AT_PLAYERS - 1) == 1
-    assert rumors.rumor_foreign_max_lines(B.RUMOR_FOREIGN_EXTRA_AT_PLAYERS) == 2
+    assert rumors.rumor_foreign_max_lines(1) == B.RUMOR_MAX_PER_DAY
+    assert rumors.rumor_foreign_max_lines(2) == B.RUMOR_MAX_PER_DAY
+    assert rumors.rumor_foreign_max_lines(3) == B.RUMOR_MAX_PER_DAY + 1
+    assert rumors.rumor_foreign_max_lines(5) == B.RUMOR_MAX_PER_DAY + 2
     assert rumors.rumor_foreign_max_lines(99) == B.RUMOR_FOREIGN_MAX_CAP
+    assert B.RUMOR_FOREIGN_LINE_CHANCE == B.RUMOR_LINE_CHANCE
+    assert B.RUMOR_FOREIGN_MAX_CAP == B.RUMOR_MAX_CAP
+    for n in range(0, 20):
+        assert rumors.rumor_foreign_max_lines(n) == rumors.rumor_local_max_lines(n)
 
 
 def test_compose_full_wealth_uses_true_band():
@@ -188,6 +193,7 @@ def test_format_rumor_section_with_foreign():
     assert "Слухи рынка" in section
     assert "Из других долин" in section
     assert "Петра" in section
+    assert "\n\n🗺 Из других долин:" in section
 
 
 def test_format_rumors_pull_empty_explains():
@@ -226,6 +232,8 @@ def test_format_digest_includes_foreign_rumors():
     )
     assert "Из других долин" in text
     assert "Олега" in text
+    assert "\n\n👂 Слухи рынка:" in text
+    assert "\n\n🗺 Из других долин:" in text
 
 
 def test_compose_event_rumor_accuracy():

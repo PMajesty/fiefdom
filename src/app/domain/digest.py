@@ -53,7 +53,7 @@ def format_digest(
         parts.append(section)
     if sunday_extra:
         parts.append(sunday_extra)
-    return "\n".join(parts)
+    return "\n\n".join(parts)
 
 
 def format_decree(number: int, text: str) -> str:

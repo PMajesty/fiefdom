@@ -276,6 +276,10 @@ def test_format_digest_gdd_shape():
     assert "📜 Сегодня: Засуха - урожай слабее." in text
     assert "🛒 Рынок: 3 лота. Лучший: отдаёт 40 Зерно за 25 Товары." in text
     assert "⚔️ Вражда: Саша против Кирилла - неделя вторая." in text
+    assert "\n\n🌙 Ночью:" in text
+    assert "\n\n📜 Сегодня:" in text
+    assert "\n\n🛒 Рынок:" in text
+    assert "\n\n⚔️ Вражда:" in text
     assert "Вражда: Вражда:" not in text
     assert "farm_mult" not in text
 
