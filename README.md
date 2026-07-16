@@ -1,0 +1,67 @@
+# Вотчина (Fiefdom)
+
+Persistent medieval fief game for Telegram friend groups.
+One group chat = one valley (долина). Each player owns a fief (усадьба).
+Russian UI. Design: `valley_game_design.md`.
+
+## Stack
+
+- aiogram 3 + PostgreSQL (pg8000)
+- Daily tick 13:00 Europe/Moscow
+- Poe LLM for event narrative (canned fallback)
+- No whitelist — anyone can play; admin toolkit for `ADMIN_USER_ID`
+
+## Local
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+copy .env.example .env
+# fill tokens + DB
+cd src
+python -m app.main
+```
+
+Tests:
+
+```powershell
+pytest
+```
+
+## Group commands
+
+| Command | Action |
+|---------|--------|
+| `/вотчина` | Create realm in this chat |
+| `/вч_карта` `/vch_map` | Map |
+| `/вч_рынок` `/vch_market` | Market |
+| `/вч_сводка` `/vch_digest` | Digest hint |
+| `/вч_я` `/vch_me` | Deep-link to DM |
+| `/вч_помощь` `/vch_help` | Help |
+
+Personal play (build, claim, raid, patrol, trade, pacts) is in DM.
+
+## BotFather checklist
+
+1. Disable **Group Privacy** (or bot won't see non-command context as needed; commands still work with privacy on if they are registered).
+2. Set commands list optionally.
+3. Start bot, add to group, run `/вотчина`.
+
+## Deploy (same VPS as other bots)
+
+```powershell
+python deploy/setup_vps.py    # once
+python deploy/quick_deploy.py # code + restart
+```
+
+Service: `fiefdom` at `/opt/fiefdom`.
+
+## Admin (DM)
+
+- `/вч_admin_help`
+- `/вч_tick [realm_id]`
+- `/вч_grant realm_id fief_id grain goods might`
+- `/вч_wipe_start realm_id` then `/вч_wipe realm_id CODE УДАЛИТЬ`
+- `/вч_freeze fief_id 0|1`
+- `/вч_decree realm_id text…`

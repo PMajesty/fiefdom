@@ -1,0 +1,286 @@
+"""Все числа баланса и таблицы контента. Тюнинг ≠ деплой."""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+
+# --- Карта ---
+TILES_PER_PLAYER = 3.5
+MAP_MIN_TILES = 12
+MAP_MAX_TILES = 64
+MAP_GROWTH_CLAIMED_RATIO = 0.70
+
+TILE_FIELD = "field"
+TILE_FOREST = "forest"
+TILE_HILLS = "hills"
+TILE_RIVER = "river"
+TILE_ROAD = "road"
+TILE_RUINS = "ruins"
+TILE_WILDS = "wilds"
+
+TILE_EMOJI = {
+    TILE_FIELD: "🌾",
+    TILE_FOREST: "🌲",
+    TILE_HILLS: "⛰️",
+    TILE_RIVER: "🌊",
+    TILE_ROAD: "🛤️",
+    TILE_RUINS: "🕳️",
+    TILE_WILDS: "🌫️",
+}
+
+TILE_NAMES_RU = {
+    TILE_FIELD: "Поле",
+    TILE_FOREST: "Лес",
+    TILE_HILLS: "Холмы",
+    TILE_RIVER: "Река",
+    TILE_ROAD: "Дорога",
+    TILE_RUINS: "Руины",
+    TILE_WILDS: "Глушь",
+}
+
+# Веса заполнения (дорога/река кладутся отдельно).
+TILE_FILL_WEIGHTS = {
+    TILE_FIELD: 30,
+    TILE_FOREST: 20,
+    TILE_HILLS: 15,
+    TILE_RUINS: 8,
+    TILE_WILDS: 27,
+}
+TILE_CLUSTER_BONUS = 0.15
+
+RIVER_PASSIVE_GRAIN = 3
+ROAD_PASSIVE_GOODS = 3
+RUINS_LOOT_MIN = 30
+RUINS_LOOT_MAX = 80
+WILDS_CLAIM_MULT = 2
+WILDS_CLEAR_TO = (TILE_FIELD, TILE_FOREST, TILE_HILLS)
+
+# --- Усадьба / клетки ---
+TILE_HARD_CAP = 9
+CLAIM_COSTS = {
+    2: 30,
+    3: 60,
+    4: 120,
+    5: 250,
+    6: 400,
+    7: 600,
+    8: 850,
+    9: 1150,
+}
+CORE_TILE_FLOOR = 2  # после второго клейма; до него защищена только стартовая
+
+# --- Ресурсы ---
+RES_GRAIN = "grain"
+RES_GOODS = "goods"
+RES_MIGHT = "might"
+
+RES_NAMES_RU = {
+    RES_GRAIN: "Зерно",
+    RES_GOODS: "Товары",
+    RES_MIGHT: "Сила",
+}
+
+DEFAULT_STASH_CAP = 150  # зерно/товары без амбара
+COLLECT_CAP_DAYS_BASE = 3
+
+STARTING_GRAIN = 30
+STARTING_GOODS = 20
+STARTING_MIGHT = 5
+STARTING_FARM_LEVEL = 1
+
+# --- Содержание ---
+def land_upkeep(tile_count: int) -> int:
+    return 4 + 2 * max(0, tile_count - 1)
+
+
+MILITIA_FREE = 10
+MILITIA_GRAIN_PER_EXCESS = 0.5  # ceil на тике
+
+HUNGER_PRODUCTION_MULT = 0.5
+
+ACTIONS_PER_DAY = 1
+ACTIONS_BANK_MAX = 3
+
+# --- Здания ---
+BLD_FARM = "farm"
+BLD_WORKSHOP = "workshop"
+BLD_WATCH = "watchtower"
+BLD_BARN = "barn"
+
+BUILDING_NAMES_RU = {
+    BLD_FARM: "Ферма",
+    BLD_WORKSHOP: "Мастерская",
+    BLD_WATCH: "Сторожка",
+    BLD_BARN: "Амбар",
+}
+
+NATIVE_TILE = {
+    BLD_FARM: TILE_FIELD,
+    BLD_WORKSHOP: TILE_FOREST,
+    BLD_WATCH: TILE_HILLS,
+    BLD_BARN: None,
+}
+
+NATIVE_BONUS = 1.5
+
+BUILDING_COSTS = {
+    BLD_FARM: {1: 20, 2: 50, 3: 120},
+    BLD_WORKSHOP: {1: 25, 2: 60, 3: 140},
+    BLD_WATCH: {1: 20, 2: 50, 3: 110},
+    BLD_BARN: {1: 30, 2: 70, 3: 150},
+}
+
+FARM_YIELD = {1: 8, 2: 14, 3: 22}
+WORKSHOP_YIELD = {1: 5, 2: 9, 3: 14}
+WATCH_DEFENSE = {1: 6, 2: 12, 3: 20}
+WATCH_MIGHT = {1: 2, 2: 4, 3: 6}
+BARN_CAP = {1: 200, 2: 400, 3: 800}
+BARN_PROTECT = {1: 0.25, 2: 0.40, 3: 0.60}
+BARN_COLLECT_BONUS_DAYS = 1  # за каждый уровень амбара
+
+REPAIR_COST_MULT = 0.5  # от стоимости апгрейда на этот уровень
+
+# --- Набеги ---
+RAID_MIN_MIGHT = 5
+RAID_SUCCESS_R = 0.33
+RAID_LOOT_R_MULT = 0.20
+RAID_LOOT_MAX_FRAC = 0.25
+RAID_LOOT_MAX_DAYS_PROD = 2
+RAID_VICTIM_SHIELD_HOURS = 36
+RAID_SAME_VICTIM_HOURS = 72
+RAID_ATTACKER_COOLDOWN_HOURS = 20
+
+PATROL_COST_MIGHT = 5
+PATROL_DEFENSE_BONUS = 10
+PATROL_HOURS = 24
+
+INTERCEPT_MIGHT = 5
+INTERCEPT_DEFENSE = 5
+
+FEUD_RAIDS_IN_DAYS = 3
+FEUD_WINDOW_DAYS = 7
+
+PACT_SIZE_MIN = 2
+PACT_SIZE_MAX = 5
+
+# --- Торговля ---
+TRADE_EXPIRE_HOURS = 48
+TRADEABLE = (RES_GRAIN, RES_GOODS)
+
+# --- События ---
+MINOR_EVENT_CHANCE = 0.60
+CATASTROPHE_MIN_DAYS = 5
+CATASTROPHE_MAX_DAYS = 8
+CATASTROPHE_GAP_DAYS = 4
+CATASTROPHE_POST_HOUR_START = 19
+CATASTROPHE_POST_HOUR_END = 21
+CATASTROPHE_WINDOW_HOURS_MIN = 12
+CATASTROPHE_WINDOW_HOURS_MAX = 24
+
+BANDIT_NIGHT_MIGHT_PER_PLAYER = 2.5
+BANDIT_NIGHT_LOOT_PER_PLAYER = 8
+
+# --- Отсутствие ---
+DORMANT_DAYS = 7
+OVERGROWN_DAYS = 21
+OVERGROWN_COMPENSATION = 0.5
+
+# --- Онбординг ---
+ONBOARD_DAY2_GOODS = 15
+ONBOARD_DAY3_GRAIN = 10
+
+# Feature flags по умолчанию
+DEFAULT_FEATURE_FLAGS = {
+    "relics": False,
+    "shrine": False,
+    "gold": False,
+}
+
+
+@dataclass
+class RealmBalanceOverride:
+    """Переопределения чисел на уровне долины (JSON в БД)."""
+
+    data: dict[str, Any] = field(default_factory=dict)
+
+    def get(self, key: str, default: Any) -> Any:
+        return self.data.get(key, default)
+
+
+def claim_cost(next_tile_count: int, is_wilds: bool = False) -> int:
+    base = CLAIM_COSTS.get(next_tile_count)
+    if base is None:
+        raise ValueError(f"Нельзя претендовать на клетку №{next_tile_count}")
+    return base * (WILDS_CLAIM_MULT if is_wilds else 1)
+
+
+def stash_cap(barn_level: int) -> int:
+    if barn_level <= 0:
+        return DEFAULT_STASH_CAP
+    return BARN_CAP.get(barn_level, DEFAULT_STASH_CAP)
+
+
+def barn_protect_frac(barn_level: int) -> float:
+    if barn_level <= 0:
+        return 0.0
+    return BARN_PROTECT.get(barn_level, 0.0)
+
+
+def collect_cap_days(barn_level: int) -> int:
+    return COLLECT_CAP_DAYS_BASE + max(0, barn_level) * BARN_COLLECT_BONUS_DAYS
+
+
+def militia_upkeep_grain(might: int) -> int:
+    """Сколько зерна в день нужно на дружину (округление вверх)."""
+    import math
+
+    excess = max(0, int(might) - MILITIA_FREE)
+    if excess <= 0:
+        return 0
+    return int(math.ceil(excess * MILITIA_GRAIN_PER_EXCESS))
+
+
+def militia_affordable(might: int, grain_available: int) -> int:
+    """Максимум силы, который можно прокормить при данном зерне на жалование."""
+    import math
+
+    if grain_available < 0:
+        grain_available = 0
+    # free band always kept if we had them; disband only excess we can't pay
+    max_excess = int(math.floor(grain_available / MILITIA_GRAIN_PER_EXCESS)) if MILITIA_GRAIN_PER_EXCESS else 10**9
+    return MILITIA_FREE + max_excess
+
+
+def building_upgrade_cost(building: str, target_level: int) -> int:
+    costs = BUILDING_COSTS[building]
+    if target_level not in costs:
+        raise ValueError(f"Нет уровня {target_level} для {building}")
+    return costs[target_level]
+
+
+def repair_cost(building: str, level_to_restore: int) -> int:
+    """Стоимость починки до level_to_restore (= апгрейд на этот уровень × 0.5)."""
+    return int(building_upgrade_cost(building, level_to_restore) * REPAIR_COST_MULT)
+
+
+def map_target_tiles(player_count: int) -> int:
+    raw = max(MAP_MIN_TILES, int(round(player_count * TILES_PER_PLAYER)))
+    return min(MAP_MAX_TILES, raw)
+
+
+def best_rectangle(n: int) -> tuple[int, int]:
+    """Подбирает width×height ≈ n, width >= height, closest area >= n within max."""
+    n = max(MAP_MIN_TILES, min(MAP_MAX_TILES, n))
+    best = (n, 1)
+    best_score = abs(n - n) + abs(n - 1)
+    for h in range(1, int(n**0.5) + 3):
+        w = (n + h - 1) // h
+        area = w * h
+        if area > MAP_MAX_TILES:
+            continue
+        score = abs(area - n) + abs(w - h)
+        if area >= n and (score < best_score or (score == best_score and area < best[0] * best[1])):
+            best = (w, h)
+            best_score = score
+    return best
