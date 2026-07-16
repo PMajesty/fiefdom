@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from app import balance as B
 
-# Как отличить тип клетки на PNG (Lucide: wheat/trees/mountain/waves/road/landmark/fog).
+# Как отличить тип клетки на PNG (Lucide: wheat/trees/mountain/waves/road/landmark/shrub).
 TILE_ICON_CUES_RU = {
     B.TILE_FIELD: "колосья",
     B.TILE_FOREST: "деревья",
@@ -11,7 +11,7 @@ TILE_ICON_CUES_RU = {
     B.TILE_RIVER: "волны",
     B.TILE_ROAD: "полоса дороги",
     B.TILE_RUINS: "памятник",
-    B.TILE_WILDS: "туман",
+    B.TILE_WILDS: "куст",
 }
 
 _TILE_ORDER = (

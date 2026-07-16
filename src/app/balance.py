@@ -26,7 +26,7 @@ TILE_EMOJI = {
     TILE_RIVER: "🌊",
     TILE_ROAD: "🛤️",
     TILE_RUINS: "🕳️",
-    TILE_WILDS: "🌫️",
+    TILE_WILDS: "🪴",
 }
 
 TILE_NAMES_RU = {

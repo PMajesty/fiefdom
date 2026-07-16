@@ -21,7 +21,7 @@ PAD_PX = 16
 GRID_LINE_PX = 2
 ICON_PX = 44
 # Меняйте при правках вида клетки - сброс кэша PNG/file_id.
-RENDER_REV = 5
+RENDER_REV = 6
 
 _ASSETS = Path(__file__).resolve().parents[1] / "assets"
 _FONT_PATH = _ASSETS / "fonts" / "NotoSans-Regular.ttf"
@@ -45,7 +45,7 @@ TILE_ICONS: dict[str, str] = {
     B.TILE_RIVER: "waves.png",
     B.TILE_ROAD: "road.png",
     B.TILE_RUINS: "landmark.png",
-    B.TILE_WILDS: "cloud-fog.png",
+    B.TILE_WILDS: "shrub.png",
 }
 
 BUILDING_MARK: dict[str, str] = {

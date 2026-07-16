@@ -99,7 +99,8 @@ def test_map_tile_legend_reads_naturally():
     assert "волны - река" in text
     assert "полоса дороги - дорога" in text
     assert "памятник - руины" in text
-    assert "туман - глушь" in text
+    assert "куст - глушь" in text
+    assert "туман" not in text
     assert "🌾" not in text
     assert "Рамки:" in text
     assert "синяя - ваши" in text
