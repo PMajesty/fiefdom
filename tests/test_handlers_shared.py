@@ -360,8 +360,12 @@ def test_patrol_confirm_callback_shape():
 
     assert patrol_prompt_callback(9) == "pat:9"
     assert patrol_confirm_callback(9) == "pat:9:ok"
-    assert f"−{B.PATROL_COST_MIGHT} силы" in patrol_confirm_text()
-    assert "1 действие" in patrol_confirm_text()
+    text = patrol_confirm_text()
+    assert f"−{B.PATROL_COST_MIGHT} силы" in text
+    assert "1 действие" in text
+    assert f"на {B.PATROL_HOURS}ч" in text
+    assert f"+{B.PATROL_DEFENSE_BONUS} защиты" in text
+    assert "защиту от набегов" in text
 
     kb = patrol_confirm_kb(9)
     texts = [btn.text for btn in kb.inline_keyboard[0]]

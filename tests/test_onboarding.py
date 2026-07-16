@@ -323,3 +323,16 @@ def test_guide_mentions_raid_pact_unlock_day():
     text = game_guide()
     assert f"с дня {B.RAID_PACT_UNLOCK_DAY}" in text
     assert "после квестов" in text
+
+
+def test_guide_explains_patrol():
+    from app import balance as B
+    from app.domain.guide import game_guide
+
+    text = game_guide()
+    assert "<b>Дозор.</b>" in text
+    assert f"−{B.PATROL_COST_MIGHT} силы" in text
+    assert f"+{B.PATROL_DEFENSE_BONUS} к защите" in text
+    assert f"на {B.PATROL_HOURS}ч" in text
+    assert "сторожка даёт защиту постоянно" in text
+    assert "В тумане дозор почти бесполезен" in text
