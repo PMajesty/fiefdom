@@ -19,6 +19,8 @@ LABEL_LEFT_PX = 36
 LABEL_TOP_PX = 28
 PAD_PX = 16
 GRID_LINE_PX = 2
+# Меняйте при правках вида клетки - сброс кэша PNG/file_id.
+RENDER_REV = 2
 
 _FONT_PATH = Path(__file__).resolve().parents[1] / "assets" / "fonts" / "NotoSans-Regular.ttf"
 
@@ -110,6 +112,17 @@ def _load_font(size: int) -> ImageFont.FreeTypeFont:
         raise OSError(f"Не удалось открыть шрифт карты: {path}") from exc
 
 
+def building_visible_on_map(
+    tile: TileView, highlight_fief_id: int | None
+) -> bool:
+    """Чужие постройки скрыты: их узнают через слухи и общение."""
+    if highlight_fief_id is None:
+        return False
+    if tile.owner_fief_id != highlight_fief_id:
+        return False
+    return bool(tile.building) and int(tile.building_level or 0) > 0
+
+
 def map_fingerprint(
     *,
     realm_id: int,
@@ -120,20 +133,22 @@ def map_fingerprint(
     claimable: set[tuple[int, int]] | None,
 ) -> str:
     """Отпечаток только того, что влияет на PNG (не подпись)."""
-    tile_rows = [
-        [
-            t.x,
-            t.y,
-            t.tile_type,
-            t.owner_fief_id,
-            t.building,
-            t.building_level,
-            int(t.is_bridge),
-            int(t.is_core),
-            int(t.is_overgrown),
-        ]
-        for t in sorted(tiles, key=lambda item: (item.y, item.x))
-    ]
+    tile_rows = []
+    for t in sorted(tiles, key=lambda item: (item.y, item.x)):
+        show_bld = building_visible_on_map(t, highlight_fief_id)
+        tile_rows.append(
+            [
+                t.x,
+                t.y,
+                t.tile_type,
+                t.owner_fief_id,
+                t.building if show_bld else None,
+                t.building_level if show_bld else 0,
+                int(t.is_bridge),
+                int(t.is_core),
+                int(t.is_overgrown),
+            ]
+        )
     claim_rows = [[x, y] for x, y in sorted(claimable)] if claimable else []
     payload = {
         "realm_id": realm_id,
@@ -143,6 +158,7 @@ def map_fingerprint(
         "highlight_fief_id": highlight_fief_id,
         "claimable": claim_rows,
         "cell_px": CELL_PX,
+        "render_rev": RENDER_REV,
     }
     raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
@@ -162,12 +178,7 @@ def _draw_centered_text(
     font: ImageFont.ImageFont,
     fill: tuple[int, int, int],
 ) -> None:
-    bbox = draw.textbbox((0, 0), text, font=font)
-    tw = bbox[2] - bbox[0]
-    th = bbox[3] - bbox[1]
-    x = xy[0] - tw / 2 - bbox[0]
-    y = xy[1] - th / 2 - bbox[1]
-    draw.text((x, y), text, font=font, fill=fill)
+    draw.text(xy, text, font=font, fill=fill, anchor="mm")
 
 
 def render_map_image(
@@ -248,22 +259,18 @@ def render_map_image(
                 mark = "+"
             else:
                 mark = MAP_EMPTY_MARK
-            _draw_centered_text(
-                draw,
-                (left + CELL_PX / 2, top + CELL_PX / 2 - 4),
-                mark,
-                font_owner,
-                OWNER_TEXT,
-            )
-            if tile.building and tile.building_level > 0:
-                bmark = BUILDING_MARK.get(tile.building, "?")
+            cx = left + CELL_PX / 2
+            cy = top + CELL_PX / 2
+            _draw_centered_text(draw, (cx, cy), mark, font_owner, OWNER_TEXT)
+            if building_visible_on_map(tile, highlight_fief_id):
+                bmark = BUILDING_MARK.get(tile.building or "", "?")
                 label = f"{bmark}{tile.building_level}"
-                _draw_centered_text(
-                    draw,
-                    (left + CELL_PX - 14, top + CELL_PX - 12),
+                draw.text(
+                    (right - 5, bottom - 4),
                     label,
-                    font_building,
-                    OWNER_TEXT,
+                    font=font_building,
+                    fill=OWNER_TEXT,
+                    anchor="rb",
                 )
 
     buf = io.BytesIO()

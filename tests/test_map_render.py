@@ -91,6 +91,9 @@ def test_map_tile_legend_reads_naturally():
     assert text.startswith("Клетки:")
     assert "лучше для фермы" in text
     assert "Метки:" in text
+    assert "жёлтый" in text
+    assert "Чужие постройки" in text
+    assert "Д двор" in text
     assert "← вы" not in text
     assert "ферма ×" not in text
 

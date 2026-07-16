@@ -68,6 +68,34 @@ def test_render_map_image_returns_valid_png():
     assert image.size[1] >= 2 * 56
 
 
+def test_foreign_buildings_hidden_on_map_and_fingerprint():
+    base = [
+        _tile(0, 0, B.TILE_FIELD, owner=1, building=B.BLD_MANOR, building_level=1),
+        _tile(1, 0, B.TILE_HILLS, owner=2),
+    ]
+    with_enemy = [
+        _tile(0, 0, B.TILE_FIELD, owner=1, building=B.BLD_MANOR, building_level=1),
+        _tile(1, 0, B.TILE_HILLS, owner=2, building=B.BLD_WATCH, building_level=2),
+    ]
+    common = dict(realm_id=1, width=2, height=1, highlight_fief_id=1, claimable=set())
+    assert map_fingerprint(tiles=base, **common) == map_fingerprint(tiles=with_enemy, **common)
+    assert render_map_image(2, 1, base, highlight_fief_id=1) == render_map_image(
+        2, 1, with_enemy, highlight_fief_id=1
+    )
+    # свои постройки влияют на картинку
+    upgraded = [
+        _tile(0, 0, B.TILE_FIELD, owner=1, building=B.BLD_MANOR, building_level=2),
+        _tile(1, 0, B.TILE_HILLS, owner=2, building=B.BLD_WATCH, building_level=2),
+    ]
+    assert render_map_image(2, 1, with_enemy, highlight_fief_id=1) != render_map_image(
+        2, 1, upgraded, highlight_fief_id=1
+    )
+    # без highlight чужие (и любые) постройки не рисуются
+    assert render_map_image(2, 1, with_enemy, highlight_fief_id=None) == render_map_image(
+        2, 1, base, highlight_fief_id=None
+    )
+
+
 def test_map_fingerprint_changes_on_off_tick_claim():
     base_tiles = [
         _tile(0, 0, B.TILE_FIELD, owner=1),
