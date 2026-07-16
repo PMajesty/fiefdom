@@ -8,7 +8,6 @@ from aiogram.types import CallbackQuery
 
 from app import balance as B
 from app.domain.economy import adjacent_claimable
-from app.domain.guide import join_welcome_text
 from app.handlers import dm as dm_mod
 from app.handlers.shared import (
     announce_realm,
@@ -25,6 +24,7 @@ from app.handlers.shared import (
     post_digest,
     realm_upgrade_cost_mult,
     reply_game,
+    reply_guide,
 )
 from app.engine import raid_pact_lock_message
 from app.messaging import answer_html
@@ -234,9 +234,10 @@ async def _finish_starter_pick(callback: CallbackQuery) -> None:
         tile_id,
     )
     await _ok(callback)
+    await reply_guide(callback.message, engine.guide_text())
     await reply_game(
         callback.message,
-        join_welcome_text(msg),
+        msg,
         reply_markup=fief_home_kb(engine, fief["id"]),
     )
     await announce_realm(
@@ -488,7 +489,7 @@ async def cb_guide(callback: CallbackQuery) -> None:
         fief_id = int(callback.data.split(":")[1])
         _ensure_owner(engine, fief_id, callback.from_user.id)
         await _ok(callback)
-        await reply_game(
+        await reply_guide(
             callback.message,
             engine.guide_text(),
             reply_markup=fief_home_kb(engine, fief_id),

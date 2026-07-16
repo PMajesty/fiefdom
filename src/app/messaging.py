@@ -9,11 +9,13 @@ from typing import Any
 from aiogram import Bot
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
-from aiogram.types import Message
+from aiogram.types import BufferedInputFile, Message
 
 logger = logging.getLogger(__name__)
 
 TELEGRAM_MESSAGE_LIMIT = 4000
+GUIDE_DOCUMENT_FILENAME = "ustav.txt"
+GUIDE_DOCUMENT_CAPTION = "📜 Краткий устав Вотчины"
 
 
 def escape_html(text: str) -> str:
@@ -115,3 +117,51 @@ async def send_html(bot: Bot, chat_id: int, text: str, **kwargs: Any) -> None:
                 logger.error("send_html: plain fallback failed: %s", fallback_exc)
         except Exception as exc:
             logger.error("send_html: send failed: %s", exc)
+
+
+async def answer_text_document(
+    message: Message,
+    text: str,
+    *,
+    filename: str,
+    caption: str | None = None,
+    **kwargs: Any,
+) -> None:
+    """Отправляет длинный plain-текст одним .txt-документом."""
+    if text is None:
+        return
+    plain = str(text)
+    if not plain:
+        return
+
+    kwargs.pop("parse_mode", None)
+    payload = plain.encode("utf-8")
+
+    async def _send():
+        # Новый буфер на каждую попытку: после RetryAfter старый может быть уже прочитан
+        document = BufferedInputFile(payload, filename=filename)
+        return await message.answer_document(
+            document,
+            caption=caption,
+            **kwargs,
+        )
+
+    try:
+        await _send_with_retry(_send, label="answer_text_document")
+    except Exception as exc:
+        logger.error("answer_text_document: send failed: %s", exc)
+
+
+async def reply_guide_document(
+    message: Message,
+    text: str,
+    **kwargs: Any,
+) -> None:
+    """Устав целиком как ustav.txt - без HTML и без нарезки на сообщения."""
+    await answer_text_document(
+        message,
+        text,
+        filename=GUIDE_DOCUMENT_FILENAME,
+        caption=GUIDE_DOCUMENT_CAPTION,
+        **kwargs,
+    )

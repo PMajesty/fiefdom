@@ -16,6 +16,7 @@ from app.handlers.shared import (
     is_admin,
     open_estate_kb,
     reply_game,
+    reply_guide,
     resolve_fief_for_user,
 )
 from app.messaging import answer_html
@@ -140,7 +141,7 @@ async def cmd_help(message: Message) -> None:
 @router.message(Command("вч_гайд", "вч_устав", "vch_guide", "vch_rules"))
 async def cmd_guide(message: Message) -> None:
     try:
-        await reply_game(message, get_engine().guide_text())
+        await reply_guide(message, get_engine().guide_text())
     except Exception:
         logger.exception("cmd_guide")
         await answer_html(message, "Устав временно недоступен.")

@@ -19,7 +19,7 @@ from app.engine import (
     raid_pact_lock_hint,
     raid_pact_unlocked,
 )
-from app.messaging import answer_html, escape_html, send_html
+from app.messaging import answer_html, escape_html, reply_guide_document, send_html
 
 logger = logging.getLogger(__name__)
 
@@ -570,6 +570,11 @@ async def reply_game(message: Message, text: str, **kwargs: Any) -> None:
         await answer_html(message, plain, **kwargs)
     except Exception as exc:
         logger.error("reply_game failed: %s", exc)
+
+
+async def reply_guide(message: Message, text: str, **kwargs: Any) -> None:
+    """Устав длиннее лимита Telegram - одним .txt-файлом."""
+    await reply_guide_document(message, text, **kwargs)
 
 
 async def send_game(bot, chat_id: int, text: str, **kwargs: Any) -> None:

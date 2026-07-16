@@ -576,7 +576,8 @@ def test_guide_explains_patrol():
     from app.domain.guide import game_guide
 
     text = game_guide()
-    assert "<b>Дозор</b>" in text
+    assert "Дозор" in text
+    assert "<b>" not in text and "</b>" not in text
     assert "силу не тратит" in text
     assert "1 действие" in text
     assert f"+{B.PATROL_DEFENSE_BONUS} к защите" in text
@@ -599,13 +600,10 @@ def test_guide_explains_core_systems():
     assert "/вч_я" in text
 
 
-def test_join_welcome_puts_guide_before_founding():
-    from app.domain.guide import game_guide, join_welcome_text
+def test_guide_is_plain_text_over_telegram_limit():
+    from app.domain.guide import game_guide
+    from app.messaging import TELEGRAM_MESSAGE_LIMIT
 
-    founding = "🏡 Усадьба основана на А1 (Поле)."
-    text = join_welcome_text(founding)
-    assert text.startswith("📜")
-    assert text.index("Краткий устав") < text.index(founding)
-    assert "---" in text
-    assert game_guide() in text
-    assert founding in text
+    text = game_guide()
+    assert len(text) > TELEGRAM_MESSAGE_LIMIT
+    assert "<" not in text and ">" not in text

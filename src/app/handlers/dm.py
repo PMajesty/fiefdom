@@ -27,6 +27,7 @@ from app.handlers.shared import (
     parse_start_payload,
     realm_upgrade_cost_mult,
     reply_game,
+    reply_guide,
     resolve_fief_for_user,
 )
 from app.messaging import answer_html
@@ -621,7 +622,7 @@ async def cmd_dm_guide(message: Message) -> None:
     engine = get_engine()
     fief = resolve_fief_for_user(engine, message.from_user.id)
     kb = fief_home_kb(engine, fief["id"]) if fief else None
-    await reply_game(message, engine.guide_text(), reply_markup=kb)
+    await reply_guide(message, engine.guide_text(), reply_markup=kb)
 
 
 @router.message(Command("меню", "menu"))
@@ -698,7 +699,7 @@ async def dm_text(message: Message) -> None:
                     ),
                 )
         elif key == "guide":
-            await reply_game(
+            await reply_guide(
                 message,
                 engine.guide_text(),
                 reply_markup=fief_home_kb(engine, fid),
