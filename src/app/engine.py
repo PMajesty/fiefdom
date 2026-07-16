@@ -228,7 +228,6 @@ class Engine:
         else:
             indices = [int(r["chain_index"]) for r in existing_realms]
             anchor_idx, _side, new_index = pick_portal_insertion(indices, rng)
-            self.db.shift_chain_indices(world_id, new_index, delta=1)
             chain_index = new_index
             anchor = next(
                 (r for r in existing_realms if int(r["chain_index"]) == anchor_idx),
@@ -240,38 +239,53 @@ class Engine:
             )
 
         world = self.db.get_world(world_id) or world
-        realm = self.db.create_realm(
-            chat_id=chat_id,
-            title=title or "Долина",
-            width=width,
-            height=height,
-            timezone=tz,
-            tick_hour=TICK_HOUR,
-            tick_minute=TICK_MINUTE,
-            feature_flags=dict(B.DEFAULT_FEATURE_FLAGS),
-            next_catastrophe_tick=world.get("next_catastrophe_tick"),
-            world_id=world_id,
-            chain_index=chain_index,
-            day_number=int(world.get("day_number") or 1),
-            tick_index=int(world.get("tick_index") or 0),
-            last_tick_local_date=world.get("last_tick_local_date"),
-            last_tick_slot=world.get("last_tick_slot"),
-            next_catastrophe_key=world.get("next_catastrophe_key"),
-            pending_minor_key=world.get("pending_minor_key"),
-            active_minor_key=world.get("active_minor_key"),
-        )
-        self.db.insert_tiles(
-            realm["id"],
-            [
-                {
-                    "x": t.x,
-                    "y": t.y,
-                    "tile_type": t.tile_type,
-                    "is_bridge": t.is_bridge,
-                }
-                for t in tiles
-            ],
-        )
+        world_tick = int(world.get("tick_index") or 0)
+        try:
+            with self.db.transaction():
+                if existing_realms:
+                    self.db.shift_chain_indices(world_id, chain_index, delta=1)
+                realm = self.db.create_realm(
+                    chat_id=chat_id,
+                    title=title or "Долина",
+                    width=width,
+                    height=height,
+                    timezone=tz,
+                    tick_hour=TICK_HOUR,
+                    tick_minute=TICK_MINUTE,
+                    feature_flags=dict(B.DEFAULT_FEATURE_FLAGS),
+                    next_catastrophe_tick=world.get("next_catastrophe_tick"),
+                    world_id=world_id,
+                    chain_index=chain_index,
+                    day_number=int(world.get("day_number") or 1),
+                    tick_index=world_tick,
+                    last_tick_local_date=world.get("last_tick_local_date"),
+                    last_tick_slot=world.get("last_tick_slot"),
+                    next_catastrophe_key=world.get("next_catastrophe_key"),
+                    pending_minor_key=world.get("pending_minor_key"),
+                    active_minor_key=world.get("active_minor_key"),
+                )
+                self.db.update_realm(int(realm["id"]), last_economy_tick=world_tick)
+                self.db.insert_tiles(
+                    realm["id"],
+                    [
+                        {
+                            "x": t.x,
+                            "y": t.y,
+                            "tile_type": t.tile_type,
+                            "is_bridge": t.is_bridge,
+                        }
+                        for t in tiles
+                    ],
+                )
+        except Exception:
+            if existing_realms:
+                try:
+                    self.db.recompact_chain_indices(world_id)
+                except Exception:
+                    logger.exception(
+                        "recompact_chain_indices failed after portal insert error"
+                    )
+            raise
         realm = self.db.get_realm(realm["id"]) or realm
         msg = (
             f"🏰 Вотчина основана: <b>{realm['title']}</b>\n"
@@ -383,11 +397,30 @@ class Engine:
         ]
         return pick_max_separated_tiles(candidates, cores, width, height, count)
 
-    def join_fief(self, realm_id: int, user, tile_id: int) -> tuple[dict, str]:
+    def has_fief_elsewhere(self, user_id: int, realm_id: int) -> bool:
+        """У игрока уже есть усадьба в другой долине."""
+        for f in self.db.list_fiefs_by_user(user_id):
+            if int(f["realm_id"]) != int(realm_id):
+                return True
+        return False
+
+    def join_fief(
+        self,
+        realm_id: int,
+        user,
+        tile_id: int,
+        *,
+        allow_extra_fief: bool = False,
+    ) -> tuple[dict, str]:
         self.ensure_user(user)
         existing = self.db.get_fief_by_user(realm_id, user.id)
         if existing:
             raise ValueError("У вас уже есть усадьба в этой долине")
+        if self.has_fief_elsewhere(user.id, realm_id) and not allow_extra_fief:
+            raise ValueError(
+                "Вторая усадьба нужна только осознанно. "
+                "Подтвердите создание через ссылку долины заново."
+            )
 
         tile = self.db._fetchone("SELECT * FROM map_tiles WHERE id=%s AND realm_id=%s;", (tile_id, realm_id))
         if not tile or tile["owner_fief_id"] is not None:
@@ -1097,10 +1130,11 @@ class Engine:
                 public_line=atk_line,
                 tick_index=tick_index,
             )
-            for rid, line in (
-                (int(atk["realm_id"]), atk_line),
-                (int(vic["realm_id"]), vic_line),
-            ):
+            digest_by_realm: dict[int, str] = {
+                int(atk["realm_id"]): atk_line,
+                int(vic["realm_id"]): vic_line,
+            }
+            for rid, line in digest_by_realm.items():
                 r = self.db.get_realm(rid) or {}
                 lines = list(r.get("pending_raid_lines") or [])
                 lines.append(line)
@@ -1606,6 +1640,22 @@ class Engine:
         }
 
     # ---------- daily tick ----------
+    def world_tick_incomplete(self, world_id: int | None = None) -> bool:
+        """Есть долины, у которых экономика ещё не догнала часы континента."""
+        world = self.db.get_world(world_id) if world_id else self.db.get_or_create_world()
+        if not world:
+            return False
+        tick = int(world.get("tick_index") or 0)
+        if tick <= 0:
+            return False
+        for realm in self.db.list_realms_by_chain(int(world["id"])):
+            # NULL - легаси "в синхроне"; отставание только при явном маркере.
+            if realm.get("last_economy_tick") is None:
+                continue
+            if int(realm["last_economy_tick"]) < tick:
+                return True
+        return False
+
     def run_world_tick(
         self,
         world_id: int | None = None,
@@ -1613,7 +1663,12 @@ class Engine:
         *,
         forced: bool = False,
     ) -> dict:
-        """Один тик континента: общие часы/события, локальные сводки и слухи."""
+        """Один тик континента: общие часы/события, локальные сводки и слухи.
+
+        Часы двигаются один раз; экономика каждой долины идемпотентна по
+        last_economy_tick. При обрыве следующий вызов догоняет отстающие долины
+        без повторного сдвига дня.
+        """
         world = self.db.get_world(world_id) if world_id else self.db.get_or_create_world()
         if not world:
             raise ValueError("Континент не найден")
@@ -1622,58 +1677,111 @@ class Engine:
         if not realms:
             return {"world_id": wid, "realms": [], "digest": None, "chat_id": None}
 
-        new_tick = int(world.get("tick_index") or 0) + 1
-        pending_raw = world.get("pending_minor_key")
-        if pending_raw is None:
-            minor_key = roll_minor_event(random.Random())
-        else:
-            minor_key = pending_raw or None
+        current = int(world.get("tick_index") or 0)
+        # Легаси/новая колонка: NULL значит "уже на текущих часах", не "отстаёт".
+        for r in realms:
+            if r.get("last_economy_tick") is None:
+                self.db.update_realm(int(r["id"]), last_economy_tick=current)
+                r["last_economy_tick"] = current
 
-        tz = ZoneInfo(world.get("timezone") or TIMEZONE)
-        local_now = datetime.now(tz)
-        local_date = local_now.date()
-        day = int(world.get("day_number") or 1) + 1
-        world_fields: dict[str, Any] = {
-            "tick_index": new_tick,
-            "day_number": day,
-            "last_tick_at": _utcnow(),
-            "active_minor_key": minor_key,
-            "active_minor_until": None,
-            "pending_minor_key": None,
-        }
-        if tick_slot is not None:
-            slots = tick_slots()
-            tick_slot = max(0, min(int(tick_slot), max(0, len(slots) - 1)))
-            world_fields["last_tick_local_date"] = local_date
-            world_fields["last_tick_slot"] = tick_slot
-        if forced:
-            world_fields["forced_tick_count"] = int(world.get("forced_tick_count") or 0) + 1
-        self.db.update_world(wid, **world_fields)
-        self.db.sync_realms_clock_from_world(wid)
+        resuming = any(
+            int(r.get("last_economy_tick") or -1) < current for r in realms
+        ) and current > 0
+
+        if resuming:
+            new_tick = current
+        else:
+            new_tick = current + 1
+            pending_raw = world.get("pending_minor_key")
+            if pending_raw is None:
+                minor_key = roll_minor_event(random.Random())
+            else:
+                minor_key = pending_raw or None
+
+            tz = ZoneInfo(world.get("timezone") or TIMEZONE)
+            local_now = datetime.now(tz)
+            local_date = local_now.date()
+            day = int(world.get("day_number") or 1) + 1
+            world_fields: dict[str, Any] = {
+                "tick_index": new_tick,
+                "day_number": day,
+                "last_tick_at": _utcnow(),
+                "active_minor_key": minor_key,
+                "active_minor_until": None,
+                "pending_minor_key": None,
+            }
+            if tick_slot is not None:
+                slots = tick_slots()
+                tick_slot = max(0, min(int(tick_slot), max(0, len(slots) - 1)))
+                world_fields["last_tick_local_date"] = local_date
+                world_fields["last_tick_slot"] = tick_slot
+            if forced:
+                world_fields["forced_tick_count"] = (
+                    int(world.get("forced_tick_count") or 0) + 1
+                )
+            self.db.update_world(wid, **world_fields)
+            self.db.sync_realms_clock_from_world(wid)
 
         realm_results = []
         for realm in self.db.list_realms_by_chain(wid):
-            result = self.run_realm_tick(
-                int(realm["id"]),
-                tick_slot=tick_slot,
-                forced=forced,
-                advance_clock=False,
-            )
-            realm_results.append(result)
+            rid = int(realm["id"])
+            if int(realm.get("last_economy_tick") or -1) >= new_tick:
+                realm_results.append(
+                    {
+                        "realm_id": rid,
+                        "skipped": True,
+                        "already_ticked": True,
+                        "digest": None,
+                        "chat_id": realm.get("chat_id"),
+                        "deserter_event": None,
+                    }
+                )
+                continue
+            try:
+                with self.db.transaction():
+                    result = self.run_realm_tick(
+                        rid,
+                        tick_slot=tick_slot,
+                        forced=forced,
+                        advance_clock=False,
+                    )
+                    self.db.update_realm(rid, last_economy_tick=new_tick)
+                realm_results.append(result)
+            except Exception:
+                logger.exception("realm tick failed world=%s realm=%s", wid, rid)
+                realm_results.append(
+                    {
+                        "realm_id": rid,
+                        "skipped": True,
+                        "error": True,
+                        "digest": None,
+                        "chat_id": realm.get("chat_id"),
+                        "deserter_event": None,
+                    }
+                )
 
-        next_minor = roll_minor_event(random.Random())
-        self.db.update_world(wid, pending_minor_key=next_minor or "")
-        self.db.clear_world_force_tick_votes(wid)
-        self.db.sync_realms_clock_from_world(wid)
+        caught_up = all(
+            int(r.get("last_economy_tick") or -1) >= new_tick
+            for r in self.db.list_realms_by_chain(wid)
+        )
+        if caught_up:
+            world = self.db.get_world(wid) or world
+            if world.get("pending_minor_key") is None:
+                next_minor = roll_minor_event(random.Random())
+                self.db.update_world(wid, pending_minor_key=next_minor or "")
+            self.db.clear_world_force_tick_votes(wid)
+            self.db.sync_realms_clock_from_world(wid)
 
+        posted = [x for x in realm_results if not x.get("skipped")]
+        head = posted[0] if posted else (realm_results[0] if realm_results else {})
         return {
             "world_id": wid,
             "realms": realm_results,
-            "digest": realm_results[0].get("digest") if realm_results else None,
-            "chat_id": realm_results[0].get("chat_id") if realm_results else None,
-            "deserter_event": (
-                realm_results[0].get("deserter_event") if realm_results else None
-            ),
+            "digest": head.get("digest"),
+            "chat_id": head.get("chat_id"),
+            "deserter_event": head.get("deserter_event"),
+            "resumed": resuming,
+            "incomplete": not caught_up,
         }
 
     def run_realm_tick(

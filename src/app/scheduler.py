@@ -76,9 +76,16 @@ async def _scheduler_tick(bot: Bot) -> None:
         ),
         slots=tick_slots(),
     )
-    if slot_index is not None:
-        result = engine.run_world_tick(int(world["id"]), tick_slot=slot_index)
+    incomplete = engine.world_tick_incomplete(int(world["id"]))
+    if incomplete or slot_index is not None:
+        # incomplete: догоняем долины без нового слота; иначе обычный due.
+        result = engine.run_world_tick(
+            int(world["id"]),
+            tick_slot=None if incomplete else slot_index,
+        )
         for item in result.get("realms") or []:
+            if item.get("skipped"):
+                continue
             digest = item.get("digest")
             chat_id = item.get("chat_id")
             realm_id = item.get("realm_id")
@@ -88,9 +95,11 @@ async def _scheduler_tick(bot: Bot) -> None:
             if deserter_event and chat_id:
                 await post_deserter_race(bot, chat_id, deserter_event)
         logger.info(
-            "World tick slot %s posted for %s realms",
+            "World tick slot %s posted for %s realms (resumed=%s incomplete=%s)",
             slot_index,
-            len(result.get("realms") or []),
+            len([x for x in (result.get("realms") or []) if not x.get("skipped")]),
+            result.get("resumed"),
+            result.get("incomplete"),
         )
         world = engine.db.get_world(int(world["id"])) or world
 
@@ -126,22 +135,126 @@ async def post_deserter_race(bot: Bot, chat_id: int, event: dict) -> None:
     await send_game(bot, chat_id, text, reply_markup=kb)
 
 
+def _active_catastrophe(engine, realm_id: int) -> dict | None:
+    events = engine.db.get_active_events(realm_id, kind="catastrophe")
+    return events[0] if events else None
+
+
+async def _post_catastrophe_message(
+    bot: Bot, engine, realm: dict, event: dict, key: str, narrative: str, window_t: int
+) -> None:
+    meta = CATASTROPHES[key]
+    players = max(1, len(engine.db.list_fiefs(realm["id"])))
+    extra = ""
+    if key == "bandit_night":
+        need = int(math.ceil(B.BANDIT_NIGHT_MIGHT_PER_PLAYER * players))
+        extra = (
+            f"\nНужно собрать ≥ {need} силы. "
+            f"Вклад: кнопка ниже (−5 силы за нажатие)."
+        )
+    elif key == "cattle_plague":
+        extra = (
+            "\nПоля без тягла дают половину. В личке: "
+            "\"Забить скот\" (−20 зерна) - снять мор у своей усадьбы."
+        )
+    text = (
+        f"⚠️ <b>{meta['name_ru']}</b>\n"
+        f"{narrative}{extra}\n"
+        f"Окно: {window_t} тик(а)."
+    )
+    chat_id = realm.get("chat_id")
+    if not chat_id:
+        return
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    kb = None
+    if key == "bandit_night":
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="Вложить 5 силы",
+                        callback_data=f"cat:{event['id']}:might5",
+                    )
+                ]
+            ]
+        )
+    await send_game(bot, chat_id, text, reply_markup=kb)
+
+
+def _advance_catastrophe_schedule(engine, world: dict, key: str, tick_index: int) -> None:
+    rng = random.Random()
+    delay = next_catastrophe_delay_ticks(rng)
+    next_key = pick_catastrophe(rng, key)
+    engine.db.update_world(
+        int(world["id"]),
+        last_catastrophe_key=key,
+        next_catastrophe_tick=tick_index + delay,
+        next_catastrophe_key=next_key,
+        next_catastrophe_at=None,
+    )
+    engine.db.sync_realms_clock_from_world(int(world["id"]))
+
+
 async def _maybe_post_world_catastrophe(bot: Bot, engine, world: dict) -> None:
-    """Глобальная катастрофа: одно расписание, пост в каждый чат долины."""
+    """Глобальная катастрофа: сначала все события в БД, потом сдвиг расписания, потом посты.
+
+    Неполный fan-out дополняется на следующем опросе без второго цикла бед.
+    """
     tick_index = int(world.get("tick_index") or 0)
     next_tick = world.get("next_catastrophe_tick")
-    if next_tick is None:
-        return
-    if tick_index < int(next_tick):
-        return
-
     realms = engine.db.list_realms_by_chain(int(world["id"]))
     if not realms:
         return
-    # Уже постили (хотя бы в одной долине есть активная) - ждём резолва.
+
+    active_pairs: list[tuple[dict, dict]] = []
     for realm in realms:
-        if engine.db.get_active_events(realm["id"], kind="catastrophe"):
+        ev = _active_catastrophe(engine, int(realm["id"]))
+        if ev:
+            active_pairs.append((realm, ev))
+
+    if active_pairs:
+        wave_keys = {
+            (str(ev.get("event_key")), int(ev.get("resolves_tick") or 0))
+            for _r, ev in active_pairs
+        }
+        if len(wave_keys) != 1:
             return
+        key, resolves_tick = next(iter(wave_keys))
+        have_ids = {int(r["id"]) for r, _ev in active_pairs}
+        meta = CATASTROPHES.get(key) or {}
+        narrative = meta.get("canned_narrative") or ""
+        window_t = max(1, resolves_tick - tick_index) if resolves_tick >= tick_index else 1
+        for realm in realms:
+            if int(realm["id"]) in have_ids:
+                continue
+            payload: dict = {"threshold_hint": True}
+            if key == "cattle_plague":
+                payload = {"mitigated_fief_ids": []}
+            event = engine.db.create_event(
+                realm_id=realm["id"],
+                kind="catastrophe",
+                event_key=key,
+                payload=payload,
+                narrative=narrative,
+                status="active",
+                resolves_tick=resolves_tick,
+            )
+            try:
+                await _post_catastrophe_message(
+                    bot, engine, realm, event, key, narrative, window_t
+                )
+            except Exception:
+                logger.exception(
+                    "catastrophe resume send failed realm=%s", realm.get("id")
+                )
+        # Если волна началась, а расписание ещё не сдвинули (упали до advance).
+        if next_tick is not None and tick_index >= int(next_tick):
+            _advance_catastrophe_schedule(engine, world, key, tick_index)
+        return
+
+    if next_tick is None or tick_index < int(next_tick):
+        return
 
     rng = random.Random()
     key = world.get("next_catastrophe_key") or pick_catastrophe(
@@ -152,6 +265,7 @@ async def _maybe_post_world_catastrophe(bot: Bot, engine, world: dict) -> None:
     resolves_tick = tick_index + window_t
     narrative = meta["canned_narrative"]
 
+    created: list[tuple[dict, dict]] = []
     for realm in realms:
         payload: dict = {"threshold_hint": True}
         if key == "cattle_plague":
@@ -165,52 +279,18 @@ async def _maybe_post_world_catastrophe(bot: Bot, engine, world: dict) -> None:
             status="active",
             resolves_tick=resolves_tick,
         )
-        players = max(1, len(engine.db.list_fiefs(realm["id"])))
-        extra = ""
-        if key == "bandit_night":
-            need = int(math.ceil(B.BANDIT_NIGHT_MIGHT_PER_PLAYER * players))
-            extra = (
-                f"\nНужно собрать ≥ {need} силы. "
-                f"Вклад: кнопка ниже (−5 силы за нажатие)."
-            )
-        elif key == "cattle_plague":
-            extra = (
-                "\nПоля без тягла дают половину. В личке: "
-                "\"Забить скот\" (−20 зерна) - снять мор у своей усадьбы."
-            )
-        text = (
-            f"⚠️ <b>{meta['name_ru']}</b>\n"
-            f"{narrative}{extra}\n"
-            f"Окно: {window_t} тик(а)."
-        )
-        chat_id = realm.get("chat_id")
-        if chat_id:
-            from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+        created.append((realm, event))
 
-            kb = None
-            if key == "bandit_night":
-                kb = InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [
-                            InlineKeyboardButton(
-                                text="Вложить 5 силы",
-                                callback_data=f"cat:{event['id']}:might5",
-                            )
-                        ]
-                    ]
-                )
-            await send_game(bot, chat_id, text, reply_markup=kb)
+    # Сдвиг до Telegram-постов: повторный due не откроет вторую волну.
+    _advance_catastrophe_schedule(engine, world, key, tick_index)
 
-    delay = next_catastrophe_delay_ticks(rng)
-    next_key = pick_catastrophe(rng, key)
-    engine.db.update_world(
-        int(world["id"]),
-        last_catastrophe_key=key,
-        next_catastrophe_tick=tick_index + delay,
-        next_catastrophe_key=next_key,
-        next_catastrophe_at=None,
-    )
-    engine.db.sync_realms_clock_from_world(int(world["id"]))
+    for realm, event in created:
+        try:
+            await _post_catastrophe_message(
+                bot, engine, realm, event, key, narrative, window_t
+            )
+        except Exception:
+            logger.exception("catastrophe send failed realm=%s", realm.get("id"))
 
 
 async def _resolve_expired_catastrophes(bot: Bot, engine, realm: dict) -> None:

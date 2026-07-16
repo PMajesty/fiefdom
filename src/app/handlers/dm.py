@@ -256,7 +256,13 @@ def patrol_confirm_kb(fief_id: int) -> InlineKeyboardMarkup:
     )
 
 
-def starter_tiles_kb(realm_id: int, tiles: list[dict]) -> InlineKeyboardMarkup:
+def starter_tiles_kb(
+    realm_id: int,
+    tiles: list[dict],
+    *,
+    extra_confirmed: bool = False,
+) -> InlineKeyboardMarkup:
+    prefix = "pickx" if extra_confirmed else "pick"
     rows = []
     for t in tiles:
         label = (
@@ -267,11 +273,38 @@ def starter_tiles_kb(realm_id: int, tiles: list[dict]) -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text=label,
-                    callback_data=f"pick:{realm_id}:{t['id']}",
+                    callback_data=f"{prefix}:{realm_id}:{t['id']}",
                 )
             ]
         )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def extra_fief_confirm_kb(realm_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Да, основать ещё одну",
+                    callback_data=f"xjoin:{int(realm_id)}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Нет, отмена",
+                    callback_data="xjoin_cancel",
+                )
+            ],
+        ]
+    )
+
+
+def extra_fief_confirm_text(realm_title: str) -> str:
+    return (
+        f"У вас уже есть усадьба в другой долине.\n"
+        f"Основать ещё одну в \"{realm_title}\"?\n\n"
+        f"Активна только одна долина: в остальных урожай и действия не копятся."
+    )
 
 
 def realm_picker_kb(fiefs: list[dict], engine) -> InlineKeyboardMarkup:
@@ -537,6 +570,13 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
                 engine.db.set_last_realm(user.id, rid)
                 await show_status(message, existing["id"])
                 return
+            if engine.has_fief_elsewhere(user.id, rid):
+                await answer_html(
+                    message,
+                    extra_fief_confirm_text(realm["title"]),
+                    reply_markup=extra_fief_confirm_kb(rid),
+                )
+                return
             tiles = engine.starter_tile_choices(rid, 3)
             if not tiles:
                 await answer_html(message, "Нет свободных стартовых клеток.")
@@ -558,6 +598,13 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
             if fief:
                 await show_status(message, fief["id"])
             else:
+                if engine.has_fief_elsewhere(user.id, rid):
+                    await answer_html(
+                        message,
+                        extra_fief_confirm_text(realm["title"]),
+                        reply_markup=extra_fief_confirm_kb(rid),
+                    )
+                    return
                 tiles = engine.starter_tile_choices(rid, 3)
                 if not tiles:
                     await answer_html(message, "Нет свободных стартовых клеток.")

@@ -414,6 +414,16 @@ class Database:
         self.cursor.execute(
             "ALTER TABLE raids_log ADD COLUMN IF NOT EXISTS victim_realm_id BIGINT;"
         )
+        self.cursor.execute(
+            "ALTER TABLE realms ADD COLUMN IF NOT EXISTS last_economy_tick INT;"
+        )
+        self.cursor.execute(
+            """
+            UPDATE realms
+            SET last_economy_tick = tick_index
+            WHERE last_economy_tick IS NULL;
+            """
+        )
         # Один континент + миграция существующих долин.
         self.cursor.execute("SELECT id FROM worlds ORDER BY id LIMIT 1;")
         world_row = self.cursor.fetchone()
@@ -1199,13 +1209,15 @@ class Database:
             return int(row[0]) if row and row[0] is not None else None
 
     def raids_since_tick(self, realm_id: int, since_tick: int) -> list[dict]:
+        """Набеги, где долина - атакующая или жертва (для кровной вражды)."""
         return self._fetchall(
             """
             SELECT * FROM raids_log
-            WHERE realm_id=%s AND tick_index >= %s
+            WHERE tick_index >= %s
+              AND (realm_id=%s OR victim_realm_id=%s)
             ORDER BY id;
             """,
-            (realm_id, since_tick),
+            (since_tick, realm_id, realm_id),
         )
 
     # --- events ---

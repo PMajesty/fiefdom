@@ -241,28 +241,97 @@ def _ensure_owner_active(engine, fief_id: int, user_id: int) -> dict:
     return fief
 
 
+async def _finish_starter_pick(
+    callback: CallbackQuery, *, allow_extra_fief: bool
+) -> None:
+    engine = get_engine()
+    _, realm_s, tile_s = callback.data.split(":", 2)
+    realm_id = int(realm_s)
+    tile_id = int(tile_s)
+    fief, msg = engine.join_fief(
+        realm_id,
+        callback.from_user,
+        tile_id,
+        allow_extra_fief=allow_extra_fief,
+    )
+    await _ok(callback)
+    await reply_game(
+        callback.message,
+        join_welcome_text(msg),
+        reply_markup=fief_home_kb(engine, fief["id"]),
+    )
+    await announce_realm(
+        callback.bot, realm_id, format_join_announce(engine.fief_label(fief))
+    )
+
+
 @router.callback_query(F.data.startswith("pick:"))
 async def cb_pick_starter(callback: CallbackQuery) -> None:
-    engine = get_engine()
     try:
-        _, realm_s, tile_s = callback.data.split(":", 2)
-        realm_id = int(realm_s)
-        tile_id = int(tile_s)
-        fief, msg = engine.join_fief(realm_id, callback.from_user, tile_id)
-        await _ok(callback)
-        await reply_game(
-            callback.message,
-            join_welcome_text(msg),
-            reply_markup=fief_home_kb(engine, fief["id"]),
-        )
-        await announce_realm(
-            callback.bot, realm_id, format_join_announce(engine.fief_label(fief))
-        )
+        await _finish_starter_pick(callback, allow_extra_fief=False)
     except ValueError as exc:
         await callback.answer(str(exc), show_alert=True)
     except Exception:
         logger.exception("cb_pick_starter")
         await callback.answer("Ошибка", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("pickx:"))
+async def cb_pick_starter_extra(callback: CallbackQuery) -> None:
+    try:
+        await _finish_starter_pick(callback, allow_extra_fief=True)
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+    except Exception:
+        logger.exception("cb_pick_starter_extra")
+        await callback.answer("Ошибка", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("xjoin:"))
+async def cb_confirm_extra_fief(callback: CallbackQuery) -> None:
+    engine = get_engine()
+    try:
+        realm_id = int(callback.data.split(":")[1])
+        realm = engine.db.get_realm(realm_id)
+        if not realm:
+            await callback.answer("Долина не найдена", show_alert=True)
+            return
+        existing = engine.db.get_fief_by_user(realm_id, callback.from_user.id)
+        if existing:
+            engine.db.set_last_realm(callback.from_user.id, realm_id)
+            await _ok(callback)
+            await reply_game(
+                callback.message,
+                engine.status_card(existing["id"]),
+                reply_markup=fief_home_kb(engine, existing["id"]),
+            )
+            return
+        tiles = engine.starter_tile_choices(realm_id, 3)
+        if not tiles:
+            await callback.answer("Нет свободных стартовых клеток", show_alert=True)
+            return
+        await _ok(callback)
+        await reply_game(
+            callback.message,
+            f"Выберите стартовую клетку в долине \"{realm['title']}\":",
+            reply_markup=dm_mod.starter_tiles_kb(
+                realm_id, tiles, extra_confirmed=True
+            ),
+        )
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+    except Exception:
+        logger.exception("cb_confirm_extra_fief")
+        await callback.answer("Ошибка", show_alert=True)
+
+
+@router.callback_query(F.data == "xjoin_cancel")
+async def cb_cancel_extra_fief(callback: CallbackQuery) -> None:
+    await _ok(callback)
+    await reply_game(
+        callback.message,
+        "Вторая усадьба не создана. Откройте свою долину через /start.",
+    )
 
 
 @router.callback_query(F.data.startswith("st:"))

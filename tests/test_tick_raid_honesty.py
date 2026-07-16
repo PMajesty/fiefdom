@@ -29,16 +29,20 @@ def _base_realm(**overrides):
         "active_minor_until": None,
         "pending_minor_key": None,
         "tick_index": 0,
+        "last_economy_tick": 0,
         "forced_tick_count": 0,
         "last_tick_local_date": None,
         "last_tick_slot": None,
     }
     data.update(overrides)
+    if "last_economy_tick" not in overrides:
+        data["last_economy_tick"] = int(data.get("tick_index") or 0)
     return data
 
 
-def _attach_world(db, realm, fiefs: list[dict]) -> dict:
+def _attach_world(db, realm, fiefs: list[dict], realms: list[dict] | None = None) -> dict:
     """Мок континента для run_realm_tick → run_world_tick."""
+    chain = list(realms) if realms is not None else [realm]
     world = {
         "id": 1,
         "name": "Континент",
@@ -55,28 +59,30 @@ def _attach_world(db, realm, fiefs: list[dict]) -> dict:
         "next_catastrophe_key": None,
         "last_catastrophe_key": None,
     }
+    db.transaction.return_value = nullcontext()
     db.get_or_create_world.return_value = world
     db.get_world.return_value = world
-    db.list_realms_by_chain.return_value = [realm]
+    db.list_realms_by_chain.return_value = chain
     db.clear_world_force_tick_votes = MagicMock(return_value=0)
 
     def sync(_wid):
-        for k in (
-            "day_number",
-            "tick_index",
-            "timezone",
-            "last_tick_at",
-            "last_tick_local_date",
-            "last_tick_slot",
-            "active_minor_key",
-            "pending_minor_key",
-            "forced_tick_count",
-            "next_catastrophe_tick",
-            "next_catastrophe_key",
-            "last_catastrophe_key",
-        ):
-            if k in world:
-                realm[k] = world[k]
+        for r in chain:
+            for k in (
+                "day_number",
+                "tick_index",
+                "timezone",
+                "last_tick_at",
+                "last_tick_local_date",
+                "last_tick_slot",
+                "active_minor_key",
+                "pending_minor_key",
+                "forced_tick_count",
+                "next_catastrophe_tick",
+                "next_catastrophe_key",
+                "last_catastrophe_key",
+            ):
+                if k in world:
+                    r[k] = world[k]
 
     db.sync_realms_clock_from_world.side_effect = sync
 
@@ -84,7 +90,14 @@ def _attach_world(db, realm, fiefs: list[dict]) -> dict:
         world.update(fields)
         sync(_wid)
 
+    def update_realm(rid, **fields):
+        for r in chain:
+            if int(r["id"]) == int(rid):
+                r.update(fields)
+                break
+
     db.update_world.side_effect = update_world
+    db.update_realm.side_effect = update_realm
     db.get_user.side_effect = lambda uid: {
         "telegram_id": uid,
         "last_realm_id": 1,
