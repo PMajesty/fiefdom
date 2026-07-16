@@ -47,6 +47,7 @@ from app.domain.tick_schedule import (
     format_next_tick_line,
     format_tick_slots,
     next_tick_datetime,
+    schedule_anchor_at,
 )
 
 logger = logging.getLogger(__name__)
@@ -212,15 +213,18 @@ class Engine:
         if not existing_realms:
             delay = next_catastrophe_delay_ticks(rng)
             first_cat = pick_catastrophe(rng, None)
-            local_today = datetime.now(ZoneInfo(tz)).date()
-            last_slot = max(0, len(slots) - 1)
+            local_now = datetime.now(ZoneInfo(tz))
+            # Только уже прошедшие слоты; 13:00/19:00 впереди не сжигаем.
+            anchor_date, anchor_slot = schedule_anchor_at(
+                local_now=local_now, slots=slots
+            )
             self.db.update_world(
                 world_id,
                 timezone=tz,
                 next_catastrophe_tick=delay,
                 next_catastrophe_key=first_cat,
-                last_tick_local_date=local_today,
-                last_tick_slot=last_slot,
+                last_tick_local_date=anchor_date,
+                last_tick_slot=anchor_slot,
             )
             world = self.db.get_world(world_id) or world
             chain_index = 0
@@ -1821,7 +1825,9 @@ class Engine:
                 "active_minor_until": None,
                 "pending_minor_key": None,
             }
-            if tick_slot is not None:
+            # Плановые слоты двигает только scheduler (tick_slot без forced).
+            # Досрочный/ручной тик часы мира двигает, расписание 13:00/19:00 - нет.
+            if tick_slot is not None and not forced:
                 slots = tick_slots()
                 tick_slot = max(0, min(int(tick_slot), max(0, len(slots) - 1)))
                 world_fields["last_tick_local_date"] = local_date

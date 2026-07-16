@@ -239,6 +239,19 @@ def test_force_tick_partial_then_force_free_slot():
     assert second["tick"]["digest"]
 
 
+def test_forced_tick_ignores_tick_slot_arg():
+    """forced=True не закрывает плановый слот даже если передан tick_slot."""
+    fiefs = [_fief(10, 1001), _fief(11, 1002)]
+    engine, realm, _votes = _engine_with_votes(fiefs, votes={10, 11})
+    world = engine.db.get_world.return_value
+    with patch("app.engine.roll_minor_event", return_value=None):
+        engine.run_world_tick(1, tick_slot=1, forced=True)
+    assert world["tick_index"] == 1
+    assert world["forced_tick_count"] == 1
+    assert world["last_tick_slot"] == 0
+    assert realm["last_tick_slot"] == 0
+
+
 def test_force_tick_requires_all_eligible_players():
     fiefs = [_fief(10, 1001), _fief(11, 1002), _fief(12, 1003)]
     engine, realm, votes = _engine_with_votes(fiefs)

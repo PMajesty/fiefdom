@@ -31,6 +31,28 @@ def _slot_datetime(local_now: datetime, day: date, hour: int, minute: int) -> da
     )
 
 
+def schedule_anchor_at(
+    *,
+    local_now: datetime,
+    slots: list[tuple[int, int]],
+) -> tuple[date | None, int | None]:
+    """Якорь планового расписания: только слоты, время которых уже наступило.
+
+    Будущие слоты того же дня остаются открытыми. Если ни один слот ещё не
+    наступил - (None, None). Нужен при основании континента, чтобы не сжечь
+    вечерний тик из-за утреннего/дневного старта.
+    """
+    if not slots:
+        return None, None
+    last_passed: int | None = None
+    for index, (hour, minute) in enumerate(slots):
+        if slot_time_reached(local_now, hour, minute):
+            last_passed = index
+    if last_passed is None:
+        return None, None
+    return local_now.date(), last_passed
+
+
 def due_tick_slot(
     *,
     local_now: datetime,

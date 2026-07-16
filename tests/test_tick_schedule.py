@@ -9,6 +9,7 @@ from app.domain.tick_schedule import (
     format_next_tick_line,
     format_tick_slots,
     next_tick_datetime,
+    schedule_anchor_at,
 )
 
 SLOTS = [(13, 0), (19, 0)]
@@ -112,11 +113,38 @@ def test_catchup_evening_when_morning_missed():
     )
 
 
-def test_create_realm_blocks_same_day_with_last_slot():
-    now = _msk(2026, 7, 16, 20, 0)
+def test_schedule_anchor_before_first_slot():
+    assert schedule_anchor_at(local_now=_msk(2026, 7, 16, 12, 0), slots=SLOTS) == (
+        None,
+        None,
+    )
+
+
+def test_schedule_anchor_between_slots_keeps_evening():
+    """Основание днём закрывает только 13:00 - 19:00 остаётся."""
+    assert schedule_anchor_at(local_now=_msk(2026, 7, 16, 15, 0), slots=SLOTS) == (
+        date(2026, 7, 16),
+        0,
+    )
     assert (
         due_tick_slot(
-            local_now=now,
+            local_now=_msk(2026, 7, 16, 19, 0),
+            last_tick_local_date=date(2026, 7, 16),
+            last_tick_slot=0,
+            slots=SLOTS,
+        )
+        == 1
+    )
+
+
+def test_schedule_anchor_after_evening_closes_day():
+    assert schedule_anchor_at(local_now=_msk(2026, 7, 16, 20, 0), slots=SLOTS) == (
+        date(2026, 7, 16),
+        1,
+    )
+    assert (
+        due_tick_slot(
+            local_now=_msk(2026, 7, 16, 20, 0),
             last_tick_local_date=date(2026, 7, 16),
             last_tick_slot=1,
             slots=SLOTS,
