@@ -79,6 +79,11 @@ _MENU_WORDS = {
     "сплетни": "rumors",
     "rumors": "rumors",
     "rumor": "rumors",
+    "владения": "holdings",
+    "владение": "holdings",
+    "здания": "holdings",
+    "клетки": "holdings",
+    "holdings": "holdings",
     "меню": "menu",
     "menu": "menu",
 }
@@ -676,7 +681,7 @@ async def dm_text(message: Message) -> None:
         await answer_html(
             message,
             "Команды: статус, карта, рынок, земля, строить, дозор, набег, "
-            "сделка, передать, пакт, слухи, устав, меню.",
+            "сделка, передать, пакт, слухи, владения, устав, меню.",
         )
         return
 
@@ -720,6 +725,12 @@ async def dm_text(message: Message) -> None:
             await reply_game(
                 message,
                 engine.rumors_text(fief["realm_id"]),
+                reply_markup=fief_home_kb(engine, fid),
+            )
+        elif key == "holdings":
+            await reply_game(
+                message,
+                engine.holdings_text(fid),
                 reply_markup=fief_home_kb(engine, fid),
             )
         elif key == "market":

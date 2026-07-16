@@ -21,6 +21,7 @@ from app.domain.economy import (
     render_map_parts,
     too_close_to_ruins,
 )
+from app.domain.holdings import format_holdings
 from app.domain.map_image import (
     MapImageCache,
     MapPhoto,
@@ -670,6 +671,18 @@ class Engine:
         if notes:
             lines.append("· " + " · ".join(notes))
         return "\n".join(lines)
+
+    def holdings_text(self, fief_id: int) -> str:
+        fief = self.db.get_fief(fief_id)
+        if not fief:
+            return "Усадьба не найдена."
+        tiles = self.db.fief_tiles(fief_id)
+        return format_holdings(
+            tiles,
+            fief_label=self.fief_label(fief),
+            hungry=bool(fief.get("hungry")),
+            daily=self.fief_prod(fief),
+        )
 
     def _map_view_context(
         self, realm_id: int, highlight_fief_id: int | None = None

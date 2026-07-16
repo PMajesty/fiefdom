@@ -490,6 +490,12 @@ def estate_hub_kb(
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
+                InlineKeyboardButton(
+                    text="Владения (обзор)",
+                    callback_data=f"hld:{fid}",
+                ),
+            ],
+            [
                 InlineKeyboardButton(text="Земля (клетка)", callback_data=f"clm:{fid}"),
                 InlineKeyboardButton(
                     text="Строить (здание)",

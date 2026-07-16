@@ -335,6 +335,25 @@ async def cb_rumors(callback: CallbackQuery) -> None:
         await callback.answer("Ошибка", show_alert=True)
 
 
+@router.callback_query(F.data.startswith("hld:"))
+async def cb_holdings(callback: CallbackQuery) -> None:
+    engine = get_engine()
+    try:
+        fief_id = int(callback.data.split(":")[1])
+        _ensure_owner(engine, fief_id, callback.from_user.id)
+        await _ok(callback)
+        await reply_game(
+            callback.message,
+            engine.holdings_text(fief_id),
+            reply_markup=fief_home_kb(engine, fief_id),
+        )
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+    except Exception:
+        logger.exception("cb_holdings")
+        await callback.answer("Ошибка", show_alert=True)
+
+
 @router.callback_query(F.data.startswith("ftv:"))
 async def cb_force_tick_vote(callback: CallbackQuery) -> None:
     """Голос за досрочный тик континента (без спама в чат)."""
