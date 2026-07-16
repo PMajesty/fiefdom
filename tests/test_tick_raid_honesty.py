@@ -609,6 +609,31 @@ def test_raid_does_not_bank_victim_pending_might():
     assert fiefs[2]["goods"] == 32 - result.goods_stolen
 
 
+def test_engine_raid_passes_victim_might_into_defense():
+    engine, fiefs, _B = _raid_stateful_engine(
+        vic_extra={
+            "might": 27,
+            "pending_grain": 0.0,
+            "pending_goods": 0.0,
+            "pending_might": 0.0,
+        },
+    )
+    with patch("app.engine.resolve_raid") as resolve:
+        resolve.return_value = RaidResult(
+            success=False,
+            ratio=0.2,
+            might_lost=10,
+            grain_stolen=0,
+            goods_stolen=0,
+            defense_used=28,
+            intercept_applied=False,
+            public_line="отбит",
+        )
+        engine.raid(1, 2, might=10)
+    assert resolve.call_args.kwargs["victim_might"] == 27
+    assert fiefs[2]["might"] == 27
+
+
 def test_raid_bidirectional_pair_cooldown_blocks_revenge():
     engine, fiefs, B = _raid_stateful_engine(
         reverse_pair_at=10,

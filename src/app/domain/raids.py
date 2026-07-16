@@ -127,8 +127,9 @@ def resolve_raid(
     victim_daily_grain: float,
     victim_daily_goods: float,
     fog_ignores_patrol: bool = False,
+    victim_might: int = 0,
 ) -> RaidResult:
-    defense = float(watch_defense)
+    defense = float(watch_defense) + max(0, int(victim_might))
     if patrol_active and not fog_ignores_patrol:
         defense += B.PATROL_DEFENSE_BONUS
     if intercept:

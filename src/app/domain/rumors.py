@@ -119,7 +119,7 @@ def might_band(might: int) -> int:
 
 
 def might_soft_label(might: int) -> str:
-    """Короткая метка дружины для UI (не точное число, не защита)."""
+    """Короткая метка дружины для UI (не точное число)."""
     band = might_band(might)
     return _MIGHT_SOFT_LABELS[max(0, min(len(_MIGHT_SOFT_LABELS) - 1, band))]
 

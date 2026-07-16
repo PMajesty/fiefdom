@@ -700,7 +700,7 @@ async def cb_raid(callback: CallbackQuery) -> None:
                 callback.message,
                 "Выберите цель (любая долина континента).\n"
                 "Точная сила скрыта - смотрите слухи или спрашивайте. "
-                "Защита цели - сторожка, дозор и перехват пакта, не чужая дружина.",
+                "Защита цели - дружина на месте, сторожка, дозор и перехват пакта.",
                 reply_markup=dm_mod.raid_targets_kb(fief_id, others, engine),
             )
             return
@@ -714,8 +714,8 @@ async def cb_raid(callback: CallbackQuery) -> None:
         await answer_html(
             callback.message,
             f"Сколько силы отправить? (мин. {B.RAID_MIN_MIGHT})\n"
-            "Удар идёт против защиты цели (сторожка, дозор, перехват), "
-            "не против её запаса силы.\n"
+            "Удар идёт против защиты цели: дружина на месте, сторожка, "
+            "дозор и перехват.\n"
             "Или напишите \"отмена\".",
             reply_markup=dm_mod.pending_cancel_kb(fief_id),
         )

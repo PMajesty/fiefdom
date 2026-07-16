@@ -1192,6 +1192,7 @@ class Engine:
             victim_daily_grain=self.fief_prod(vic).grain,
             victim_daily_goods=self.fief_prod(vic).goods,
             fog_ignores_patrol=fog,
+            victim_might=int(vic.get("might") or 0),
         )
 
         atk_line = result.public_line

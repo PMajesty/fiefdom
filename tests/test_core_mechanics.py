@@ -144,6 +144,60 @@ def test_raid_success_might_loss_severe():
     assert "товаров" not in r.public_line
 
 
+def test_raid_defense_includes_victim_might():
+    # 8 vs watch 0 succeeds; same 8 vs stockpile 40 fails (ratio < 0.33).
+    soft = resolve_raid(
+        attacker_name="A",
+        victim_name="B",
+        attack_might=8,
+        watch_defense=0,
+        patrol_active=False,
+        intercept=False,
+        victim_grain=200,
+        victim_goods=200,
+        barn_level=0,
+        victim_daily_grain=20,
+        victim_daily_goods=20,
+        victim_might=0,
+    )
+    hard = resolve_raid(
+        attacker_name="A",
+        victim_name="B",
+        attack_might=8,
+        watch_defense=0,
+        patrol_active=False,
+        intercept=False,
+        victim_grain=200,
+        victim_goods=200,
+        barn_level=0,
+        victim_daily_grain=20,
+        victim_daily_goods=20,
+        victim_might=40,
+    )
+    assert soft.success is True
+    assert hard.success is False
+    assert hard.defense_used == 40
+    assert hard.might_lost == 8
+
+
+def test_raid_defense_stacks_watch_and_victim_might():
+    r = resolve_raid(
+        attacker_name="A",
+        victim_name="B",
+        attack_might=10,
+        watch_defense=20,
+        patrol_active=False,
+        intercept=False,
+        victim_grain=100,
+        victim_goods=100,
+        barn_level=0,
+        victim_daily_grain=10,
+        victim_daily_goods=10,
+        victim_might=15,
+    )
+    assert r.defense_used == 35
+
+
 def test_collect_respects_cap():
     g, d, m, pg, pd, pm, _notes = collect_pending(140, 140, 0, 50, 50, 10, 0)
     assert g == B.DEFAULT_STASH_CAP
