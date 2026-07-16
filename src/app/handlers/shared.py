@@ -254,6 +254,29 @@ async def announce_realm(
         logger.warning("announce_realm failed realm_id=%s", realm_id, exc_info=True)
 
 
+async def announce_continent(
+    bot, realm_id: int, text: str, *, reply_markup=None
+) -> None:
+    """Объявление всем усадьбам континента (своя долина и остальные долины мира)."""
+    if not text:
+        return
+    seen: set[int] = set()
+    try:
+        engine = get_engine()
+        targets = [int(realm_id)]
+        for nb in engine.db.list_adjacent_realms(int(realm_id)):
+            targets.append(int(nb["id"]))
+        for rid in targets:
+            if rid in seen:
+                continue
+            seen.add(rid)
+            await announce_realm(bot, rid, text, reply_markup=reply_markup)
+    except Exception:
+        logger.warning(
+            "announce_continent failed realm_id=%s", realm_id, exc_info=True
+        )
+
+
 def map_realms_kb(
     fief_id: int,
     realms: list[dict],

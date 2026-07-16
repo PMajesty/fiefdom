@@ -75,6 +75,7 @@ def test_market_text_states_give_and_want_clearly():
     db.list_open_trades.return_value = [
         {
             "id": 15,
+            "offerer_fief_id": 3,
             "give_amt": 1,
             "give_res": B.RES_GRAIN,
             "want_amt": 1,
@@ -83,6 +84,7 @@ def test_market_text_states_give_and_want_clearly():
         },
         {
             "id": 9,
+            "offerer_fief_id": 4,
             "give_amt": 3,
             "give_res": B.RES_GOODS,
             "want_amt": 10,
@@ -90,11 +92,21 @@ def test_market_text_states_give_and_want_clearly():
             "target_fief_id": 7,
         },
     ]
-    text = Engine(db).market_text(1, fief_id=7)
+    fiefs = {
+        3: {"id": 3, "user_id": 30, "name": "Усадьба @alice"},
+        4: {"id": 4, "user_id": 40, "name": "Усадьба @bob"},
+    }
+    db.get_fief.side_effect = lambda fid: dict(fiefs[int(fid)])
+    db.get_user.side_effect = lambda uid: {
+        30: {"username": "alice", "display_name": "Alice"},
+        40: {"username": "bob", "display_name": "Bob"},
+    }[int(uid)]
+    engine = Engine(db)
+    text = engine.market_text(1, fief_id=7)
     assert text == (
         "🛒 Рынок:\n"
-        "#15: отдаёт 1 Зерно за 1 Товары\n"
-        "#9: отдаёт 3 Товары за 10 Зерно, только вам"
+        "#15 (Усадьба @alice): отдаёт 1 Зерно за 1 Товары\n"
+        "#9 (Усадьба @bob): отдаёт 3 Товары за 10 Зерно, только вам"
     )
     assert "→" not in text
 

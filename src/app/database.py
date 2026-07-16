@@ -385,6 +385,65 @@ class Database:
                 "WHERE patrol_until IS NOT NULL OR shield_until IS NOT NULL;"
             )
             self._ensure_world_schema()
+            self._apply_patch_annul_open_trades()
+
+    def _apply_patch_annul_open_trades(self) -> None:
+        """Разовый возврат эскроу: лоты больше нельзя снимать вручную."""
+        self.cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS applied_patches (
+                name TEXT PRIMARY KEY,
+                applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+        self.cursor.execute(
+            "SELECT 1 FROM applied_patches WHERE name=%s;",
+            ("annul_open_trades_no_cancel_v1",),
+        )
+        if self.cursor.fetchone() is not None:
+            return
+        # Точный возврат give_amt без бонусов и без обрезки склада.
+        # Суммы по усадьбе одним UPDATE: иначе PG молча теряет
+        # повторные правки одной строки fiefs в одном statement.
+        self.cursor.execute(
+            """
+            WITH open_lots AS (
+                SELECT id, offerer_fief_id, give_res, give_amt
+                FROM trade_offers
+                WHERE status = 'open'
+                FOR UPDATE
+            ),
+            totals AS (
+                SELECT
+                    offerer_fief_id,
+                    COALESCE(
+                        SUM(give_amt) FILTER (WHERE give_res = 'grain'), 0
+                    )::INT AS grain_amt,
+                    COALESCE(
+                        SUM(give_amt) FILTER (WHERE give_res = 'goods'), 0
+                    )::INT AS goods_amt
+                FROM open_lots
+                GROUP BY offerer_fief_id
+            ),
+            refunded AS (
+                UPDATE fiefs AS f
+                SET
+                    grain = f.grain + t.grain_amt,
+                    goods = f.goods + t.goods_amt
+                FROM totals AS t
+                WHERE f.id = t.offerer_fief_id
+            )
+            UPDATE trade_offers AS t
+            SET status = 'cancelled'
+            FROM open_lots AS o
+            WHERE t.id = o.id;
+            """
+        )
+        self.cursor.execute(
+            "INSERT INTO applied_patches (name) VALUES (%s);",
+            ("annul_open_trades_no_cancel_v1",),
+        )
 
     def _ensure_world_schema(self) -> None:
         """Континент: один world, линейный chain_index, зеркало часов на realms."""
@@ -1184,6 +1243,24 @@ class Database:
             self.cursor.execute(
                 """
                 UPDATE trade_offers SET status='done'
+                WHERE id=%s AND status='open'
+                RETURNING *;
+                """,
+                (trade_id,),
+            )
+            row = self.cursor.fetchone()
+            if not row:
+                return None
+            cols = [d[0] for d in self.cursor.description]
+            self.commit()
+            return self._normalize(dict(zip(cols, row)))
+
+    def claim_cancel_open_trade(self, trade_id: int) -> dict | None:
+        """Атомарно open→cancelled. None если лот уже не open (без двойного возврата)."""
+        with self.lock:
+            self.cursor.execute(
+                """
+                UPDATE trade_offers SET status='cancelled'
                 WHERE id=%s AND status='open'
                 RETURNING *;
                 """,

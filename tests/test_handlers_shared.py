@@ -621,3 +621,26 @@ async def test_announce_realm_swallows_send_errors(monkeypatch):
     monkeypatch.setattr(shared_mod, "send_game", _boom)
 
     await shared_mod.announce_realm(object(), 1, "текст")
+
+
+async def test_announce_continent_fans_out_to_adjacent(monkeypatch):
+    from app.handlers import shared as shared_mod
+
+    announced: list[int] = []
+
+    class _Db:
+        def list_adjacent_realms(self, realm_id):
+            assert realm_id == 1
+            return [{"id": 2}, {"id": 3}, {"id": 2}]
+
+    class _Engine:
+        db = _Db()
+
+    async def _fake_announce_realm(bot, realm_id, text, *, reply_markup=None):
+        announced.append(int(realm_id))
+
+    monkeypatch.setattr(shared_mod, "get_engine", lambda: _Engine())
+    monkeypatch.setattr(shared_mod, "announce_realm", _fake_announce_realm)
+
+    await shared_mod.announce_continent(object(), 1, "🛒 лот")
+    assert announced == [1, 2, 3]

@@ -1321,11 +1321,11 @@ class Engine:
         return f"Сделка #{trade_id} закрыта."
 
     def cancel_trade(self, fief_id: int, trade_id: int) -> str:
-        trade = self.db.get_trade(trade_id)
-        if not trade or trade["offerer_fief_id"] != fief_id or trade["status"] != "open":
-            raise ValueError("Нельзя отменить")
-        self._refund_trade(trade)
-        return f"Лот #{trade_id} отменён, ресурс возвращён."
+        """Снятие лота игроком отключено: эскроу нельзя прятать от набегов."""
+        del fief_id, trade_id
+        raise ValueError(
+            "Лот нельзя снять - дождитесь сделки или истечения срока."
+        )
 
     def send_resources(
         self,
@@ -1395,15 +1395,23 @@ class Engine:
         )
 
     def _refund_trade(self, trade: dict) -> None:
-        if trade["status"] != "open":
-            return
-        seller = self.db.get_fief(trade["offerer_fief_id"])
-        if seller:
-            if trade["give_res"] == B.RES_GRAIN:
-                self.db.update_fief(seller["id"], grain=seller["grain"] + trade["give_amt"])
+        """Возврат эскроу: сначала атомарный open→cancelled, затем +give_amt."""
+        with self.db.transaction():
+            claimed = self.db.claim_cancel_open_trade(int(trade["id"]))
+            if not claimed:
+                return
+            seller = self.db.get_fief(int(claimed["offerer_fief_id"]))
+            if not seller:
+                return
+            amt = int(claimed["give_amt"])
+            if claimed["give_res"] == B.RES_GRAIN:
+                self.db.update_fief(
+                    int(seller["id"]), grain=int(seller["grain"]) + amt
+                )
             else:
-                self.db.update_fief(seller["id"], goods=seller["goods"] + trade["give_amt"])
-        self.db.update_trade(trade["id"], status="cancelled")
+                self.db.update_fief(
+                    int(seller["id"]), goods=int(seller["goods"]) + amt
+                )
 
     def market_text(self, realm_id: int, fief_id: int | None = None) -> str:
         offers = self.db.list_open_trades(realm_id, fief_id)
@@ -1411,9 +1419,11 @@ class Engine:
             return "🛒 Рынок пуст."
         lines = ["🛒 Рынок:"]
         for o in offers:
+            seller = self.db.get_fief(int(o["offerer_fief_id"]))
+            seller_label = self.fief_label(seller) if seller else "Усадьба"
             tgt = ", только вам" if o.get("target_fief_id") else ""
             lines.append(
-                f"#{o['id']}: отдаёт {o['give_amt']} "
+                f"#{o['id']} ({seller_label}): отдаёт {o['give_amt']} "
                 f"{B.RES_NAMES_RU[o['give_res']]} за {o['want_amt']} "
                 f"{B.RES_NAMES_RU[o['want_res']]}{tgt}"
             )

@@ -10,6 +10,7 @@ from app import balance as B
 from app.domain.economy import adjacent_claimable
 from app.handlers import dm as dm_mod
 from app.handlers.shared import (
+    announce_continent,
     announce_realm,
     fief_home_kb,
     fief_raid_pact_state,
@@ -512,7 +513,7 @@ async def cb_market(callback: CallbackQuery) -> None:
         await reply_game(
             callback.message,
             engine.market_text(fief["realm_id"], fief_id),
-            reply_markup=dm_mod.market_kb(fief_id, offers),
+            reply_markup=dm_mod.market_kb(fief_id, offers, engine),
         )
     except ValueError as exc:
         await callback.answer(str(exc), show_alert=True)
@@ -791,7 +792,7 @@ async def cb_trade(callback: CallbackQuery) -> None:
             await reply_game(
                 callback.message,
                 engine.market_text(fief["realm_id"], fief_id),
-                reply_markup=dm_mod.market_kb(fief_id, offers),
+                reply_markup=dm_mod.market_kb(fief_id, offers, engine),
             )
             return
 
@@ -810,21 +811,24 @@ async def cb_trade(callback: CallbackQuery) -> None:
             )
             return
 
+        if action == "c":
+            await callback.answer(
+                "Лот нельзя снять - дождитесь сделки или истечения срока.",
+                show_alert=True,
+            )
+            return
+
         trade_id = int(parts[3])
-        seller = None
-        trade = None
-        if action == "a":
-            trade = engine.db.get_trade(trade_id)
-            if trade:
-                seller = engine.db.get_fief(trade["offerer_fief_id"])
-            msg = engine.accept_trade(fief_id, trade_id)
-        else:
-            msg = engine.cancel_trade(fief_id, trade_id)
+        trade = engine.db.get_trade(trade_id)
+        seller = (
+            engine.db.get_fief(trade["offerer_fief_id"]) if trade else None
+        )
+        msg = engine.accept_trade(fief_id, trade_id)
         await _ok(callback)
         await reply_game(callback.message, msg, reply_markup=fief_home_kb(engine, fief_id))
-        if action == "a" and seller and trade and msg.startswith("Сделка"):
+        if seller and trade and msg.startswith("Сделка"):
             engine.ensure_user(callback.from_user)
-            await announce_realm(
+            await announce_continent(
                 callback.bot,
                 fief["realm_id"],
                 format_trade_accept_announce(

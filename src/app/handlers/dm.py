@@ -14,6 +14,7 @@ from app.domain.map_gen import coord_label
 from app.domain.economy import adjacent_claimable
 from app.engine import raid_pact_lock_message
 from app.handlers.shared import (
+    announce_continent,
     announce_realm,
     fief_home_kb,
     fief_raid_pact_state,
@@ -448,32 +449,31 @@ def raid_targets_kb(fief_id: int, others: list[dict], engine=None) -> InlineKeyb
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def market_kb(fief_id: int, offers: list[dict]) -> InlineKeyboardMarkup:
+def market_kb(
+    fief_id: int, offers: list[dict], engine=None
+) -> InlineKeyboardMarkup:
     rows = [
         [
             InlineKeyboardButton(text="Создать лот", callback_data=f"trd:new:{fief_id}"),
         ]
     ]
     for o in offers[:12]:
-        mine = o["offerer_fief_id"] == fief_id
-        if mine:
-            rows.append(
-                [
-                    InlineKeyboardButton(
-                        text=f"Отменить #{o['id']}",
-                        callback_data=f"trd:c:{fief_id}:{o['id']}",
-                    )
-                ]
-            )
-        else:
-            rows.append(
-                [
-                    InlineKeyboardButton(
-                        text=f"Принять #{o['id']}",
-                        callback_data=f"trd:a:{fief_id}:{o['id']}",
-                    )
-                ]
-            )
+        if int(o["offerer_fief_id"]) == int(fief_id):
+            # Свои лоты только в тексте рынка - снять нельзя.
+            continue
+        seller_bit = ""
+        if engine is not None:
+            seller = engine.db.get_fief(int(o["offerer_fief_id"]))
+            if seller:
+                seller_bit = f" · {engine.fief_label(seller)}"
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"Принять #{o['id']}{seller_bit}"[:64],
+                    callback_data=f"trd:a:{fief_id}:{o['id']}",
+                )
+            ]
+        )
     rows.append([InlineKeyboardButton(text="< Меню", callback_data=f"st:{fief_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -715,7 +715,7 @@ async def dm_text(message: Message) -> None:
             await reply_game(
                 message,
                 engine.market_text(fief["realm_id"], fid),
-                reply_markup=market_kb(fid, offers),
+                reply_markup=market_kb(fid, offers, engine),
             )
         elif key == "claim":
             await _offer_claim(message, engine, fief)
@@ -745,7 +745,7 @@ async def dm_text(message: Message) -> None:
             await reply_game(
                 message,
                 engine.market_text(fief["realm_id"], fid),
-                reply_markup=market_kb(fid, offers),
+                reply_markup=market_kb(fid, offers, engine),
             )
         elif key == "send":
             await _offer_send(message, engine, fief)
@@ -934,7 +934,7 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
         )
         if fief:
             engine.ensure_user(message.from_user)
-            await announce_realm(
+            await announce_continent(
                 message.bot,
                 fief["realm_id"],
                 format_trade_post_announce(
