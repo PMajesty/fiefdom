@@ -139,6 +139,9 @@ def test_raid_success_might_loss_severe():
     assert r.success is True
     assert r.might_lost == max(1, int(round(8 * B.RAID_SUCCESS_MIGHT_LOSS_FRAC)))
     assert r.grain_stolen + r.goods_stolen > 0
+    assert r.public_line == "A ограбил B"
+    assert "зерна" not in r.public_line
+    assert "товаров" not in r.public_line
 
 
 def test_collect_respects_cap():

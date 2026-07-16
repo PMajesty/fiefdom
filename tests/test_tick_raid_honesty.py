@@ -295,7 +295,7 @@ def test_tick_always_rerolls_minor_even_if_key_active():
 
 def test_raid_action_result_includes_victim_and_dm_texts():
     r = RaidActionResult(
-        public_line="A ограбил B (−3 зерна, −1 товаров)",
+        public_line="A ограбил B",
         success=True,
         victim_fief_id=2,
         victim_user_id=2002,
@@ -308,6 +308,10 @@ def test_raid_action_result_includes_victim_and_dm_texts():
     assert r.victim_user_id == 2002
     assert "A" in r.victim_dm_text()
     assert "3" in r.victim_dm_text()
+    assert "3" in r.attacker_dm_text()
+    assert "1" in r.attacker_dm_text()
+    assert "зерна" not in r.public_line
+    assert "товаров" not in r.public_line
     assert r.interceptor_dm_text() is None
 
     fail = RaidActionResult(

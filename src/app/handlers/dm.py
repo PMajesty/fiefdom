@@ -913,7 +913,7 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
         clear_pending(user_id)
         await reply_game(
             message,
-            result.public_line,
+            result.attacker_dm_text(),
             reply_markup=fief_home_kb(engine, pending["fief_id"]),
         )
         await _notify_raid_parties(message.bot, result)

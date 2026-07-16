@@ -14,7 +14,7 @@ from app.handlers.dm import _handle_pending
 
 def _raid_result(**overrides) -> RaidActionResult:
     base = dict(
-        public_line="Альфа ограбила Бета (−3 зерна, −1 товаров)",
+        public_line="Альфа ограбила Бета",
         success=True,
         victim_fief_id=2,
         victim_user_id=200,
@@ -26,7 +26,7 @@ def _raid_result(**overrides) -> RaidActionResult:
         attacker_realm_id=1,
         victim_realm_id=1,
         via_portal=False,
-        attacker_public_line="Альфа ограбила Бета (−3 зерна, −1 товаров)",
+        attacker_public_line="Альфа ограбила Бета",
         victim_public_line="",
     )
     base.update(overrides)
@@ -48,7 +48,7 @@ async def test_raid_logs_to_attacker_valley_group():
     pending = {"kind": "raid_might", "fief_id": 1, "victim_id": 2}
 
     with (
-        patch("app.handlers.dm.reply_game", new_callable=AsyncMock),
+        patch("app.handlers.dm.reply_game", new_callable=AsyncMock) as reply,
         patch("app.handlers.dm.post_realm_public", new_callable=AsyncMock) as public,
         patch("app.handlers.dm._notify_raid_parties", new_callable=AsyncMock) as parties,
         patch("app.handlers.dm.clear_pending"),
@@ -61,6 +61,11 @@ async def test_raid_logs_to_attacker_valley_group():
     public.assert_awaited_once()
     assert public.await_args.args[1] == 1
     assert "⚔️" in public.await_args.args[2]
+    assert "зерна" not in public.await_args.args[2]
+    assert "товаров" not in public.await_args.args[2]
+    private = reply.await_args.args[1]
+    assert "+3 зерна" in private
+    assert "+1 товаров" in private
 
 
 @pytest.mark.asyncio

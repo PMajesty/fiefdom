@@ -39,6 +39,20 @@ class RaidActionResult:
     attacker_public_line: str = ""
     victim_public_line: str = ""
 
+    def attacker_dm_text(self) -> str:
+        """Личка нападающему: итог с суммами. В группу суммы не идут."""
+        if self.success:
+            return (
+                f"Вы ограбили {self.victim_name}: "
+                f"+{self.grain_stolen} зерна, +{self.goods_stolen} товаров."
+            )
+        if self.intercept_applied:
+            return (
+                f"Набег на хутор {self.victim_name} отбит "
+                f"(союзник перехватил у ворот)."
+            )
+        return f"Набег на хутор {self.victim_name} отбит у ворот."
+
     def victim_dm_text(self) -> str:
         if self.success:
             return (
@@ -145,5 +159,6 @@ def resolve_raid(
         goods_stolen=d,
         defense_used=int(defense),
         intercept_applied=intercept,
-        public_line=f"{attacker_name} ограбил {victim_name} (−{g} зерна, −{d} товаров)",
+        # Суммы добычи только в личке сторон; в группе и в ночной сводке - без цифр.
+        public_line=f"{attacker_name} ограбил {victim_name}",
     )
