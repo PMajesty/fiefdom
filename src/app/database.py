@@ -267,8 +267,14 @@ class Database:
                 "JSONB NOT NULL DEFAULT '[]';"
             )
             self.cursor.execute(
-                "ALTER TABLE realms ADD COLUMN IF NOT EXISTS last_tick_slot "
-                "INT NOT NULL DEFAULT 0;"
+                "ALTER TABLE realms ADD COLUMN IF NOT EXISTS last_tick_slot INT;"
+            )
+            # NULL = ни один слот расписания ещё не закрыт (0 = утренний слот уже прошёл).
+            self.cursor.execute(
+                "ALTER TABLE realms ALTER COLUMN last_tick_slot DROP NOT NULL;"
+            )
+            self.cursor.execute(
+                "ALTER TABLE realms ALTER COLUMN last_tick_slot DROP DEFAULT;"
             )
 
     # --- users ---

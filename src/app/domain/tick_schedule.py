@@ -109,18 +109,3 @@ def format_next_tick_line(
     if next_at <= local_now:
         return "Следующий тик: сейчас"
     return f"Следующий тик: {next_at.strftime('%d.%m %H:%M')}"
-
-
-def record_slot_after_manual_tick(
-    *,
-    local_now: datetime,
-    slots: list[tuple[int, int]],
-) -> int:
-    """Какой слот записать после ручного тика (админ)."""
-    if not slots:
-        return 0
-    best = 0
-    for index, (hour, minute) in enumerate(slots):
-        if slot_time_reached(local_now, hour, minute):
-            best = index
-    return best

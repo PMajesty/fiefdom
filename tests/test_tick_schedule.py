@@ -9,7 +9,6 @@ from app.domain.tick_schedule import (
     format_next_tick_line,
     format_tick_slots,
     next_tick_datetime,
-    record_slot_after_manual_tick,
 )
 
 SLOTS = [(13, 0), (19, 0)]
@@ -126,16 +125,18 @@ def test_create_realm_blocks_same_day_with_last_slot():
     )
 
 
-def test_record_slot_after_manual_tick():
-    assert record_slot_after_manual_tick(
-        local_now=_msk(2026, 7, 16, 10, 0), slots=SLOTS
-    ) == 0
-    assert record_slot_after_manual_tick(
-        local_now=_msk(2026, 7, 16, 14, 0), slots=SLOTS
-    ) == 0
-    assert record_slot_after_manual_tick(
-        local_now=_msk(2026, 7, 16, 19, 30), slots=SLOTS
-    ) == 1
+def test_null_last_slot_means_no_scheduled_slot_done():
+    """NULL last_tick_slot - утренний слот ещё не закрыт расписанием."""
+    now = _msk(2026, 7, 16, 13, 0)
+    assert (
+        due_tick_slot(
+            local_now=now,
+            last_tick_local_date=date(2026, 7, 16),
+            last_tick_slot=None,
+            slots=SLOTS,
+        )
+        == 0
+    )
 
 
 def test_next_tick_before_morning():

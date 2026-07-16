@@ -3,13 +3,15 @@ from __future__ import annotations
 
 import os
 from contextlib import nullcontext
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 os.environ.setdefault("ADMIN_USER_ID", "42")
 
+import pytest
+
 from app import balance as B
 from app.engine import Engine
-from app.handlers.dm import _parse_send_line
+from app.handlers.dm import _handle_pending, _parse_send_line
 from app.handlers.shared import format_send_announce
 
 
@@ -27,6 +29,47 @@ def test_format_send_announce():
     assert "Бета" in text
     assert "12" in text
     assert "Зерно" in text or "зерно" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_send_amount_notifies_receiver_dm_only():
+    """Передача на доверии - только ЛС получателю, без анонса в группу."""
+    engine, sender, receiver = _engine_pair()
+    engine.send_resources = MagicMock(return_value="ok")
+    engine.ensure_user = MagicMock()
+
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    message = MagicMock()
+    message.bot = bot
+    message.from_user = MagicMock(id=100)
+
+    pending = {
+        "kind": "send_amount",
+        "fief_id": 1,
+        "target_fief_id": 2,
+    }
+
+    with (
+        patch("app.handlers.dm.reply_game", new_callable=AsyncMock) as reply,
+        patch("app.handlers.dm.announce_realm", new_callable=AsyncMock) as announce,
+        patch("app.handlers.dm.clear_pending") as clear,
+        patch("app.handlers.dm.fief_home_kb", return_value=None),
+    ):
+        ok = await _handle_pending(message, engine, pending, "зерно 10")
+
+    assert ok is True
+    clear.assert_called_once_with(100)
+    reply.assert_awaited_once()
+    announce.assert_not_called()
+    bot.send_message.assert_awaited_once()
+    assert bot.send_message.await_args.args[0] == 200
+    dm_text = bot.send_message.await_args.args[1]
+    assert "Альфа" in dm_text
+    assert "Бета" in dm_text
+    assert "10" in dm_text
+    assert sender["id"] == 1
+    assert receiver["id"] == 2
 
 
 def _engine_pair(*, grain_from=50, goods_from=40, grain_to=5, goods_to=5, barn=0):

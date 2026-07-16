@@ -39,7 +39,6 @@ from app.domain.tick_schedule import (
     format_next_tick_line,
     format_tick_slots,
     next_tick_datetime,
-    record_slot_after_manual_tick,
 )
 
 logger = logging.getLogger(__name__)
@@ -1266,19 +1265,17 @@ class Engine:
         tz = ZoneInfo(realm.get("timezone") or TIMEZONE)
         local_now = datetime.now(tz)
         local_date = local_now.date()
-        slots = tick_slots()
-        if tick_slot is None:
-            tick_slot = record_slot_after_manual_tick(
-                local_now=local_now, slots=slots
-            )
-        tick_slot = max(0, min(int(tick_slot), max(0, len(slots) - 1)))
-        self.db.update_realm(
-            realm_id,
-            day_number=day,
-            last_tick_at=_utcnow(),
-            last_tick_local_date=local_date,
-            last_tick_slot=tick_slot,
-        )
+        # Ручной тик (tick_slot is None) не двигает расписание слотов.
+        realm_fields: dict[str, Any] = {
+            "day_number": day,
+            "last_tick_at": _utcnow(),
+        }
+        if tick_slot is not None:
+            slots = tick_slots()
+            tick_slot = max(0, min(int(tick_slot), max(0, len(slots) - 1)))
+            realm_fields["last_tick_local_date"] = local_date
+            realm_fields["last_tick_slot"] = tick_slot
+        self.db.update_realm(realm_id, **realm_fields)
 
         sunday_extra = None
         if local_date.weekday() == 6:

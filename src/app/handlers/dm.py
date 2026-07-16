@@ -877,18 +877,9 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
         await reply_game(
             message, msg, reply_markup=fief_home_kb(engine, pending["fief_id"])
         )
+        # Передачи на доверии не анонсируем в общий чат - только в ЛС.
         if sender and receiver:
             engine.ensure_user(message.from_user)
-            await announce_realm(
-                message.bot,
-                sender["realm_id"],
-                format_send_announce(
-                    engine.fief_label(sender),
-                    engine.fief_label(receiver),
-                    amt,
-                    res,
-                ),
-            )
             try:
                 await message.bot.send_message(
                     int(receiver["user_id"]),

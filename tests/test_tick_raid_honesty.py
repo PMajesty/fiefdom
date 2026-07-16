@@ -301,3 +301,100 @@ def test_engine_raid_returns_victim_user_id():
     assert result.victim_fief_id == 2
     assert result.public_line
     assert "Жертва" in result.victim_dm_text() or "атак" in result.victim_dm_text().lower() or "На ваш" in result.victim_dm_text()
+
+
+def _tick_engine_with_schedule(realm: dict):
+    db = MagicMock()
+    fief = _base_fief()
+    db.get_realm.return_value = realm
+    db.list_open_trades.return_value = []
+    db.list_fiefs.return_value = [fief]
+    db.fief_tiles.return_value = [
+        {
+            "x": 0,
+            "y": 0,
+            "tile_type": "field",
+            "owner_fief_id": 10,
+            "building": "farm",
+            "building_level": 1,
+            "is_core": True,
+            "is_overgrown": False,
+        }
+    ]
+    db.get_active_events.return_value = []
+    db.raids_since.return_value = []
+
+    def update_realm(rid, **fields):
+        realm.update(fields)
+
+    db.update_realm.side_effect = update_realm
+
+    engine = Engine(db)
+    engine.apply_absence = MagicMock()
+    engine.barn_level = MagicMock(return_value=0)
+    engine.maybe_grow_map = MagicMock(return_value=None)
+    engine._feud_lines = MagicMock(return_value=[])
+    return engine, db
+
+
+def test_manual_tick_does_not_advance_schedule_markers():
+    realm = _base_realm(
+        last_tick_local_date=None,
+        last_tick_slot=None,
+        day_number=3,
+    )
+    engine, _db = _tick_engine_with_schedule(realm)
+
+    def fake_apply(state: FiefTickState):
+        out = MagicMock()
+        out.grain = state.grain
+        out.goods = state.goods
+        out.might = state.might
+        out.pending_grain = state.pending_grain
+        out.pending_goods = state.pending_goods
+        out.pending_might = state.pending_might
+        out.actions = state.actions + 1
+        out.hungry = False
+        return out
+
+    with (
+        patch("app.engine.roll_minor_event", return_value=None),
+        patch("app.engine.apply_fief_tick", side_effect=fake_apply),
+    ):
+        engine.run_realm_tick(1)
+
+    assert realm["day_number"] == 4
+    assert "last_tick_at" in realm
+    assert realm.get("last_tick_local_date") is None
+    assert realm.get("last_tick_slot") is None
+
+
+def test_scheduled_tick_writes_slot_markers():
+    realm = _base_realm(
+        last_tick_local_date=None,
+        last_tick_slot=None,
+        day_number=3,
+    )
+    engine, _db = _tick_engine_with_schedule(realm)
+
+    def fake_apply(state: FiefTickState):
+        out = MagicMock()
+        out.grain = state.grain
+        out.goods = state.goods
+        out.might = state.might
+        out.pending_grain = state.pending_grain
+        out.pending_goods = state.pending_goods
+        out.pending_might = state.pending_might
+        out.actions = state.actions + 1
+        out.hungry = False
+        return out
+
+    with (
+        patch("app.engine.roll_minor_event", return_value=None),
+        patch("app.engine.apply_fief_tick", side_effect=fake_apply),
+    ):
+        engine.run_realm_tick(1, tick_slot=0)
+
+    assert realm["day_number"] == 4
+    assert realm.get("last_tick_slot") == 0
+    assert realm.get("last_tick_local_date") is not None
