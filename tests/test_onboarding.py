@@ -368,7 +368,7 @@ def test_status_card_puts_bold_quest_after_title():
     engine = Engine(db)
     engine.collect_for_fief = MagicMock(return_value=[])  # type: ignore[method-assign]
     engine.fief_prod = MagicMock(  # type: ignore[method-assign]
-        return_value=SimpleNamespace(grain=5.0, goods=1.0, might=0.0)
+        return_value=SimpleNamespace(grain=5.0, goods=1.0, might=0.0, defense=0.0)
     )
     engine.barn_level = MagicMock(return_value=0)  # type: ignore[method-assign]
     db.get_fief.return_value = {
@@ -439,7 +439,7 @@ def test_status_card_advances_claim_quest_if_already_expanded():
     engine = Engine(db)
     engine.collect_for_fief = MagicMock(return_value=[])  # type: ignore[method-assign]
     engine.fief_prod = MagicMock(  # type: ignore[method-assign]
-        return_value=SimpleNamespace(grain=5.0, goods=1.0, might=0.0)
+        return_value=SimpleNamespace(grain=5.0, goods=1.0, might=0.0, defense=0.0)
     )
     engine.barn_level = MagicMock(return_value=0)  # type: ignore[method-assign]
 
@@ -479,7 +479,7 @@ def test_status_card_bumps_stuck_step_1_to_2():
     engine = Engine(db)
     engine.collect_for_fief = MagicMock(return_value=[])  # type: ignore[method-assign]
     engine.fief_prod = MagicMock(  # type: ignore[method-assign]
-        return_value=SimpleNamespace(grain=5.0, goods=1.0, might=0.0)
+        return_value=SimpleNamespace(grain=5.0, goods=1.0, might=0.0, defense=0.0)
     )
     engine.barn_level = MagicMock(return_value=0)  # type: ignore[method-assign]
 
@@ -495,7 +495,7 @@ def test_status_card_mentions_raid_pact_unlock_after_quests():
     engine = Engine(db)
     engine.collect_for_fief = MagicMock(return_value=[])  # type: ignore[method-assign]
     engine.fief_prod = MagicMock(  # type: ignore[method-assign]
-        return_value=SimpleNamespace(grain=5.0, goods=1.0, might=0.0)
+        return_value=SimpleNamespace(grain=5.0, goods=1.0, might=0.0, defense=0.0)
     )
     engine.barn_level = MagicMock(return_value=0)  # type: ignore[method-assign]
     db.get_fief.return_value = {
@@ -525,7 +525,7 @@ def test_status_card_shows_next_tick():
     engine = Engine(db)
     engine.collect_for_fief = MagicMock(return_value=[])  # type: ignore[method-assign]
     engine.fief_prod = MagicMock(  # type: ignore[method-assign]
-        return_value=SimpleNamespace(grain=5.0, goods=1.0, might=0.0)
+        return_value=SimpleNamespace(grain=5.0, goods=1.0, might=0.0, defense=0.0)
     )
     engine.barn_level = MagicMock(return_value=0)  # type: ignore[method-assign]
     db.get_fief.return_value = {
@@ -570,7 +570,7 @@ def test_status_card_groups_blocks_for_glance():
     engine = Engine(db)
     engine.collect_for_fief = MagicMock(return_value=[])  # type: ignore[method-assign]
     engine.fief_prod = MagicMock(  # type: ignore[method-assign]
-        return_value=SimpleNamespace(grain=5.0, goods=13.0, might=3.0)
+        return_value=SimpleNamespace(grain=5.0, goods=13.0, might=3.0, defense=12.0)
     )
     engine.barn_level = MagicMock(return_value=0)  # type: ignore[method-assign]
     db.get_fief.return_value = {
@@ -620,7 +620,7 @@ def test_status_card_groups_blocks_for_glance():
     assert f"⚡ Действия: 0/{B.ACTIONS_BANK_MAX} · Клетки: 2/{B.TILE_HARD_CAP}" in text
     assert "🌾 39 · 📦 31 · ⚔️ 5" in text
     assert f"Склад до {B.DEFAULT_STASH_CAP} · без амбара" in text
-    assert "+5 зерна/день, +13 товаров/день, +3 силы/день" in text
+    assert "+5 зерна/день, +13 товаров/день, +3 силы/день · защита 12" in text
     assert "Корм: земля " in text
     assert "Следующий тик: 16.07 16:00" in text
     assert "Голоса:" not in text

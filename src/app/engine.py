@@ -645,7 +645,7 @@ class Engine:
                 "",
                 (
                     f"+{prod.grain:.0f} зерна/день, +{prod.goods:.0f} товаров/день, "
-                    f"+{prod.might:.0f} силы/день"
+                    f"+{prod.might:.0f} силы/день · защита {prod.defense:.0f}"
                 ),
                 f"Корм: земля {land}, дружина {militia}",
                 "",
