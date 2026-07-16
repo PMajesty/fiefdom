@@ -7,7 +7,7 @@ import random
 from app import balance as B
 from app.domain.economy import TileView, fief_daily_production
 from app.domain.map_gen import generate_map
-from app.domain.raids import loot_amounts, resolve_raid
+from app.domain.raids import loot_amounts, resolve_raid, standing_raid_defense
 from app.domain.tick import FiefTickState, apply_fief_tick, collect_pending
 
 
@@ -196,6 +196,25 @@ def test_raid_defense_stacks_watch_and_victim_might():
         victim_might=15,
     )
     assert r.defense_used == 35
+
+
+def test_standing_raid_defense_matches_raid_stack():
+    assert standing_raid_defense(
+        watch_defense=12,
+        victim_might=5,
+        patrol_active=False,
+    ) == 17
+    assert standing_raid_defense(
+        watch_defense=12,
+        victim_might=5,
+        patrol_active=True,
+    ) == 17 + B.PATROL_DEFENSE_BONUS
+    assert standing_raid_defense(
+        watch_defense=12,
+        victim_might=5,
+        patrol_active=True,
+        fog_ignores_patrol=True,
+    ) == 17
 
 
 def test_collect_respects_cap():

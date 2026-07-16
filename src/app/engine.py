@@ -43,7 +43,7 @@ from app.domain.ticks import tick_active
 from app.balance import best_rectangle
 from app.domain.map_gen import GenTile, append_strip, coord_label, generate_map
 from app.domain.portals import pick_portal_insertion
-from app.domain.raids import RaidActionResult, resolve_raid
+from app.domain.raids import RaidActionResult, resolve_raid, standing_raid_defense
 from app.domain.rumors import (
     DailyRumorBundle,
     FiefRumorSnapshot,
@@ -634,18 +634,27 @@ class Engine:
         if alerts:
             lines.extend(alerts)
             lines.append("")
+        defense = standing_raid_defense(
+            watch_defense=prod.defense,
+            victim_might=int(fief.get("might") or 0),
+            patrol_active=tick_active(fief.get("patrol_until_tick"), tick_index),
+            fog_ignores_patrol=realm.get("active_minor_key") == "fog",
+        )
         lines.extend(
             [
                 (
                     f"⚡ Действия: {fief['actions']}/{B.ACTIONS_BANK_MAX} · "
                     f"Клетки: {len(tiles)}/{B.TILE_HARD_CAP}"
                 ),
-                f"🌾 {fief['grain']} · 📦 {fief['goods']} · ⚔️ {fief['might']}",
+                (
+                    f"🌾 {fief['grain']} · 📦 {fief['goods']} · "
+                    f"⚔️ {fief['might']} · 🛡 {defense}"
+                ),
                 _stash_status_line(barn),
                 "",
                 (
                     f"+{prod.grain:.0f} зерна/день, +{prod.goods:.0f} товаров/день, "
-                    f"+{prod.might:.0f} силы/день · защита {prod.defense:.0f}"
+                    f"+{prod.might:.0f} силы/день"
                 ),
                 f"Корм: земля {land}, дружина {militia}",
                 "",

@@ -113,6 +113,23 @@ def loot_amounts(
     return max(0, g), max(0, d)
 
 
+def standing_raid_defense(
+    *,
+    watch_defense: float,
+    victim_might: int,
+    patrol_active: bool,
+    fog_ignores_patrol: bool = False,
+    intercept: bool = False,
+) -> int:
+    """Полная защита усадьбы в формуле набега (сторожка + дружина + дозор + перехват)."""
+    defense = float(watch_defense) + max(0, int(victim_might))
+    if patrol_active and not fog_ignores_patrol:
+        defense += B.PATROL_DEFENSE_BONUS
+    if intercept:
+        defense += B.INTERCEPT_DEFENSE
+    return int(defense)
+
+
 def resolve_raid(
     *,
     attacker_name: str,
@@ -129,13 +146,15 @@ def resolve_raid(
     fog_ignores_patrol: bool = False,
     victim_might: int = 0,
 ) -> RaidResult:
-    defense = float(watch_defense) + max(0, int(victim_might))
-    if patrol_active and not fog_ignores_patrol:
-        defense += B.PATROL_DEFENSE_BONUS
-    if intercept:
-        defense += B.INTERCEPT_DEFENSE
+    defense = standing_raid_defense(
+        watch_defense=watch_defense,
+        victim_might=victim_might,
+        patrol_active=patrol_active,
+        fog_ignores_patrol=fog_ignores_patrol,
+        intercept=intercept,
+    )
 
-    r = raid_ratio(attack_might, int(defense))
+    r = raid_ratio(attack_might, defense)
     if r < B.RAID_SUCCESS_R:
         return RaidResult(
             success=False,
@@ -143,7 +162,7 @@ def resolve_raid(
             might_lost=attack_might,
             grain_stolen=0,
             goods_stolen=0,
-            defense_used=int(defense),
+            defense_used=defense,
             intercept_applied=intercept,
             public_line=f"Набег {attacker_name} на хутор {victim_name} отбит у ворот",
         )
@@ -158,7 +177,7 @@ def resolve_raid(
         might_lost=might_lost,
         grain_stolen=g,
         goods_stolen=d,
-        defense_used=int(defense),
+        defense_used=defense,
         intercept_applied=intercept,
         # Суммы добычи только в личке сторон; в группе и в ночной сводке - без цифр.
         public_line=f"{attacker_name} ограбил {victim_name}",

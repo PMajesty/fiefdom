@@ -618,9 +618,10 @@ def test_status_card_groups_blocks_for_glance():
     assert text.startswith("🏡 <b>Усадьба @Artyom_dio</b> · день 2\n\n")
     assert "Статусы: Голод\n\n⚡ Действия: 0/" in text
     assert f"⚡ Действия: 0/{B.ACTIONS_BANK_MAX} · Клетки: 2/{B.TILE_HARD_CAP}" in text
-    assert "🌾 39 · 📦 31 · ⚔️ 5" in text
+    assert "🌾 39 · 📦 31 · ⚔️ 5 · 🛡 17" in text
     assert f"Склад до {B.DEFAULT_STASH_CAP} · без амбара" in text
-    assert "+5 зерна/день, +13 товаров/день, +3 силы/день · защита 12" in text
+    assert "+5 зерна/день, +13 товаров/день, +3 силы/день" in text
+    assert "силы/день · защита" not in text
     assert "Корм: земля " in text
     assert "Следующий тик: 16.07 16:00" in text
     assert "Голоса:" not in text
