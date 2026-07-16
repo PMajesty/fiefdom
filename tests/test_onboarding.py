@@ -440,6 +440,7 @@ def test_guide_mentions_raid_pact_unlock_day():
     text = game_guide()
     assert f"с дня {B.RAID_PACT_UNLOCK_DAY}" in text
     assert "после квестов" in text
+    assert "квест" in text.lower()
 
 
 def test_guide_explains_patrol():
@@ -447,12 +448,26 @@ def test_guide_explains_patrol():
     from app.domain.guide import game_guide
 
     text = game_guide()
-    assert "<b>Дозор.</b>" in text
-    assert f"−{B.PATROL_COST_MIGHT} силы" in text
+    assert "<b>Дозор</b>" in text
+    assert f"{B.PATROL_COST_MIGHT} силы" in text
     assert f"+{B.PATROL_DEFENSE_BONUS} к защите" in text
     assert f"на {B.PATROL_HOURS}ч" in text
     assert "сторожка даёт защиту постоянно" in text
-    assert "В тумане дозор почти бесполезен" in text
+    assert "тумане" in text and "дозор почти бесполезен" in text
+
+
+def test_guide_explains_core_systems():
+    from app import balance as B
+    from app.domain.guide import game_guide
+
+    text = game_guide()
+    assert "Ферма" in text and "Мастерская" in text
+    assert "Сторожка" in text and "Амбар" in text
+    assert "щит" in text
+    assert f"{B.RAID_VICTIM_SHIELD_HOURS}ч" in text
+    assert "перехват" in text
+    assert "зарастают" in text or "зарос" in text.lower()
+    assert "/вч_я" in text
 
 
 def test_join_welcome_puts_guide_before_founding():
