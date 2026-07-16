@@ -4,21 +4,21 @@ from __future__ import annotations
 from app import balance as B
 
 TILE_LEGEND_LINES = [
-    f"{B.TILE_EMOJI[B.TILE_FIELD]} Поле - ферма ×1.5",
-    f"{B.TILE_EMOJI[B.TILE_FOREST]} Лес - мастерская ×1.5",
-    f"{B.TILE_EMOJI[B.TILE_HILLS]} Холмы - сторожка ×1.5",
-    f"{B.TILE_EMOJI[B.TILE_RIVER]} Река - +{B.RIVER_PASSIVE_GRAIN} зерна/день",
-    f"{B.TILE_EMOJI[B.TILE_ROAD]} Дорога - +{B.ROAD_PASSIVE_GOODS} товаров/день",
+    f"{B.TILE_EMOJI[B.TILE_FIELD]} Поле - лучше для фермы",
+    f"{B.TILE_EMOJI[B.TILE_FOREST]} Лес - лучше для мастерской",
+    f"{B.TILE_EMOJI[B.TILE_HILLS]} Холмы - лучше для сторожки",
+    f"{B.TILE_EMOJI[B.TILE_RIVER]} Река - +{B.RIVER_PASSIVE_GRAIN} зерна в день",
+    f"{B.TILE_EMOJI[B.TILE_ROAD]} Дорога - +{B.ROAD_PASSIVE_GOODS} товаров в день",
     f"{B.TILE_EMOJI[B.TILE_RUINS]} Руины - разово {B.RUINS_LOOT_MIN}–{B.RUINS_LOOT_MAX} товаров",
-    f"{B.TILE_EMOJI[B.TILE_WILDS]} Глушь - занятие ×2, сразу расчищается",
-    "🌿 Заросшая - можно занять соседям (долгая отлучка)",
-    "Края карты смыкаются: с края можно занять клетку с противоположной стороны",
-    "· свободно · буква - владелец · + можно занять · \"← вы\" в списке владельцев",
+    f"{B.TILE_EMOJI[B.TILE_WILDS]} Глушь - занятие вдвое дороже, сразу расчищается",
+    "🌿 Заросшая - соседи могут занять (долгая отлучка)",
+    "Метки: · свободно, буква - чья клетка, + можно занять",
+    "Края карты смыкаются.",
 ]
 
 
 def map_tile_legend() -> str:
-    return "Легенда:\n" + "\n".join(TILE_LEGEND_LINES)
+    return "Клетки:\n" + "\n".join(TILE_LEGEND_LINES)
 
 
 def short_help() -> str:

@@ -9,6 +9,7 @@ from app.domain.economy import (
     format_map_cell,
     pick_max_separated_tiles,
     render_map,
+    render_map_parts,
     too_close_to_ruins,
     toroidal_manhattan,
 )
@@ -53,25 +54,81 @@ def test_render_map_aligned_columns_with_owners():
         claimable={(1, 0)},
     )
     grid_lines = body.split("\n\n")[0].split("\n")
-    # буква в поле ширины клетки (метка+эмодзи≈3 в <pre>), через пробел
-    assert grid_lines[0] == "   А   Б  "
+    # без пробелов между клетками: буква + pad до ширины клетки (метка+эмодзи≈3)
+    assert grid_lines[0] == "   А  Б  "
     row1 = grid_lines[1]
     row2 = grid_lines[2]
     assert row1.startswith(" 1 ")
     assert row2.startswith(" 2 ")
-    cells1 = row1[3:].split(" ")
-    cells2 = row2[3:].split(" ")
-    assert len(cells1) == len(cells2) == 2
-    # одинаковый слот метки у всех клеток одной строки
-    assert all(len(c) == len(cells1[0]) for c in cells1)
-    assert all(len(c) == len(cells2[0]) for c in cells2)
-    assert cells1[0].startswith("К")
-    assert cells1[1].startswith("+")
-    assert cells2[0].startswith(MAP_EMPTY_MARK)
-    assert cells2[1].startswith("М")
+    # клетки стыкованы без пробелов - стабильнее в Telegram после эмодзи
+    assert " " not in row1[3:]
+    assert " " not in row2[3:]
+    assert row1[3:].startswith("К")
+    assert f"+{B.TILE_EMOJI[B.TILE_FOREST]}" in row1
+    assert row2[3:].startswith(MAP_EMPTY_MARK)
+    assert "М" in row2
     assert "[" not in body
-    assert "К = Усадьба А ← вы" in body
+    assert "К = Усадьба А (это вы)" in body
     assert "можно занять" in body
+    assert "Клетки:" in body
+
+
+def test_render_map_parts_separates_grid_and_footer():
+    tiles = [_tile(0, 0, B.TILE_FIELD, owner=1)]
+    grid, footer = render_map_parts(1, 1, tiles, {1: "Усадьба А"}, highlight_fief_id=1)
+    assert "<" not in grid
+    assert grid.startswith("   А  ")
+    assert "\n 1 " in grid
+    assert "Клетки:" in footer
+    assert "К = Усадьба А (это вы)" in footer
+    assert "Клетки:" not in grid
+
+
+def test_map_tile_legend_reads_naturally():
+    from app.domain.guide import map_tile_legend
+
+    text = map_tile_legend()
+    assert text.startswith("Клетки:")
+    assert "лучше для фермы" in text
+    assert "Метки:" in text
+    assert "← вы" not in text
+    assert "ферма ×" not in text
+
+
+def test_stash_status_line_copy():
+    from app.engine import _stash_status_line
+
+    assert _stash_status_line(0) == f"Склад: до {B.DEFAULT_STASH_CAP} · без амбара"
+    assert _stash_status_line(2) == f"Склад: до {B.stash_cap(2)} · амбар II"
+
+
+def test_map_text_wraps_only_grid_in_pre():
+    from unittest.mock import MagicMock
+
+    from app.engine import Engine
+
+    db = MagicMock()
+    db.get_realm.return_value = {
+        "id": 1,
+        "title": "Долина",
+        "day_number": 3,
+        "width": 2,
+        "height": 1,
+    }
+    db.list_fiefs.return_value = [{"id": 1, "name": "Усадьба А", "pact_id": None, "user_id": 10}]
+    engine = Engine(db)
+    engine.tile_views = MagicMock(  # type: ignore[method-assign]
+        return_value=[_tile(0, 0, B.TILE_FIELD, owner=1), _tile(1, 0, B.TILE_FOREST)]
+    )
+    engine.fief_label = MagicMock(return_value="Усадьба А")  # type: ignore[method-assign]
+
+    text = engine.map_text(1, highlight_fief_id=1)
+    assert text.startswith("🗺️ Долина (день 3)\n<pre>")
+    assert "</pre>\n\nКлетки:" in text
+    assert "Владельцы:" in text
+    pre = text.split("<pre>", 1)[1].split("</pre>", 1)[0]
+    assert "Клетки:" not in pre
+    assert "Владельцы:" not in pre
 
 
 def test_toroidal_manhattan_wraps():

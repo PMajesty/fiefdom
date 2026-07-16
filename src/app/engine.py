@@ -18,7 +18,7 @@ from app.domain.economy import (
     adjacent_claimable,
     fief_daily_production,
     pick_max_separated_tiles,
-    render_map,
+    render_map_parts,
     too_close_to_ruins,
 )
 from app.domain.events import (
@@ -96,6 +96,14 @@ def fief_name_for_user(user) -> str:
     else:
         label = str(display).strip() or "Путник"
     return f"Усадьба {label}"[:40]
+
+
+def _stash_status_line(barn_level: int) -> str:
+    cap = B.stash_cap(barn_level)
+    if barn_level <= 0:
+        return f"Склад: до {cap} · без амбара"
+    roman = {1: "I", 2: "II", 3: "III"}.get(barn_level, str(barn_level))
+    return f"Склад: до {cap} · амбар {roman}"
 
 
 def onboard_quest_html(onboard_step: int) -> str | None:
@@ -615,9 +623,9 @@ class Engine:
             [
                 f"Клеток: {len(tiles)}/{B.TILE_HARD_CAP} · Действий: {fief['actions']}/{B.ACTIONS_BANK_MAX}",
                 f"Зерно: {fief['grain']} · Товары: {fief['goods']} · Сила: {fief['might']}",
-                f"Склад: до {B.stash_cap(barn)} (амбар {barn or 'нет'})",
-                f"Производство/день: +{prod.grain:.0f} зерна, +{prod.goods:.0f} товаров, +{prod.might:.0f} силы",
-                f"Содержание: земля {land} зерна, дружина {militia} зерна",
+                _stash_status_line(barn),
+                f"В день: +{prod.grain:.0f} зерна, +{prod.goods:.0f} товаров, +{prod.might:.0f} силы",
+                f"Содержание: земля {land}, дружина {militia} зерна",
                 f"Статусы: {flag_s}",
             ]
         )
@@ -668,7 +676,7 @@ class Engine:
                 height=realm["height"],
                 for_fief_id=highlight_fief_id,
             )
-        grid = render_map(
+        grid, footer = render_map_parts(
             realm["width"],
             realm["height"],
             views,
@@ -676,7 +684,10 @@ class Engine:
             highlight_fief_id=highlight_fief_id,
             claimable=claimable,
         )
-        return f"🗺️ {realm['title']} (день {realm['day_number']})\n<pre>{grid}</pre>"
+        text = f"🗺️ {realm['title']} (день {realm['day_number']})\n<pre>{grid}</pre>"
+        if footer:
+            text += f"\n\n{footer}"
+        return text
 
     # ---------- actions ----------
     def fief_is_active_play(self, fief: dict) -> bool:

@@ -117,7 +117,8 @@ def fief_daily_production(
 
 # Свободная клетка: слот метки той же ширины, что и буква владельца
 MAP_EMPTY_MARK = "·"
-# В Telegram <pre> эмодзи ≈ 2 колонки → клетка "метка+эмодзи" ≈ 3
+# В Telegram <pre> эмодзи ≈ 2 колонки → клетка "метка+эмодзи" ≈ 3.
+# Клетки стыкуем без пробелов: пробел после эмодзи часто теряет моноширинность.
 _MAP_CELL_DISPLAY_WIDTH = 3
 
 
@@ -150,6 +151,45 @@ def format_map_cell(
     return f"{mark}{emoji}"
 
 
+def render_map_parts(
+    width: int,
+    height: int,
+    tiles: list[TileView],
+    legend: dict[int, str],
+    *,
+    highlight_fief_id: int | None = None,
+    claimable: set[tuple[int, int]] | None = None,
+) -> tuple[str, str]:
+    """Сетка (для <pre>) и подпись легенды/владельцев отдельно."""
+    by_pos = {(t.x, t.y): t for t in tiles}
+    fief_ids = sorted({t.owner_fief_id for t in tiles if t.owner_fief_id is not None})
+    marks = {fid: owner_mark(i) for i, fid in enumerate(fief_ids)}
+
+    # Буква над слотом метки; без межклеточных пробелов (см. _MAP_CELL_DISPLAY_WIDTH)
+    header = "   " + "".join(
+        f"{col_label(x):<{_MAP_CELL_DISPLAY_WIDTH}}" for x in range(width)
+    )
+    lines = [header]
+    for y in range(height):
+        cells = [
+            format_map_cell(by_pos.get((x, y)), marks, claimable=claimable)
+            for x in range(width)
+        ]
+        lines.append(f"{y + 1:>2} " + "".join(cells))
+
+    from app.domain.guide import map_tile_legend
+
+    footer_parts = [map_tile_legend()]
+    owner_lines = []
+    for fid in fief_ids:
+        name = legend.get(fid, f"#{fid}")
+        suffix = " (это вы)" if highlight_fief_id is not None and fid == highlight_fief_id else ""
+        owner_lines.append(f"{marks[fid]} = {name}{suffix}")
+    if owner_lines:
+        footer_parts.append("Владельцы:\n" + "\n".join(owner_lines))
+    return "\n".join(lines), "\n\n".join(footer_parts)
+
+
 def render_map(
     width: int,
     height: int,
@@ -159,34 +199,15 @@ def render_map(
     highlight_fief_id: int | None = None,
     claimable: set[tuple[int, int]] | None = None,
 ) -> str:
-    by_pos = {(t.x, t.y): t for t in tiles}
-    fief_ids = sorted({t.owner_fief_id for t in tiles if t.owner_fief_id is not None})
-    marks = {fid: owner_mark(i) for i, fid in enumerate(fief_ids)}
-
-    # Буква над слотом метки; ширина колонки как у клетки в моноширинном <pre>
-    header = "   " + " ".join(
-        f"{col_label(x):<{_MAP_CELL_DISPLAY_WIDTH}}" for x in range(width)
+    grid, footer = render_map_parts(
+        width,
+        height,
+        tiles,
+        legend,
+        highlight_fief_id=highlight_fief_id,
+        claimable=claimable,
     )
-    lines = [header]
-    for y in range(height):
-        cells = [
-            format_map_cell(by_pos.get((x, y)), marks, claimable=claimable)
-            for x in range(width)
-        ]
-        lines.append(f"{y + 1:>2} " + " ".join(cells))
-
-    from app.domain.guide import map_tile_legend
-
-    owner_lines = []
-    for fid in fief_ids:
-        name = legend.get(fid, f"#{fid}")
-        suffix = " ← вы" if highlight_fief_id is not None and fid == highlight_fief_id else ""
-        owner_lines.append(f"{marks[fid]} = {name}{suffix}")
-    body = "\n".join(lines)
-    body += "\n\n" + map_tile_legend()
-    if owner_lines:
-        body += "\n\nВладельцы:\n" + "\n".join(owner_lines)
-    return body
+    return f"{grid}\n\n{footer}" if footer else grid
 
 
 def toroidal_delta(a: int, b: int, size: int) -> int:
