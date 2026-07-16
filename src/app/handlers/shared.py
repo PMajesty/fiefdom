@@ -309,28 +309,19 @@ def map_realms_kb(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def map_view_kb(fief_id: int, realm_id: int) -> InlineKeyboardMarkup:
-    fid = int(fief_id)
-    rid = int(realm_id)
+def map_view_kb(fief_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Легенда", callback_data=f"mlg:{fid}"),
-                InlineKeyboardButton(
-                    text="Владельцы",
-                    callback_data=f"mown:{fid}:{rid}",
-                ),
-            ],
-            [
                 InlineKeyboardButton(
                     text="Другие долины",
-                    callback_data=f"map:{fid}",
+                    callback_data=f"map:{int(fief_id)}",
                 )
             ],
             [
                 InlineKeyboardButton(
                     text="< Меню",
-                    callback_data=f"st:{fid}",
+                    callback_data=f"st:{int(fief_id)}",
                 )
             ],
         ]

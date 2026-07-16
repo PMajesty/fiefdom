@@ -178,18 +178,6 @@ def format_map_owners(
     return "Владельцы:\n" + "\n".join(owner_lines)
 
 
-def map_caption_summary(
-    marks: dict[int, str],
-    *,
-    highlight_fief_id: int | None = None,
-) -> str:
-    """Короткая строка под фото: метка зрителя и число владельцев."""
-    count = len(marks)
-    if highlight_fief_id is not None and highlight_fief_id in marks:
-        return f"Вы: {marks[highlight_fief_id]} · владельцев: {count}"
-    return f"Владельцев: {count}"
-
-
 def render_map_parts(
     width: int,
     height: int,
