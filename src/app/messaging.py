@@ -165,3 +165,60 @@ async def reply_guide_document(
         caption=GUIDE_DOCUMENT_CAPTION,
         **kwargs,
     )
+
+
+def _is_stale_file_id_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    markers = (
+        "wrong file identifier",
+        "file_id",
+        "file identifier",
+        "file reference",
+        "wrong remote file id",
+    )
+    return any(marker in text for marker in markers)
+
+
+async def answer_photo_bytes(
+    message: Message,
+    png_bytes: bytes,
+    *,
+    filename: str = "map.png",
+    caption: str | None = None,
+    file_id: str | None = None,
+    **kwargs: Any,
+) -> Message | None:
+    """Шлёт PNG: сначала по file_id, иначе BufferedInputFile; возвращает Message."""
+    kwargs.pop("parse_mode", None)
+    photo_ref: str | BufferedInputFile
+    if file_id:
+        photo_ref = file_id
+    else:
+        photo_ref = BufferedInputFile(png_bytes, filename=filename)
+
+    async def _send(ref: str | BufferedInputFile = photo_ref):
+        return await message.answer_photo(ref, caption=caption, **kwargs)
+
+    try:
+        return await _send_with_retry(_send, label="answer_photo_bytes")
+    except TelegramBadRequest as exc:
+        if not file_id or not _is_stale_file_id_error(exc):
+            logger.error("answer_photo_bytes: send failed: %s", exc)
+            return None
+        logger.warning("answer_photo_bytes: stale file_id, re-upload: %s", exc)
+
+        async def _resend():
+            return await message.answer_photo(
+                BufferedInputFile(png_bytes, filename=filename),
+                caption=caption,
+                **kwargs,
+            )
+
+        try:
+            return await _send_with_retry(_resend, label="answer_photo_bytes/reupload")
+        except Exception as fallback_exc:
+            logger.error("answer_photo_bytes: re-upload failed: %s", fallback_exc)
+            return None
+    except Exception as exc:
+        logger.error("answer_photo_bytes: send failed: %s", exc)
+        return None

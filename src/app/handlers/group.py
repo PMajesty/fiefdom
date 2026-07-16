@@ -17,6 +17,7 @@ from app.handlers.shared import (
     open_estate_kb,
     reply_game,
     reply_guide,
+    reply_map_photo,
     resolve_fief_for_user,
 )
 from app.messaging import answer_html
@@ -68,7 +69,11 @@ async def cmd_map(message: Message) -> None:
             return
         fief = resolve_fief_for_user(engine, message.from_user.id, realm["id"])
         highlight = fief["id"] if fief else None
-        await reply_game(message, engine.map_text(realm["id"], highlight_fief_id=highlight))
+        await reply_map_photo(
+            message,
+            engine,
+            engine.map_photo(realm["id"], highlight_fief_id=highlight),
+        )
     except ValueError as exc:
         await answer_html(message, str(exc))
     except Exception:

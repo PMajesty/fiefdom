@@ -21,6 +21,13 @@ from app.domain.economy import (
     render_map_parts,
     too_close_to_ruins,
 )
+from app.domain.map_image import (
+    MapImageCache,
+    MapPhoto,
+    build_map_caption,
+    map_fingerprint,
+    render_map_image,
+)
 from app.domain.events import (
     CATASTROPHES,
     MINOR_EVENTS,
@@ -207,6 +214,7 @@ class Engine:
         # Снимок усадеб континента на старте тика: слухи не смешивают
         # уже обновлённые и ещё не отыгравшие долины.
         self._rumor_snapshot_cache: dict[int, list[FiefRumorSnapshot]] | None = None
+        self._map_image_cache = MapImageCache()
 
     # ---------- realm ----------
     def create_realm(self, chat_id: int, title: str, creator_user_id: int) -> tuple[dict, str]:
@@ -663,11 +671,13 @@ class Engine:
             lines.append("· " + " · ".join(notes))
         return "\n".join(lines)
 
-    def map_text(self, realm_id: int, highlight_fief_id: int | None = None) -> str:
+    def _map_view_context(
+        self, realm_id: int, highlight_fief_id: int | None = None
+    ) -> tuple[dict, list[TileView], dict[int, str], set[tuple[int, int]] | None]:
         realm = self.db.get_realm(realm_id)
         views = self.tile_views(realm_id)
         fiefs = {f["id"]: f for f in self.db.list_fiefs(realm_id)}
-        legend = {}
+        legend: dict[int, str] = {}
         for fid, f in fiefs.items():
             tag = ""
             if f.get("pact_id"):
@@ -689,6 +699,12 @@ class Engine:
                 height=realm["height"],
                 for_fief_id=highlight_fief_id,
             )
+        return realm, views, legend, claimable
+
+    def map_text(self, realm_id: int, highlight_fief_id: int | None = None) -> str:
+        realm, views, legend, claimable = self._map_view_context(
+            realm_id, highlight_fief_id
+        )
         grid, footer = render_map_parts(
             realm["width"],
             realm["height"],
@@ -701,6 +717,59 @@ class Engine:
         if footer:
             text += f"\n\n{footer}"
         return text
+
+    def map_photo(self, realm_id: int, highlight_fief_id: int | None = None) -> MapPhoto:
+        realm, views, legend, claimable = self._map_view_context(
+            realm_id, highlight_fief_id
+        )
+        _, footer = render_map_parts(
+            realm["width"],
+            realm["height"],
+            views,
+            legend,
+            highlight_fief_id=highlight_fief_id,
+            claimable=claimable,
+        )
+        fingerprint = map_fingerprint(
+            realm_id=int(realm["id"]),
+            width=int(realm["width"]),
+            height=int(realm["height"]),
+            tiles=views,
+            highlight_fief_id=highlight_fief_id,
+            claimable=claimable,
+        )
+        caption, caption_extra = build_map_caption(
+            title=str(realm["title"]),
+            day_number=int(realm["day_number"]),
+            footer=footer,
+        )
+        cached = self._map_image_cache.get(fingerprint)
+        if cached is not None:
+            return MapPhoto(
+                png_bytes=cached.png_bytes,
+                caption=caption,
+                fingerprint=fingerprint,
+                file_id=cached.file_id,
+                caption_extra=caption_extra,
+            )
+        png_bytes = render_map_image(
+            int(realm["width"]),
+            int(realm["height"]),
+            views,
+            highlight_fief_id=highlight_fief_id,
+            claimable=claimable,
+        )
+        self._map_image_cache.put_png(fingerprint, png_bytes)
+        return MapPhoto(
+            png_bytes=png_bytes,
+            caption=caption,
+            fingerprint=fingerprint,
+            file_id=None,
+            caption_extra=caption_extra,
+        )
+
+    def remember_map_file_id(self, fingerprint: str, file_id: str) -> None:
+        self._map_image_cache.set_file_id(fingerprint, file_id)
 
     # ---------- actions ----------
     def fief_is_active_play(self, fief: dict) -> bool:

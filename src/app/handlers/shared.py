@@ -19,7 +19,14 @@ from app.engine import (
     raid_pact_lock_hint,
     raid_pact_unlocked,
 )
-from app.messaging import answer_html, escape_html, reply_guide_document, send_html
+from app.domain.map_image import MapPhoto
+from app.messaging import (
+    answer_html,
+    answer_photo_bytes,
+    escape_html,
+    reply_guide_document,
+    send_html,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -654,6 +661,36 @@ async def reply_game(message: Message, text: str, **kwargs: Any) -> None:
         await answer_html(message, plain, **kwargs)
     except Exception as exc:
         logger.error("reply_game failed: %s", exc)
+
+
+def _photo_file_id_from_message(sent: Message | None) -> str | None:
+    if sent is None or not sent.photo:
+        return None
+    return sent.photo[-1].file_id
+
+
+async def reply_map_photo(
+    message: Message,
+    engine: Engine,
+    photo: MapPhoto,
+    **kwargs: Any,
+) -> None:
+    """Карта PNG + подпись; кэширует Telegram file_id по отпечатку."""
+    sent = await answer_photo_bytes(
+        message,
+        photo.png_bytes,
+        caption=photo.caption,
+        file_id=photo.file_id,
+        **kwargs,
+    )
+    if sent is None:
+        await answer_html(message, "Не удалось отправить карту.")
+        return
+    file_id = _photo_file_id_from_message(sent)
+    if file_id and (photo.file_id is None or file_id != photo.file_id):
+        engine.remember_map_file_id(photo.fingerprint, file_id)
+    if photo.caption_extra:
+        await reply_game(message, photo.caption_extra)
 
 
 async def reply_guide(message: Message, text: str, **kwargs: Any) -> None:

@@ -26,6 +26,7 @@ from app.handlers.shared import (
     realm_upgrade_cost_mult,
     reply_game,
     reply_guide,
+    reply_map_photo,
     valley_hub_kb,
 )
 from app.engine import raid_pact_lock_message
@@ -432,9 +433,10 @@ async def cb_map(callback: CallbackQuery) -> None:
         world_id = realm.get("world_id") if realm else None
         if world_id is None:
             await _ok(callback)
-            await reply_game(
+            await reply_map_photo(
                 callback.message,
-                engine.map_text(fief["realm_id"], highlight_fief_id=fief_id),
+                engine,
+                engine.map_photo(fief["realm_id"], highlight_fief_id=fief_id),
                 reply_markup=map_view_kb(fief_id),
             )
             return
@@ -472,12 +474,11 @@ async def cb_map_realm(callback: CallbackQuery) -> None:
                 await callback.answer("Другой континент", show_alert=True)
                 return
         highlight = fief_id if int(view_realm_id) == int(fief["realm_id"]) else None
-        title = view.get("title") or f"#{view_realm_id}"
         await _ok(callback)
-        await reply_game(
+        await reply_map_photo(
             callback.message,
-            f"🗺 <b>{title}</b>\n"
-            + engine.map_text(view_realm_id, highlight_fief_id=highlight),
+            engine,
+            engine.map_photo(view_realm_id, highlight_fief_id=highlight),
             reply_markup=map_view_kb(fief_id),
         )
     except ValueError as exc:

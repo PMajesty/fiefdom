@@ -29,6 +29,7 @@ from app.handlers.shared import (
     realm_upgrade_cost_mult,
     reply_game,
     reply_guide,
+    reply_map_photo,
     resolve_fief_for_user,
 )
 from app.messaging import answer_html
@@ -694,9 +695,10 @@ async def dm_text(message: Message) -> None:
             realm = engine.db.get_realm(fief["realm_id"])
             world_id = realm.get("world_id") if realm else None
             if world_id is None:
-                await reply_game(
+                await reply_map_photo(
                     message,
-                    engine.map_text(fief["realm_id"], highlight_fief_id=fid),
+                    engine,
+                    engine.map_photo(fief["realm_id"], highlight_fief_id=fid),
                     reply_markup=map_view_kb(fid),
                 )
             else:
