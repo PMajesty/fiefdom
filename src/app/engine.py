@@ -234,8 +234,8 @@ class Engine:
                 existing_realms[0],
             )
             neighbor_note = (
-                f"\n🌀 Портал открыт к долине <b>{anchor['title']}</b> "
-                f"(и другим соседям по дороге, если есть)."
+                f"\nДолина на общем континенте с <b>{anchor['title']}</b> "
+                f"и остальными долинами мира."
             )
 
         world = self.db.get_world(world_id) or world
@@ -398,7 +398,7 @@ class Engine:
         return pick_max_separated_tiles(candidates, cores, width, height, count)
 
     def has_fief_elsewhere(self, user_id: int, realm_id: int) -> bool:
-        """У игрока уже есть усадьба в другой долине."""
+        """У игрока уже есть усадьба (на континенте допускается только одна)."""
         for f in self.db.list_fiefs_by_user(user_id):
             if int(f["realm_id"]) != int(realm_id):
                 return True
@@ -409,17 +409,16 @@ class Engine:
         realm_id: int,
         user,
         tile_id: int,
-        *,
-        allow_extra_fief: bool = False,
     ) -> tuple[dict, str]:
         self.ensure_user(user)
         existing = self.db.get_fief_by_user(realm_id, user.id)
         if existing:
             raise ValueError("У вас уже есть усадьба в этой долине")
-        if self.has_fief_elsewhere(user.id, realm_id) and not allow_extra_fief:
+        owned = self.db.list_fiefs_by_user(user.id)
+        if owned:
             raise ValueError(
-                "Вторая усадьба нужна только осознанно. "
-                "Подтвердите создание через ссылку долины заново."
+                "У вас уже есть усадьба на континенте. "
+                "Вторая усадьба недоступна."
             )
 
         tile = self.db._fetchone("SELECT * FROM map_tiles WHERE id=%s AND realm_id=%s;", (tile_id, realm_id))
@@ -973,7 +972,7 @@ class Engine:
         return f"Дозор выставлен на {B.PATROL_TICKS} тик(а)."
 
     def list_raid_target_fiefs(self, attacker_fief_id: int) -> list[dict]:
-        """Локальные и соседние по порталу цели (без своей user_id)."""
+        """Цели на всём континенте (без своей user_id)."""
         atk = self.db.get_fief(attacker_fief_id)
         if not atk:
             return []
@@ -1004,10 +1003,9 @@ class Engine:
         if not atk or not vic:
             raise ValueError("Цель не найдена")
         same_realm = int(atk["realm_id"]) == int(vic["realm_id"])
-        adjacent = self.db.realms_are_adjacent(
+        if not self.db.realms_are_adjacent(
             int(atk["realm_id"]), int(vic["realm_id"])
-        )
-        if not same_realm and not adjacent:
+        ):
             raise ValueError("Цель не найдена")
         if atk["id"] == vic["id"]:
             raise ValueError("Нельзя грабить себя")
@@ -1020,7 +1018,7 @@ class Engine:
         realm = self.db.get_realm(atk["realm_id"]) or {}
         vic_realm = self.db.get_realm(vic["realm_id"]) or realm
         tick_index = int(realm.get("tick_index") or 0)
-        via_portal = not same_realm
+        cross_valley = not same_realm
         if tick_active(atk.get("shield_until_tick"), tick_index):
             raise ValueError("Пока действует щит, набеги недоступны")
         if tick_active(vic.get("shield_until_tick"), tick_index):
@@ -1052,12 +1050,9 @@ class Engine:
         patrol = tick_active(vic.get("patrol_until_tick"), tick_index)
         intercept = False
         interceptor = None
-        # Перехват только в долине жертвы (v1).
         if vic.get("pact_id"):
             for m in self.db.pact_members(vic["pact_id"]):
                 if m["id"] == vic["id"]:
-                    continue
-                if int(m["realm_id"]) != int(vic["realm_id"]):
                     continue
                 if not m.get("cover_allies"):
                     continue
@@ -1085,10 +1080,11 @@ class Engine:
 
         atk_line = result.public_line
         vic_line = result.public_line
-        if via_portal:
+        if cross_valley:
             atk_valley = realm.get("title") or "Долина"
-            atk_line = f"Через портал: {result.public_line}"
-            vic_line = f"Через портал из \"{atk_valley}\": {result.public_line}"
+            vic_valley = vic_realm.get("title") or "Долина"
+            atk_line = f"В \"{vic_valley}\": {result.public_line}"
+            vic_line = f"Из \"{atk_valley}\": {result.public_line}"
 
         with self.db.transaction():
             self._spend_action(atk)
@@ -1156,7 +1152,7 @@ class Engine:
             interceptor_user_id=int(interceptor["user_id"]) if interceptor else None,
             attacker_realm_id=int(atk_final["realm_id"]),
             victim_realm_id=int(vic_final["realm_id"]),
-            via_portal=via_portal,
+            via_portal=cross_valley,
             attacker_public_line=atk_line,
             victim_public_line=vic_line,
         )
@@ -1217,8 +1213,10 @@ class Engine:
         if trade.get("target_fief_id") and trade["target_fief_id"] != fief_id:
             raise ValueError("Лот адресован другому")
         buyer = self.db.get_fief(fief_id)
-        if buyer["realm_id"] != trade["realm_id"]:
-            raise ValueError("Другая долина")
+        if not self.db.realms_are_adjacent(
+            int(buyer["realm_id"]), int(trade["realm_id"])
+        ):
+            raise ValueError("Другой континент")
         self.collect_for_fief(fief_id)
         buyer = self.db.get_fief(fief_id)
         want = trade["want_res"]
@@ -1311,11 +1309,10 @@ class Engine:
         receiver = self.db.get_fief(to_fief_id)
         if not sender or not receiver:
             raise ValueError("Усадьба не найдена")
-        same = int(sender["realm_id"]) == int(receiver["realm_id"])
-        if not same and not self.db.realms_are_adjacent(
+        if not self.db.realms_are_adjacent(
             int(sender["realm_id"]), int(receiver["realm_id"])
         ):
-            raise ValueError("Другая долина (нужен соседний портал)")
+            raise ValueError("Другой континент")
         if int(sender["user_id"]) == int(receiver["user_id"]):
             raise ValueError("Нельзя передать своей другой усадьбе")
         if sender.get("frozen") or receiver.get("frozen"):
@@ -1406,8 +1403,10 @@ class Engine:
             raise ValueError("Пакт полон")
         if target.get("pact_id"):
             raise ValueError("Цель уже в пакте")
-        if target["realm_id"] != founder["realm_id"]:
-            raise ValueError("Другая долина")
+        if not self.db.realms_are_adjacent(
+            int(founder["realm_id"]), int(target["realm_id"])
+        ):
+            raise ValueError("Другой континент")
         if founder_fief_id == target_fief_id:
             raise ValueError("Нельзя пригласить себя")
         if self.db.get_open_pact_invite(pact["id"], target_fief_id):
@@ -1443,8 +1442,10 @@ class Engine:
         pact = self.db.get_pact(invite["pact_id"])
         if not pact:
             raise ValueError("Пакт распущен")
-        if target["realm_id"] != pact["realm_id"]:
-            raise ValueError("Другая долина")
+        if not self.db.realms_are_adjacent(
+            int(target["realm_id"]), int(pact["realm_id"])
+        ):
+            raise ValueError("Другой континент")
         members = self.db.pact_members(pact["id"])
         if len(members) >= B.PACT_SIZE_MAX:
             raise ValueError("Пакт полон")
@@ -1733,7 +1734,6 @@ class Engine:
                         "already_ticked": True,
                         "digest": None,
                         "chat_id": realm.get("chat_id"),
-                        "deserter_event": None,
                     }
                 )
                 continue
@@ -1756,7 +1756,6 @@ class Engine:
                         "error": True,
                         "digest": None,
                         "chat_id": realm.get("chat_id"),
-                        "deserter_event": None,
                     }
                 )
 
@@ -1779,7 +1778,6 @@ class Engine:
             "realms": realm_results,
             "digest": head.get("digest"),
             "chat_id": head.get("chat_id"),
-            "deserter_event": head.get("deserter_event"),
             "resumed": resuming,
             "incomplete": not caught_up,
         }
@@ -1815,9 +1813,7 @@ class Engine:
         for t in self.db.list_expired_open_trades(realm_id, tick_index):
             self._refund_trade(t)
 
-        event_line, deserter_event = self._prepare_tick_minor(
-            realm_id, consume_pending=False
-        )
+        event_line = self._prepare_tick_minor(realm_id, consume_pending=False)
         realm = self.db.get_realm(realm_id) or realm
         base_farm_mult = self._realm_farm_mult(realm)
         drought_mitigated = self._drought_mitigated_fief_ids(realm_id, realm)
@@ -1947,7 +1943,6 @@ class Engine:
         return {
             "realm_id": int(realm_id),
             "digest": digest,
-            "deserter_event": deserter_event,
             "chat_id": realm["chat_id"],
             "outcomes": outcomes,
         }
@@ -1957,14 +1952,14 @@ class Engine:
         realm_id: int,
         *,
         consume_pending: bool = True,
-    ) -> tuple[str | None, dict | None]:
+    ) -> str | None:
         """Берёт заранее свёрстанный минор (для слухов) или роллит заново.
 
         consume_pending=False: часы/ключ уже выставлены континентом - только эффекты.
         """
         realm = self.db.get_realm(realm_id)
         if not realm:
-            return None, None
+            return None
 
         tick_index = int(realm.get("tick_index") or 0)
         self._resolve_active_minor_events(realm_id)
@@ -1982,13 +1977,13 @@ class Engine:
                 self.db.update_realm(
                     realm_id, active_minor_key=None, active_minor_until=None
                 )
-            return None, None
+            return None
         if minor_key not in MINOR_EVENTS:
             if consume_pending:
                 self.db.update_realm(
                     realm_id, active_minor_key=None, active_minor_until=None
                 )
-            return None, None
+            return None
 
         meta = MINOR_EVENTS[minor_key]
         narrative = meta["canned_narrative"]
@@ -2002,18 +1997,7 @@ class Engine:
             )
         event_line = event_digest_line(meta)
         self._apply_instant_minor(realm_id, minor_key)
-        deserter_event = None
-        if minor_key == "deserter":
-            deserter_event = self.db.create_event(
-                realm_id=realm_id,
-                kind="minor",
-                event_key="deserter",
-                payload={},
-                narrative=narrative,
-                status="active",
-                resolves_tick=resolves_tick,
-            )
-        elif minor_key == "drought":
+        if minor_key == "drought":
             self.db.create_event(
                 realm_id=realm_id,
                 kind="minor",
@@ -2033,7 +2017,7 @@ class Engine:
                 status="resolved",
                 resolves_tick=resolves_tick,
             )
-        return event_line, deserter_event
+        return event_line
 
     def _realm_farm_mult(self, realm: dict) -> float:
         key = realm.get("active_minor_key")
@@ -2073,24 +2057,6 @@ class Engine:
         if not realm or realm.get("active_minor_key") != "drought":
             return False
         return int(fief_id) not in self._drought_mitigated_fief_ids(fief["realm_id"], realm)
-
-    def claim_deserter(self, event_id: int, user_id: int) -> str:
-        """Первый клейм в группе: +might. Повтор/опоздание - дружеский отказ."""
-        ev = self.db.get_event(event_id)
-        if not ev or ev.get("event_key") != "deserter":
-            return "already_taken"
-        if ev.get("status") != "active":
-            return "already_taken"
-        fief = self.db.get_fief_by_user(ev["realm_id"], user_id)
-        if not fief:
-            raise ValueError("Сначала получите усадьбу в личке")
-        if fief.get("frozen"):
-            raise ValueError("Усадьба заморожена")
-        bonus = int(minor_effect("deserter").get("first_claim_might") or 10)
-        won = self.db.try_claim_deserter(event_id, fief["id"], bonus)
-        if not won:
-            return "already_taken"
-        return "ok"
 
     def mitigate_drought(self, fief_id: int) -> str:
         """Полив: товары за иммунитет этой усадьбы к farm_mult засухи."""

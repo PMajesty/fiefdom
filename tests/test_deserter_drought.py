@@ -1,47 +1,10 @@
-"""Клейм дезертира и полив засухи (Issue 6)."""
+"""Полив засухи."""
 from __future__ import annotations
 
 from unittest.mock import MagicMock
 
 from app.domain.events import minor_effect
 from app.engine import Engine
-
-
-def test_claim_deserter_first_wins_second_fails():
-    db = MagicMock()
-    ev = {
-        "id": 11,
-        "realm_id": 1,
-        "event_key": "deserter",
-        "status": "active",
-    }
-    db.get_event.return_value = ev
-    db.get_fief_by_user.side_effect = [
-        {"id": 101, "realm_id": 1, "might": 5, "frozen": False},
-        {"id": 102, "realm_id": 1, "might": 8, "frozen": False},
-    ]
-    db.try_claim_deserter.side_effect = [True, False]
-
-    engine = Engine(db)
-    assert engine.claim_deserter(11, user_id=1001) == "ok"
-    assert engine.claim_deserter(11, user_id=1002) == "already_taken"
-
-    bonus = int(minor_effect("deserter")["first_claim_might"])
-    db.try_claim_deserter.assert_any_call(11, 101, bonus)
-    assert db.try_claim_deserter.call_count == 2
-
-
-def test_claim_deserter_resolved_event_already_taken():
-    db = MagicMock()
-    db.get_event.return_value = {
-        "id": 11,
-        "realm_id": 1,
-        "event_key": "deserter",
-        "status": "resolved",
-    }
-    engine = Engine(db)
-    assert engine.claim_deserter(11, user_id=1) == "already_taken"
-    db.try_claim_deserter.assert_not_called()
 
 
 def test_mitigate_drought_spends_goods_and_marks_fief():
@@ -145,9 +108,10 @@ def test_fief_can_mitigate_drought():
     assert engine.fief_can_mitigate_drought(2) is False
 
 
-def test_shipped_includes_deserter_and_drought():
+def test_shipped_includes_drought_not_deserter():
     from app.domain import events
 
-    assert "deserter" in events.SHIPPED_MINOR_KEYS
+    assert "deserter" not in events.SHIPPED_MINOR_KEYS
+    assert "deserter" not in events.MINOR_EVENTS
     assert "drought" in events.SHIPPED_MINOR_KEYS
     assert "trader" not in events.SHIPPED_MINOR_KEYS

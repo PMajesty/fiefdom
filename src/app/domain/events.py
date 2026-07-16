@@ -72,19 +72,6 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
         "mechanics": "trade_bonus+5%/1t",
         "tone": "good",
     },
-    "deserter": {
-        "id": "deserter",
-        "name_ru": "Дезертир",
-        "digest_line": "Дезертир - кто первый в чате, возьмёт воина в дружину.",
-        "canned_narrative": (
-            "Из леса вышел оборванец с чужим щитом и взглядом человека, который "
-            "уже однажды предал. Он готов служить первому, кто крикнет громче. "
-            "Кто успел - тот и хозяин десяти копий."
-        ),
-        "button_labels": ["Взять в дружину"],
-        "mechanics": "first_claim:+10_might",
-        "tone": "mixed",
-    },
     "good_stone": {
         "id": "good_stone",
         "name_ru": "Хороший камень",
@@ -281,7 +268,6 @@ SHIPPED_MINOR_KEYS: frozenset[str] = frozenset(
         "fog",
         "rats",
         "fair",
-        "deserter",
         "good_stone",
         "drought",
         "wedding",
@@ -300,7 +286,6 @@ MINOR_EVENT_WEIGHTS: dict[str, int] = {
     "fog": 5,
     "rats": 6,
     "fair": 3,
-    "deserter": 4,
     "good_stone": 3,
     "drought": 6,
     "wedding": 2,
@@ -323,7 +308,6 @@ _MINOR_EFFECTS: dict[str, dict[str, Any]] = {
     "trader": {"dm_deals": 2, "duration_ticks": 1},
     "rats": {"unprot_grain_threshold": 80, "loss_frac": 0.20},
     "fair": {"trade_bonus_frac": 0.05, "duration_ticks": 1},
-    "deserter": {"first_claim_might": 10, "group_message": True},
     "good_stone": {"upgrade_cost_mult": 0.75, "duration_ticks": 1},
     "drought": {
         "farm_mult": 0.55,

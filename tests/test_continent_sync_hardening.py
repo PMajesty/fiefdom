@@ -180,7 +180,6 @@ def test_world_tick_equal_clock_and_resume_after_partial_failure():
             "realm_id": int(rid),
             "digest": f"d{rid}",
             "chat_id": -rid,
-            "deserter_event": None,
         }
 
     engine.run_realm_tick = MagicMock(side_effect=fake_realm_tick)
@@ -238,7 +237,7 @@ async def test_catastrophe_advances_schedule_before_send_and_resumes_missing():
             raise RuntimeError("telegram down")
 
     with (
-        patch("app.scheduler.send_game", new=fake_post),
+        patch("app.scheduler.announce_realm", new=fake_post),
         patch("app.scheduler.pick_catastrophe", return_value="cattle_plague"),
         patch("app.scheduler.next_catastrophe_delay_ticks", return_value=7),
     ):
@@ -265,7 +264,7 @@ async def test_catastrophe_advances_schedule_before_send_and_resumes_missing():
     created.clear()
     engine.db.update_world.reset_mock()
 
-    with patch("app.scheduler.send_game", new=AsyncMock()):
+    with patch("app.scheduler.announce_realm", new=AsyncMock()):
         await _maybe_post_world_catastrophe(bot, engine, world_due)
 
     assert len(created) == 1
@@ -274,7 +273,7 @@ async def test_catastrophe_advances_schedule_before_send_and_resumes_missing():
     assert engine.db.update_world.called
 
 
-def test_join_fief_requires_allow_extra_when_has_other_valley():
+def test_join_fief_rejects_second_estate_on_continent():
     db = MagicMock()
     user = MagicMock(id=42, username="u", full_name="U", first_name="U")
     db.get_fief_by_user.return_value = None
@@ -293,9 +292,6 @@ def test_join_fief_requires_allow_extra_when_has_other_valley():
     engine = Engine(db)
     engine.ensure_user = MagicMock()
 
-    with pytest.raises(ValueError, match="осознанно"):
+    with pytest.raises(ValueError, match="уже есть усадьба"):
         engine.join_fief(2, user, tile_id=50)
-
-    db.create_fief.return_value = {"id": 11, "realm_id": 2, "name": "U"}
-    fief, _msg = engine.join_fief(2, user, tile_id=50, allow_extra_fief=True)
-    assert fief["id"] == 11
+    db.create_fief.assert_not_called()

@@ -99,6 +99,7 @@ def test_fief_label_uses_profile_and_syncs():
 def test_join_fief_sets_onboard_step_2():
     db = MagicMock()
     db.get_fief_by_user.return_value = None
+    db.list_fiefs_by_user.return_value = []
     db._fetchone.return_value = {
         "id": 50,
         "x": 1,
@@ -132,6 +133,7 @@ def test_join_fief_sets_onboard_step_2():
 def test_join_fief_rejects_ruins_tile():
     db = MagicMock()
     db.get_fief_by_user.return_value = None
+    db.list_fiefs_by_user.return_value = []
     db._fetchone.return_value = {
         "id": 50,
         "x": 1,
@@ -150,6 +152,7 @@ def test_join_fief_rejects_ruins_tile():
 def test_join_fief_rejects_tile_adjacent_to_ruins():
     db = MagicMock()
     db.get_fief_by_user.return_value = None
+    db.list_fiefs_by_user.return_value = []
     db._fetchone.return_value = {
         "id": 50,
         "x": 1,

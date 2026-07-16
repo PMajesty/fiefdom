@@ -142,7 +142,8 @@ class Database:
                     pact_id BIGINT,
                     cover_allies BOOLEAN NOT NULL DEFAULT TRUE,
                     frozen BOOLEAN NOT NULL DEFAULT FALSE,
-                    UNIQUE (realm_id, user_id)
+                    UNIQUE (realm_id, user_id),
+                    UNIQUE (user_id)
                 );
                 """,
                 """
@@ -586,6 +587,12 @@ class Database:
             WHERE victim_realm_id IS NULL;
             """
         )
+        self.cursor.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_fiefs_user_id
+            ON fiefs(user_id);
+            """
+        )
 
     # --- world ---
     def get_or_create_world(self) -> dict:
@@ -692,21 +699,22 @@ class Database:
             self.commit()
 
     def list_adjacent_realms(self, realm_id: int) -> list[dict]:
+        """Другие долины того же континента."""
         realm = self.get_realm(realm_id)
-        if not realm or realm.get("world_id") is None or realm.get("chain_index") is None:
+        if not realm or realm.get("world_id") is None:
             return []
         return self._fetchall(
             """
             SELECT * FROM realms
             WHERE world_id=%s
               AND id <> %s
-              AND ABS(chain_index - %s) = 1
-            ORDER BY chain_index;
+            ORDER BY chain_index NULLS LAST, id;
             """,
-            (int(realm["world_id"]), int(realm_id), int(realm["chain_index"])),
+            (int(realm["world_id"]), int(realm_id)),
         )
 
     def realms_are_adjacent(self, realm_a: int, realm_b: int) -> bool:
+        """True если одна долина или обе на одном континенте."""
         if int(realm_a) == int(realm_b):
             return True
         a = self.get_realm(realm_a)
@@ -715,9 +723,7 @@ class Database:
             return False
         if a.get("world_id") is None or a.get("world_id") != b.get("world_id"):
             return False
-        if a.get("chain_index") is None or b.get("chain_index") is None:
-            return False
-        return abs(int(a["chain_index"]) - int(b["chain_index"])) == 1
+        return True
 
     # --- users ---
     def upsert_user(self, telegram_id: int, username: str | None, display_name: str) -> None:
@@ -1095,26 +1101,57 @@ class Database:
             return dict(zip(cols, row))
 
     def list_open_trades(self, realm_id: int, for_fief_id: int | None = None) -> list[dict]:
+        """Открытые лоты континента (все долины того же world_id)."""
+        realm = self.get_realm(realm_id)
+        world_id = realm.get("world_id") if realm else None
+        if world_id is None:
+            if for_fief_id is None:
+                return self._fetchall(
+                    """
+                    SELECT t.* FROM trade_offers t
+                    JOIN realms r ON r.id = t.realm_id
+                    WHERE t.realm_id=%s AND t.status='open'
+                      AND t.expires_tick > r.tick_index
+                      AND t.target_fief_id IS NULL
+                    ORDER BY t.id DESC;
+                    """,
+                    (realm_id,),
+                )
+            return self._fetchall(
+                """
+                SELECT t.* FROM trade_offers t
+                JOIN realms r ON r.id = t.realm_id
+                WHERE t.realm_id=%s AND t.status='open'
+                  AND t.expires_tick > r.tick_index
+                  AND (t.target_fief_id IS NULL OR t.target_fief_id=%s
+                       OR t.offerer_fief_id=%s)
+                ORDER BY t.id DESC;
+                """,
+                (realm_id, for_fief_id, for_fief_id),
+            )
         if for_fief_id is None:
             return self._fetchall(
                 """
                 SELECT t.* FROM trade_offers t
                 JOIN realms r ON r.id = t.realm_id
-                WHERE t.realm_id=%s AND t.status='open' AND t.expires_tick > r.tick_index
+                WHERE r.world_id=%s AND t.status='open'
+                  AND t.expires_tick > r.tick_index
                   AND t.target_fief_id IS NULL
                 ORDER BY t.id DESC;
                 """,
-                (realm_id,),
+                (int(world_id),),
             )
         return self._fetchall(
             """
             SELECT t.* FROM trade_offers t
             JOIN realms r ON r.id = t.realm_id
-            WHERE t.realm_id=%s AND t.status='open' AND t.expires_tick > r.tick_index
-              AND (t.target_fief_id IS NULL OR t.target_fief_id=%s OR t.offerer_fief_id=%s)
+            WHERE r.world_id=%s AND t.status='open'
+              AND t.expires_tick > r.tick_index
+              AND (t.target_fief_id IS NULL OR t.target_fief_id=%s
+                   OR t.offerer_fief_id=%s)
             ORDER BY t.id DESC;
             """,
-            (realm_id, for_fief_id, for_fief_id),
+            (int(world_id), for_fief_id, for_fief_id),
         )
 
     def list_expired_open_trades(self, realm_id: int, tick_index: int) -> list[dict]:
@@ -1296,27 +1333,6 @@ class Database:
             except Exception:
                 self.rollback()
                 return False
-
-    def try_claim_deserter(self, event_id: int, fief_id: int, might_bonus: int) -> bool:
-        """Атомарно: первый клейм резолвит дезертира и даёт силу. True если этот клейм победил."""
-        with self.transaction():
-            self.cursor.execute(
-                """
-                UPDATE realm_events
-                SET status='resolved',
-                    payload = COALESCE(payload, '{}'::jsonb) || %s::jsonb
-                WHERE id=%s AND status='active' AND event_key='deserter'
-                RETURNING id;
-                """,
-                (json.dumps({"claimer_fief_id": int(fief_id)}), event_id),
-            )
-            if not self.cursor.fetchone():
-                return False
-            self.cursor.execute(
-                "UPDATE fiefs SET might = might + %s WHERE id=%s;",
-                (int(might_bonus), int(fief_id)),
-            )
-            return True
 
     def get_event(self, event_id: int) -> dict | None:
         return self._fetchone("SELECT * FROM realm_events WHERE id=%s;", (event_id,))

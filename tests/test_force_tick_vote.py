@@ -182,7 +182,7 @@ def _engine_with_votes(fiefs: list[dict], votes: set[int] | None = None):
     engine.barn_level = MagicMock(return_value=0)
     engine.maybe_grow_map = MagicMock(return_value=None)
     engine._feud_lines = MagicMock(return_value=[])
-    engine._prepare_tick_minor = MagicMock(return_value=(None, None))
+    engine._prepare_tick_minor = MagicMock(return_value=None)
     engine._realm_farm_mult = MagicMock(return_value=1.0)
     engine._drought_mitigated_fief_ids = MagicMock(return_value=set())
     engine._active_cattle_plague = MagicMock(return_value=None)

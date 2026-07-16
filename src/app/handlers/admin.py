@@ -11,7 +11,13 @@ from aiogram.types import Message
 
 from app.domain.digest import format_decree
 from app.domain.events import MINOR_EVENTS
-from app.handlers.shared import get_engine, is_admin, post_digest, reply_game, send_game
+from app.handlers.shared import (
+    announce_realm,
+    get_engine,
+    is_admin,
+    post_digest,
+    reply_game,
+)
 from app.messaging import answer_html, escape_html
 
 logger = logging.getLogger(__name__)
@@ -58,12 +64,12 @@ ADMIN_HELP_TEXT = (
     "2) скопируй и отправь команду с кодом + словом УДАЛИТЬ\n"
     "\n"
     "<b>Новая долина</b>: в группе <code>/вотчина</code> - "
-    "автоматически встаёт на дорогу порталов рядом со случайной.\n"
+    "встаёт на общий континент рядом с существующими долинами.\n"
     "\n"
     "<b>Заморозка</b> усадьбы: 1 = заморозить, 0 = снять:\n"
     "<code>/вч_freeze 3 1</code>\n"
     "\n"
-    "<b>Указ</b> в групповой чат долины:\n"
+    "<b>Указ</b> владельцам усадеб долины в личку:\n"
     "<code>/вч_decree 1 Текст указа</code>"
 )
 
@@ -288,8 +294,8 @@ async def cmd_decree(message: Message, bot: Bot) -> None:
         number = engine.db.next_decree_number(realm_id)
         engine.db.add_decree(realm_id, number, body)
         text = format_decree(number, body)
-        await send_game(bot, realm["chat_id"], text)
-        await answer_html(message, f"Указ №{number} опубликован.")
+        await announce_realm(bot, realm_id, text)
+        await answer_html(message, f"Указ №{number} отправлен в личку.")
     except ValueError as exc:
         await answer_html(message, str(exc))
     except Exception:

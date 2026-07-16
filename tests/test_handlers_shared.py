@@ -552,15 +552,18 @@ def test_announce_formatters_escape_names():
         assert "\u00bb" not in text
 
 
-async def test_announce_realm_posts_to_group_chat(monkeypatch):
+async def test_announce_realm_posts_to_player_dms(monkeypatch):
     from app.handlers import shared as shared_mod
 
     sent: list[tuple[int, str]] = []
 
     class _Db:
-        def get_realm(self, realm_id):
+        def list_fiefs(self, realm_id):
             assert realm_id == 7
-            return {"id": 7, "chat_id": -10042}
+            return [
+                {"id": 1, "user_id": 101},
+                {"id": 2, "user_id": 202},
+            ]
 
     class _Engine:
         db = _Db()
@@ -575,17 +578,17 @@ async def test_announce_realm_posts_to_group_chat(monkeypatch):
     monkeypatch.setattr(shared_mod, "send_game", _fake_send_game)
 
     await shared_mod.announce_realm(_Bot(), 7, "🏡 тест")
-    assert sent == [(-10042, "🏡 тест")]
+    assert sent == [(101, "🏡 тест"), (202, "🏡 тест")]
 
 
-async def test_announce_realm_skips_missing_chat(monkeypatch):
+async def test_announce_realm_skips_empty_realm(monkeypatch):
     from app.handlers import shared as shared_mod
 
     called = False
 
     class _Db:
-        def get_realm(self, realm_id):
-            return {"id": realm_id, "chat_id": None}
+        def list_fiefs(self, realm_id):
+            return []
 
     class _Engine:
         db = _Db()
@@ -605,8 +608,8 @@ async def test_announce_realm_swallows_send_errors(monkeypatch):
     from app.handlers import shared as shared_mod
 
     class _Db:
-        def get_realm(self, realm_id):
-            return {"id": realm_id, "chat_id": -1}
+        def list_fiefs(self, realm_id):
+            return [{"id": 1, "user_id": 9}]
 
     class _Engine:
         db = _Db()

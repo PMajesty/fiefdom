@@ -113,7 +113,7 @@ async def cmd_digest(message: Message, bot: Bot) -> None:
             )
         if is_admin(message.from_user.id if message.from_user else None):
             text += (
-                f"\nДосрочный тик: кнопка \"Тик сейчас\" в личке (голоса долины). "
+                f"\nДосрочный тик: кнопка \"Тик сейчас\" в личке (голоса континента). "
                 f"Админ: <code>/вч_tick {realm['id']}</code>."
             )
         kb = None
@@ -155,13 +155,18 @@ async def cmd_me(message: Message, bot: Bot) -> None:
             await answer_html(message, "Долина ещё не основана. /вотчина")
             return
         username = await _bot_username(message, bot)
-        fief = resolve_fief_for_user(engine, message.from_user.id, realm["id"])
+        fief = engine.db.get_fief_by_user(realm["id"], message.from_user.id)
         if fief:
             payload = f"realm_{realm['id']}"
             label = "Открыть усадьбу"
         else:
-            payload = f"join_{realm['id']}"
-            label = "Получить усадьбу"
+            owned = engine.db.list_fiefs_by_user(message.from_user.id)
+            if owned:
+                payload = f"realm_{owned[0]['realm_id']}"
+                label = "Открыть усадьбу"
+            else:
+                payload = f"join_{realm['id']}"
+                label = "Получить усадьбу"
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text=label, url=deep_link_url(username, payload))]

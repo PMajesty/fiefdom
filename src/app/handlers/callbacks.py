@@ -8,7 +8,6 @@ from aiogram.types import CallbackQuery
 
 from app import balance as B
 from app.domain.economy import adjacent_claimable
-from app.domain.events import minor_effect
 from app.domain.guide import join_welcome_text
 from app.handlers import dm as dm_mod
 from app.handlers.shared import (
@@ -20,6 +19,8 @@ from app.handlers.shared import (
     format_pact_leave_announce,
     format_trade_accept_announce,
     get_engine,
+    map_realms_kb,
+    map_view_kb,
     more_menu_kb,
     post_digest,
     realm_upgrade_cost_mult,
@@ -79,25 +80,6 @@ async def cb_catastrophe_contribute(callback: CallbackQuery) -> None:
             await callback.answer("Неизвестное действие", show_alert=True)
     except Exception:
         logger.exception("cb_catastrophe_contribute")
-        await callback.answer("Ошибка", show_alert=True)
-
-
-@router.callback_query(F.data.startswith("des:"))
-async def cb_deserter_claim(callback: CallbackQuery) -> None:
-    """Гонка за дезертира в групповом чате: первый клейм побеждает."""
-    engine = get_engine()
-    try:
-        event_id = int(callback.data.split(":")[1])
-        result = engine.claim_deserter(event_id, callback.from_user.id)
-        if result == "already_taken":
-            await callback.answer("Уже ушёл к другому", show_alert=True)
-            return
-        bonus = int(minor_effect("deserter").get("first_claim_might") or 10)
-        await callback.answer(f"Дезертир в дружине! +{bonus} силы", show_alert=True)
-    except ValueError as exc:
-        await callback.answer(str(exc), show_alert=True)
-    except Exception:
-        logger.exception("cb_deserter_claim")
         await callback.answer("Ошибка", show_alert=True)
 
 
@@ -241,9 +223,7 @@ def _ensure_owner_active(engine, fief_id: int, user_id: int) -> dict:
     return fief
 
 
-async def _finish_starter_pick(
-    callback: CallbackQuery, *, allow_extra_fief: bool
-) -> None:
+async def _finish_starter_pick(callback: CallbackQuery) -> None:
     engine = get_engine()
     _, realm_s, tile_s = callback.data.split(":", 2)
     realm_id = int(realm_s)
@@ -252,7 +232,6 @@ async def _finish_starter_pick(
         realm_id,
         callback.from_user,
         tile_id,
-        allow_extra_fief=allow_extra_fief,
     )
     await _ok(callback)
     await reply_game(
@@ -268,70 +247,12 @@ async def _finish_starter_pick(
 @router.callback_query(F.data.startswith("pick:"))
 async def cb_pick_starter(callback: CallbackQuery) -> None:
     try:
-        await _finish_starter_pick(callback, allow_extra_fief=False)
+        await _finish_starter_pick(callback)
     except ValueError as exc:
         await callback.answer(str(exc), show_alert=True)
     except Exception:
         logger.exception("cb_pick_starter")
         await callback.answer("Ошибка", show_alert=True)
-
-
-@router.callback_query(F.data.startswith("pickx:"))
-async def cb_pick_starter_extra(callback: CallbackQuery) -> None:
-    try:
-        await _finish_starter_pick(callback, allow_extra_fief=True)
-    except ValueError as exc:
-        await callback.answer(str(exc), show_alert=True)
-    except Exception:
-        logger.exception("cb_pick_starter_extra")
-        await callback.answer("Ошибка", show_alert=True)
-
-
-@router.callback_query(F.data.startswith("xjoin:"))
-async def cb_confirm_extra_fief(callback: CallbackQuery) -> None:
-    engine = get_engine()
-    try:
-        realm_id = int(callback.data.split(":")[1])
-        realm = engine.db.get_realm(realm_id)
-        if not realm:
-            await callback.answer("Долина не найдена", show_alert=True)
-            return
-        existing = engine.db.get_fief_by_user(realm_id, callback.from_user.id)
-        if existing:
-            engine.db.set_last_realm(callback.from_user.id, realm_id)
-            await _ok(callback)
-            await reply_game(
-                callback.message,
-                engine.status_card(existing["id"]),
-                reply_markup=fief_home_kb(engine, existing["id"]),
-            )
-            return
-        tiles = engine.starter_tile_choices(realm_id, 3)
-        if not tiles:
-            await callback.answer("Нет свободных стартовых клеток", show_alert=True)
-            return
-        await _ok(callback)
-        await reply_game(
-            callback.message,
-            f"Выберите стартовую клетку в долине \"{realm['title']}\":",
-            reply_markup=dm_mod.starter_tiles_kb(
-                realm_id, tiles, extra_confirmed=True
-            ),
-        )
-    except ValueError as exc:
-        await callback.answer(str(exc), show_alert=True)
-    except Exception:
-        logger.exception("cb_confirm_extra_fief")
-        await callback.answer("Ошибка", show_alert=True)
-
-
-@router.callback_query(F.data == "xjoin_cancel")
-async def cb_cancel_extra_fief(callback: CallbackQuery) -> None:
-    await _ok(callback)
-    await reply_game(
-        callback.message,
-        "Вторая усадьба не создана. Откройте свою долину через /start.",
-    )
 
 
 @router.callback_query(F.data.startswith("st:"))
@@ -447,17 +368,12 @@ async def cb_force_tick_vote(callback: CallbackQuery) -> None:
             "Досрочный тик континента! Сводки в чатах долин.",
             show_alert=True,
         )
-        from app.scheduler import post_deserter_race
-
         for item in tick.get("realms") or []:
             digest = item.get("digest")
             chat_id = item.get("chat_id")
             realm_id = item.get("realm_id")
             if digest and chat_id and realm_id:
                 await post_digest(callback.bot, chat_id, int(realm_id), digest)
-            deserter_event = item.get("deserter_event")
-            if deserter_event and chat_id:
-                await post_deserter_race(callback.bot, chat_id, deserter_event)
         await reply_game(
             callback.message,
             engine.status_card(fief_id),
@@ -495,20 +411,67 @@ async def cb_lock_hint(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("map:"))
 async def cb_map(callback: CallbackQuery) -> None:
+    """Список долин континента для просмотра карт."""
     engine = get_engine()
     try:
         fief_id = int(callback.data.split(":")[1])
         fief = _ensure_owner(engine, fief_id, callback.from_user.id)
+        realm = engine.db.get_realm(fief["realm_id"])
+        world_id = realm.get("world_id") if realm else None
+        if world_id is None:
+            await _ok(callback)
+            await reply_game(
+                callback.message,
+                engine.map_text(fief["realm_id"], highlight_fief_id=fief_id),
+                reply_markup=map_view_kb(fief_id),
+            )
+            return
+        realms = engine.db.list_realms_by_chain(int(world_id))
         await _ok(callback)
         await reply_game(
             callback.message,
-            engine.map_text(fief["realm_id"], highlight_fief_id=fief_id),
-            reply_markup=fief_home_kb(engine, fief_id),
+            "Карты долин континента - выберите долину:",
+            reply_markup=map_realms_kb(
+                fief_id, realms, home_realm_id=int(fief["realm_id"])
+            ),
         )
     except ValueError as exc:
         await callback.answer(str(exc), show_alert=True)
     except Exception:
         logger.exception("cb_map")
+        await callback.answer("Ошибка", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("mapr:"))
+async def cb_map_realm(callback: CallbackQuery) -> None:
+    engine = get_engine()
+    try:
+        _, fid_s, rid_s = callback.data.split(":", 2)
+        fief_id = int(fid_s)
+        view_realm_id = int(rid_s)
+        fief = _ensure_owner(engine, fief_id, callback.from_user.id)
+        home = engine.db.get_realm(fief["realm_id"])
+        view = engine.db.get_realm(view_realm_id)
+        if not view:
+            await callback.answer("Долина не найдена", show_alert=True)
+            return
+        if home and home.get("world_id") is not None:
+            if view.get("world_id") != home.get("world_id"):
+                await callback.answer("Другой континент", show_alert=True)
+                return
+        highlight = fief_id if int(view_realm_id) == int(fief["realm_id"]) else None
+        title = view.get("title") or f"#{view_realm_id}"
+        await _ok(callback)
+        await reply_game(
+            callback.message,
+            f"🗺 <b>{title}</b>\n"
+            + engine.map_text(view_realm_id, highlight_fief_id=highlight),
+            reply_markup=map_view_kb(fief_id),
+        )
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+    except Exception:
+        logger.exception("cb_map_realm")
         await callback.answer("Ошибка", show_alert=True)
 
 
@@ -748,7 +711,7 @@ async def cb_raid(callback: CallbackQuery) -> None:
                 return
             await answer_html(
                 callback.message,
-                "Выберите цель (долина и соседи по порталу):",
+                "Выберите цель (любая долина континента):",
                 reply_markup=dm_mod.raid_targets_kb(fief_id, others, engine),
             )
             return

@@ -14,12 +14,11 @@ from app import balance as B
 from app.config import TIMEZONE, tick_slots
 from app.domain.events import (
     CATASTROPHES,
-    MINOR_EVENTS,
     next_catastrophe_delay_ticks,
     pick_catastrophe,
 )
 from app.domain.tick_schedule import due_tick_slot
-from app.handlers.shared import get_engine, post_digest, send_game
+from app.handlers.shared import announce_realm, get_engine, post_digest
 
 logger = logging.getLogger(__name__)
 
@@ -91,9 +90,6 @@ async def _scheduler_tick(bot: Bot) -> None:
             realm_id = item.get("realm_id")
             if digest and chat_id and realm_id:
                 await post_digest(bot, chat_id, int(realm_id), digest)
-            deserter_event = item.get("deserter_event")
-            if deserter_event and chat_id:
-                await post_deserter_race(bot, chat_id, deserter_event)
         logger.info(
             "World tick slot %s posted for %s realms (resumed=%s incomplete=%s)",
             slot_index,
@@ -113,26 +109,6 @@ async def _scheduler_tick(bot: Bot) -> None:
             await _resolve_expired_catastrophes(bot, engine, realm)
         except Exception:
             logger.exception("realm %s catastrophe resolve error", realm.get("id"))
-
-
-async def post_deserter_race(bot: Bot, chat_id: int, event: dict) -> None:
-    meta = MINOR_EVENTS["deserter"]
-    label = (meta.get("button_labels") or ["Взять в дружину"])[0]
-    narrative = event.get("narrative") or meta["canned_narrative"]
-    text = f"⚔️ <b>{meta['name_ru']}</b>\n{narrative}"
-    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=label,
-                    callback_data=f"des:{event['id']}",
-                )
-            ]
-        ]
-    )
-    await send_game(bot, chat_id, text, reply_markup=kb)
 
 
 def _active_catastrophe(engine, realm_id: int) -> dict | None:
@@ -162,9 +138,6 @@ async def _post_catastrophe_message(
         f"{narrative}{extra}\n"
         f"Окно: {window_t} тик(а)."
     )
-    chat_id = realm.get("chat_id")
-    if not chat_id:
-        return
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
     kb = None
@@ -179,7 +152,7 @@ async def _post_catastrophe_message(
                 ]
             ]
         )
-    await send_game(bot, chat_id, text, reply_markup=kb)
+    await announce_realm(bot, int(realm["id"]), text, reply_markup=kb)
 
 
 def _advance_catastrophe_schedule(engine, world: dict, key: str, tick_index: int) -> None:
@@ -315,9 +288,8 @@ async def _resolve_expired_catastrophes(bot: Bot, engine, realm: dict) -> None:
             name = meta.get("name_ru", key)
             result_text = f"Катастрофа \"{name}\" завершилась."
 
-        chat_id = realm.get("chat_id")
-        if chat_id and result_text:
-            await send_game(bot, chat_id, result_text)
+        if result_text:
+            await announce_realm(bot, int(realm["id"]), result_text)
 
 
 def _resolve_bandit_night(engine, realm: dict, event: dict) -> str:

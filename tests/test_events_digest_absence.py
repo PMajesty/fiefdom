@@ -16,7 +16,6 @@ def test_minor_events_table_complete():
         "trader",
         "rats",
         "fair",
-        "deserter",
         "good_stone",
         "drought",
         "wedding",
@@ -46,13 +45,6 @@ def test_event_digest_line_never_leaks_mechanics():
         assert "trade_bonus" not in line
         assert row["mechanics"] not in line
         assert line == row["digest_line"]
-
-
-def test_deserter_digest_line_true_agency():
-    line = events.MINOR_EVENTS["deserter"]["digest_line"]
-    assert "личк" not in line.lower()
-    assert "чат" in line.lower()
-    assert "дружин" in line.lower()
 
 
 def test_event_digest_line_fallback_without_digest_field():
@@ -131,7 +123,6 @@ def test_shipped_minor_keys_documented_and_subset():
             "fog",
             "rats",
             "fair",
-            "deserter",
             "good_stone",
             "drought",
             "wedding",
@@ -166,10 +157,11 @@ def test_shipped_catastrophe_keys_documented_and_subset():
 def test_gated_content_remains_in_tables():
     assert "trader" in events.MINOR_EVENTS
     assert isinstance(events.minor_effect("trader"), dict)
-    for key in ("deserter", "drought", "blight", "fire"):
+    for key in ("drought", "blight", "fire"):
         assert key in events.MINOR_EVENTS
         assert key in events.SHIPPED_MINOR_KEYS
         assert isinstance(events.minor_effect(key), dict)
+    assert "deserter" not in events.MINOR_EVENTS
     for key in ("flood", "cattle_plague", "rat_king", "dragon_rumors", "black_fair"):
         assert key in events.CATASTROPHES
         assert isinstance(events.catastrophe_effect(key), dict)

@@ -18,11 +18,12 @@ from app.handlers.shared import (
     fief_home_kb,
     fief_raid_pact_state,
     format_pact_create_announce,
-    format_pact_join_announce,
     format_raid_announce,
     format_send_announce,
     format_trade_post_announce,
     get_engine,
+    map_realms_kb,
+    map_view_kb,
     parse_start_payload,
     realm_upgrade_cost_mult,
     reply_game,
@@ -259,10 +260,7 @@ def patrol_confirm_kb(fief_id: int) -> InlineKeyboardMarkup:
 def starter_tiles_kb(
     realm_id: int,
     tiles: list[dict],
-    *,
-    extra_confirmed: bool = False,
 ) -> InlineKeyboardMarkup:
-    prefix = "pickx" if extra_confirmed else "pick"
     rows = []
     for t in tiles:
         label = (
@@ -273,38 +271,11 @@ def starter_tiles_kb(
             [
                 InlineKeyboardButton(
                     text=label,
-                    callback_data=f"{prefix}:{realm_id}:{t['id']}",
+                    callback_data=f"pick:{realm_id}:{t['id']}",
                 )
             ]
         )
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def extra_fief_confirm_kb(realm_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="Да, основать ещё одну",
-                    callback_data=f"xjoin:{int(realm_id)}",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="Нет, отмена",
-                    callback_data="xjoin_cancel",
-                )
-            ],
-        ]
-    )
-
-
-def extra_fief_confirm_text(realm_title: str) -> str:
-    return (
-        f"У вас уже есть усадьба в другой долине.\n"
-        f"Основать ещё одну в \"{realm_title}\"?\n\n"
-        f"Активна только одна долина: в остальных урожай и действия не копятся."
-    )
 
 
 def realm_picker_kb(fiefs: list[dict], engine) -> InlineKeyboardMarkup:
@@ -462,7 +433,7 @@ def raid_targets_kb(fief_id: int, others: list[dict], engine=None) -> InlineKeyb
         label = engine.fief_label(o) if engine is not None else o["name"]
         if o.get("via_portal") and engine is not None:
             realm = engine.db.get_realm(o["realm_id"]) or {}
-            title = str(realm.get("title") or "портал")[:12]
+            title = str(realm.get("title") or "долина")[:12]
             label = f"{title}: {label}"
         rows.append(
             [
@@ -570,12 +541,14 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
                 engine.db.set_last_realm(user.id, rid)
                 await show_status(message, existing["id"])
                 return
-            if engine.has_fief_elsewhere(user.id, rid):
+            owned = engine.db.list_fiefs_by_user(user.id)
+            if owned:
                 await answer_html(
                     message,
-                    extra_fief_confirm_text(realm["title"]),
-                    reply_markup=extra_fief_confirm_kb(rid),
+                    "У вас уже есть усадьба на континенте. "
+                    "Вторая недоступна - открываю вашу.",
                 )
+                await show_status(message, owned[0]["id"])
                 return
             tiles = engine.starter_tile_choices(rid, 3)
             if not tiles:
@@ -598,12 +571,14 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
             if fief:
                 await show_status(message, fief["id"])
             else:
-                if engine.has_fief_elsewhere(user.id, rid):
+                owned = engine.db.list_fiefs_by_user(user.id)
+                if owned:
                     await answer_html(
                         message,
-                        extra_fief_confirm_text(realm["title"]),
-                        reply_markup=extra_fief_confirm_kb(rid),
+                        "У вас уже есть усадьба на континенте. "
+                        "Вторая недоступна - открываю вашу.",
                     )
+                    await show_status(message, owned[0]["id"])
                     return
                 tiles = engine.starter_tile_choices(rid, 3)
                 if not tiles:
@@ -705,11 +680,23 @@ async def dm_text(message: Message) -> None:
         elif key == "status":
             await show_status(message, fid)
         elif key == "map":
-            await reply_game(
-                message,
-                engine.map_text(fief["realm_id"], highlight_fief_id=fid),
-                reply_markup=fief_home_kb(engine, fid),
-            )
+            realm = engine.db.get_realm(fief["realm_id"])
+            world_id = realm.get("world_id") if realm else None
+            if world_id is None:
+                await reply_game(
+                    message,
+                    engine.map_text(fief["realm_id"], highlight_fief_id=fid),
+                    reply_markup=map_view_kb(fid),
+                )
+            else:
+                realms = engine.db.list_realms_by_chain(int(world_id))
+                await reply_game(
+                    message,
+                    "Карты долин континента - выберите долину:",
+                    reply_markup=map_realms_kb(
+                        fid, realms, home_realm_id=int(fief["realm_id"])
+                    ),
+                )
         elif key == "guide":
             await reply_game(
                 message,
@@ -846,7 +833,7 @@ async def _offer_raid(message: Message, engine, fief: dict) -> None:
         return
     await answer_html(
         message,
-        "Выберите цель набега (своя долина и соседи по порталу):",
+        "Выберите цель набега (любая долина континента):",
         reply_markup=raid_targets_kb(fief["id"], others, engine),
     )
 
@@ -909,7 +896,11 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
             result.attacker_realm_id or 0,
             format_raid_announce(result.attacker_public_line or result.public_line),
         )
-        if result.via_portal and result.victim_realm_id:
+        if (
+            result.via_portal
+            and result.victim_realm_id
+            and int(result.victim_realm_id) != int(result.attacker_realm_id or 0)
+        ):
             await announce_realm(
                 message.bot,
                 result.victim_realm_id,
@@ -1120,7 +1111,7 @@ def _parse_send_line(text: str) -> tuple[str, int] | None:
 
 
 def _resolve_fief_ref(engine, realm_id: int, text: str) -> dict | None:
-    """Ищет усадьбу в долине и соседних по порталу (для передачи)."""
+    """Ищет усадьбу на всём континенте (своя долина + остальные долины мира)."""
     text = text.strip()
     realm_ids = {int(realm_id)}
     for nb in engine.db.list_adjacent_realms(int(realm_id)):

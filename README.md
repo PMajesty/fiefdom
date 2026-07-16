@@ -58,12 +58,14 @@ python deploy/quick_deploy.py # code + restart
 
 Service: `fiefdom` at `/opt/fiefdom`.
 
-## Continent, portals, wipe
+## Continent, wipe
 
 - All valleys share one **continent clock** (ticks and events together). Rumors stay local.
-- `/вотчина` in a new group creates a valley on the current continent day and opens a **portal** next to a random existing valley (linear road: only neighbors can raid/send across).
-- Existing valleys are attached automatically on deploy/migrate (ordered by id). No separate "connect" command for normal play.
-- A player may own several valleys but only one is **active** (`/start` picker). Inactive valleys do not accrue harvest or actions.
+- `/вотчина` in a new group creates a valley on the current continent day. All valleys on the continent are one play space (raid, send, market, pacts).
+- Each valley keeps its own land map; players can open other valley maps from the DM menu.
+- A player may own only **one** estate on the continent.
+- Tick digests post to the valley group chat; other game notices go to personal DMs.
+- Existing valleys are attached automatically on deploy/migrate (ordered by id).
 - Wipe erases the **whole continent** (every valley on that world).
 
 ## Admin (DM)
@@ -76,4 +78,4 @@ All in private chat with the bot. Use `/вч_admin_help` for examples.
 - `/вч_event realm_id key` - force continent minor event until next tick
 - Wipe continent (two steps): `/вч_wipe_start 1` (any valley id as anchor) then paste the command the bot returns
 - `/вч_freeze fief_id 0|1` - freeze/unfreeze estate
-- `/вч_decree realm_id text` - post decree to the group
+- `/вч_decree realm_id text` - send decree to valley players' DMs

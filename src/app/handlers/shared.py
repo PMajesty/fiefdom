@@ -227,18 +227,75 @@ def format_pact_leave_announce(
     )
 
 
-async def announce_realm(bot, realm_id: int, text: str) -> None:
-    """Короткое объявление в групповой чат долины. Ошибки не роняют хендлер."""
+async def announce_realm(
+    bot, realm_id: int, text: str, *, reply_markup=None
+) -> None:
+    """Короткое объявление владельцам усадеб долины в личку. Ошибки не роняют хендлер."""
     if not text:
         return
     try:
-        realm = get_engine().db.get_realm(int(realm_id))
-        chat_id = realm.get("chat_id") if realm else None
-        if not chat_id:
-            return
-        await send_game(bot, int(chat_id), text)
+        engine = get_engine()
+        for fief in engine.db.list_fiefs(int(realm_id)):
+            uid = fief.get("user_id")
+            if not uid:
+                continue
+            try:
+                await send_game(
+                    bot, int(uid), text, reply_markup=reply_markup
+                )
+            except Exception:
+                logger.warning(
+                    "announce_realm dm failed user=%s realm_id=%s",
+                    uid,
+                    realm_id,
+                    exc_info=True,
+                )
     except Exception:
         logger.warning("announce_realm failed realm_id=%s", realm_id, exc_info=True)
+
+
+def map_realms_kb(
+    fief_id: int,
+    realms: list[dict],
+    *,
+    home_realm_id: int | None = None,
+) -> InlineKeyboardMarkup:
+    """Выбор долины для просмотра карты."""
+    rows = []
+    for r in realms:
+        title = str(r.get("title") or f"#{r['id']}")[:28]
+        suffix = " · ваша" if home_realm_id and int(r["id"]) == int(home_realm_id) else ""
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{title}{suffix}",
+                    callback_data=f"mapr:{int(fief_id)}:{int(r['id'])}",
+                )
+            ]
+        )
+    rows.append(
+        [InlineKeyboardButton(text="< Меню", callback_data=f"st:{int(fief_id)}")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def map_view_kb(fief_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Другие долины",
+                    callback_data=f"map:{int(fief_id)}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="< Меню",
+                    callback_data=f"st:{int(fief_id)}",
+                )
+            ],
+        ]
+    )
 
 
 def choose_primary_cta(
