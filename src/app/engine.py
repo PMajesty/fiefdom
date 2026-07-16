@@ -1214,10 +1214,7 @@ class Engine:
             have = fief["grain"] if give_res == B.RES_GRAIN else fief["goods"]
             if have < give_amt:
                 raise ValueError("Недостаточно ресурса для предложения")
-            if give_res == B.RES_GRAIN:
-                self.db.update_fief(fief_id, grain=fief["grain"] - give_amt)
-            else:
-                self.db.update_fief(fief_id, goods=fief["goods"] - give_amt)
+            # Ресурс остаётся на усадьбе (доступен набегам) до момента сделки.
             realm = self.db.get_realm(fief["realm_id"]) or {}
             tick_index = int(realm.get("tick_index") or 0)
             offer = self.db.create_trade(
@@ -1282,29 +1279,54 @@ class Engine:
                     return "Лот уже закрыт или недоступен."
                 trade = claimed
 
+                give_amt = int(trade["give_amt"])
+                give_res = trade["give_res"]
+                seller = self.db.get_fief(trade["offerer_fief_id"])
+                if not seller:
+                    raise ValueError("Усадьба продавца не найдена")
+                seller_have = (
+                    seller["grain"] if give_res == B.RES_GRAIN else seller["goods"]
+                )
+                if seller_have < give_amt:
+                    raise ValueError("У продавца недостаточно ресурса для сделки")
+
                 buyer = self.db.get_fief(fief_id)
                 have = buyer["grain"] if want == B.RES_GRAIN else buyer["goods"]
                 if have < want_amt:
                     raise ValueError("Недостаточно ресурса для оплаты")
+
+                if give_res == B.RES_GRAIN:
+                    self.db.update_fief(
+                        int(seller["id"]), grain=int(seller["grain"]) - give_amt
+                    )
+                else:
+                    self.db.update_fief(
+                        int(seller["id"]), goods=int(seller["goods"]) - give_amt
+                    )
 
                 if want == B.RES_GRAIN:
                     self.db.update_fief(fief_id, grain=buyer["grain"] - want_amt)
                 else:
                     self.db.update_fief(fief_id, goods=buyer["goods"] - want_amt)
 
-                give_amt = int(trade["give_amt"])
                 pay_bonus = int(want_amt * bonus)
                 recv_bonus = int(give_amt * bonus)
 
                 seller = self.db.get_fief(trade["offerer_fief_id"])
                 if want == B.RES_GRAIN:
-                    self.db.update_fief(seller["id"], grain=seller["grain"] + want_amt + pay_bonus)
+                    self.db.update_fief(
+                        seller["id"],
+                        grain=seller["grain"] + want_amt + pay_bonus,
+                    )
                 else:
-                    self.db.update_fief(seller["id"], goods=seller["goods"] + want_amt + pay_bonus)
+                    self.db.update_fief(
+                        seller["id"],
+                        goods=seller["goods"] + want_amt + pay_bonus,
+                    )
 
                 buyer = self.db.get_fief(fief_id)
                 cap = B.stash_cap(self.barn_level(fief_id))
-                if trade["give_res"] == B.RES_GRAIN:
+                if give_res == B.RES_GRAIN:
                     add = min(give_amt + recv_bonus, max(0, cap - buyer["grain"]))
                     self.db.update_fief(fief_id, grain=buyer["grain"] + add)
                 else:
@@ -1321,7 +1343,7 @@ class Engine:
         return f"Сделка #{trade_id} закрыта."
 
     def cancel_trade(self, fief_id: int, trade_id: int) -> str:
-        """Снятие лота игроком отключено: эскроу нельзя прятать от набегов."""
+        """Снятие лота игроком отключено."""
         del fief_id, trade_id
         raise ValueError(
             "Лот нельзя снять - дождитесь сделки или истечения срока."
@@ -1395,23 +1417,9 @@ class Engine:
         )
 
     def _refund_trade(self, trade: dict) -> None:
-        """Возврат эскроу: сначала атомарный open→cancelled, затем +give_amt."""
+        """Снять истёкший лот. Ресурс не трогаем: он не уходит в эскроу при выставлении."""
         with self.db.transaction():
-            claimed = self.db.claim_cancel_open_trade(int(trade["id"]))
-            if not claimed:
-                return
-            seller = self.db.get_fief(int(claimed["offerer_fief_id"]))
-            if not seller:
-                return
-            amt = int(claimed["give_amt"])
-            if claimed["give_res"] == B.RES_GRAIN:
-                self.db.update_fief(
-                    int(seller["id"]), grain=int(seller["grain"]) + amt
-                )
-            else:
-                self.db.update_fief(
-                    int(seller["id"]), goods=int(seller["goods"]) + amt
-                )
+            self.db.claim_cancel_open_trade(int(trade["id"]))
 
     def market_text(self, realm_id: int, fief_id: int | None = None) -> str:
         offers = self.db.list_open_trades(realm_id, fief_id)

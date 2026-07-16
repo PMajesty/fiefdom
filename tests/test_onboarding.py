@@ -291,7 +291,9 @@ def test_post_trade_does_not_advance_onboard():
     msg = engine.post_trade(1, B.RES_GRAIN, 10, B.RES_GOODS, 5)
     assert "Лот #99" in msg
     assert state[1]["onboard_step"] == 3
-    assert state[1]["grain"] == 30
+    # Лоты без эскроу: зерно остаётся на усадьбе до сделки.
+    assert state[1]["grain"] == 40
+    db.update_fief.assert_not_called()
 
 
 def test_accept_trade_does_not_advance_onboard():
@@ -357,7 +359,8 @@ def test_accept_trade_does_not_advance_onboard():
 
     assert state[1]["onboard_step"] == 3
     assert state[2]["onboard_step"] == 3
-    assert state[2]["grain"] == 40
+    assert state[2]["goods"] == 5  # 10 - 5 отдано с лота
+    assert state[2]["grain"] == 40  # 30 + 10 оплата
 
 
 def test_status_card_puts_bold_quest_after_title():

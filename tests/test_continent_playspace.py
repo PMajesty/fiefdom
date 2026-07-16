@@ -149,7 +149,7 @@ def test_accept_trade_allows_other_valley_same_world():
     seller = {
         "id": 1,
         "realm_id": 1,
-        "grain": 0,
+        "grain": 5,
         "goods": 0,
         "name": "Seller",
     }

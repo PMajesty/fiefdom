@@ -1080,7 +1080,8 @@ def test_incomplete_world_allows_open_market_post_trade():
 
     msg = engine.post_trade(1, B.RES_GRAIN, 5, B.RES_GOODS, 3, target_fief_id=None)
     assert msg.startswith("Лот #11")
-    assert fiefs[1]["grain"] == 45
+    # Без эскроу зерно остаётся на усадьбе до сделки.
+    assert fiefs[1]["grain"] == 50
     db.create_trade.assert_called_once()
 
 

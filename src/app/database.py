@@ -388,7 +388,7 @@ class Database:
             self._apply_patch_annul_open_trades()
 
     def _apply_patch_annul_open_trades(self) -> None:
-        """Разовый возврат эскроу: лоты больше нельзя снимать вручную."""
+        """Разовые возвраты эскроу при смене правил рынка."""
         self.cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS applied_patches (
@@ -397,9 +397,17 @@ class Database:
             );
             """
         )
+        # v1: запрет снятия лота; v2: отказ от эскроу (ресурс остаётся на усадьбе).
+        for patch_name in (
+            "annul_open_trades_no_cancel_v1",
+            "annul_open_trades_no_escrow_v2",
+        ):
+            self._run_annul_open_trades_patch(patch_name)
+
+    def _run_annul_open_trades_patch(self, patch_name: str) -> None:
         self.cursor.execute(
             "SELECT 1 FROM applied_patches WHERE name=%s;",
-            ("annul_open_trades_no_cancel_v1",),
+            (patch_name,),
         )
         if self.cursor.fetchone() is not None:
             return
@@ -442,7 +450,7 @@ class Database:
         )
         self.cursor.execute(
             "INSERT INTO applied_patches (name) VALUES (%s);",
-            ("annul_open_trades_no_cancel_v1",),
+            (patch_name,),
         )
 
     def _ensure_world_schema(self) -> None:
