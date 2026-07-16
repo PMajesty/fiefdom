@@ -159,16 +159,6 @@ def map_owner_marks(tiles: list[TileView]) -> dict[int, str]:
 
 # В подписи к фото: вы всегда сверху; остальных не больше этого числа.
 MAP_OWNER_CAPTION_MAX_OTHERS = 5
-MAP_OWNER_NAME_MAX_CHARS = 22
-
-
-def _truncate_owner_name(name: str, limit: int = MAP_OWNER_NAME_MAX_CHARS) -> str:
-    text = str(name).strip()
-    if len(text) <= limit:
-        return text
-    if limit <= 1:
-        return "…"
-    return text[: limit - 1] + "…"
 
 
 def format_map_you_pin(
@@ -200,7 +190,7 @@ def format_map_owners(
     for fid in sorted(marks):
         if highlight_fief_id is not None and fid == highlight_fief_id:
             continue
-        name = _truncate_owner_name(legend.get(fid, f"#{fid}"))
+        name = str(legend.get(fid, f"#{fid}")).strip() or f"#{fid}"
         others.append(f"{marks[fid]} = {name}")
 
     if not others:

@@ -125,7 +125,7 @@ def test_map_tile_legend_reads_naturally():
     assert text.index("Местность:") < text.index("Угол (свои)")
 
 
-def test_format_map_owners_pins_you_and_truncates():
+def test_format_map_owners_pins_you_and_keeps_full_names():
     from app.domain.economy import format_map_owners, format_map_you_pin
 
     marks = {1: "К", 2: "М", 3: "Н", 4: "О", 5: "П", 6: "Р", 7: "С"}
@@ -145,14 +145,15 @@ def test_format_map_owners_pins_you_and_truncates():
     assert "К = Я" not in owners
     assert "М = Два" in owners
     assert "ещё 3" in owners
+    long_name = "Очень длинное имя усадьбы для подписи"
     long = format_map_owners(
-        {2: "Очень длинное имя усадьбы для подписи"},
+        {2: long_name},
         {2: "М"},
         highlight_fief_id=1,
     )
     assert long is not None
-    assert "…" in long
-    assert len(long.split("\n", 1)[1]) <= 22 + len("М = ")
+    assert f"М = {long_name}" in long
+    assert "…" not in long
 
 
 def test_stash_status_line_copy():
