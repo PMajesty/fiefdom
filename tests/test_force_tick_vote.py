@@ -17,10 +17,10 @@ def test_force_tick_votes_needed_curve():
     assert B.force_tick_votes_needed(0) == 2
     assert B.force_tick_votes_needed(1) == 2
     assert B.force_tick_votes_needed(2) == 2
-    assert B.force_tick_votes_needed(3) == 2
-    assert B.force_tick_votes_needed(4) == 3
-    assert B.force_tick_votes_needed(5) == 3
-    assert B.force_tick_votes_needed(10) == 6
+    assert B.force_tick_votes_needed(3) == 3
+    assert B.force_tick_votes_needed(4) == 4
+    assert B.force_tick_votes_needed(5) == 5
+    assert B.force_tick_votes_needed(10) == 10
 
 
 def _realm(**overrides):
@@ -239,16 +239,56 @@ def test_force_tick_partial_then_force_free_slot():
     assert second["tick"]["digest"]
 
 
-def test_force_tick_threshold_is_fraction_not_all():
-    """При 3 игроках нужно ceil(0.6*3)=2 голоса."""
+def test_force_tick_requires_all_eligible_players():
     fiefs = [_fief(10, 1001), _fief(11, 1002), _fief(12, 1003)]
     engine, realm, votes = _engine_with_votes(fiefs)
 
     first = engine.cast_force_tick_vote(10)
     assert first["status"] == "voted"
-    assert first["progress"]["needed"] == 2
+    assert first["progress"]["needed"] == 3
     second = engine.cast_force_tick_vote(11)
-    assert second["status"] == "forced"
+    assert second["status"] == "voted"
+    assert second["progress"]["votes"] == 2
+    assert realm["day_number"] == 5
+    assert 10 in votes and 11 in votes
+
+    third = engine.cast_force_tick_vote(12)
+    assert third["status"] == "forced"
+    assert realm["day_number"] == 6
+    assert votes == set()
+
+
+def test_force_tick_one_realm_cannot_force_alone():
+    """Голоса одной долины не форсят тик, пока другие долины не согласны."""
+    realm_a = _realm(id=1, chain_index=0, title="Альфа")
+    realm_b = _realm(id=2, chain_index=1, title="Бета")
+    fiefs_a = [_fief(10, 1001, realm_id=1), _fief(11, 1002, realm_id=1)]
+    fiefs_b = [_fief(20, 2001, realm_id=2), _fief(21, 2002, realm_id=2)]
+    all_fiefs = fiefs_a + fiefs_b
+
+    engine, realm, votes = _engine_with_votes(all_fiefs)
+    engine.db.list_realms_by_chain.return_value = [realm_a, realm_b]
+    engine.db.get_realm.side_effect = lambda rid: {
+        1: realm_a,
+        2: realm_b,
+    }.get(int(rid))
+    engine.db.list_fiefs.side_effect = lambda rid: {
+        1: fiefs_a,
+        2: fiefs_b,
+    }.get(int(rid), [])
+
+    assert engine.cast_force_tick_vote(10)["status"] == "voted"
+    assert engine.cast_force_tick_vote(11)["status"] == "voted"
+    progress = engine.force_tick_progress(1)
+    assert progress["eligible"] == 4
+    assert progress["needed"] == 4
+    assert progress["votes"] == 2
+    assert realm["day_number"] == 5
+    assert votes == {10, 11}
+
+    assert engine.cast_force_tick_vote(20)["status"] == "voted"
+    third = engine.cast_force_tick_vote(21)
+    assert third["status"] == "forced"
     assert realm["day_number"] == 6
     assert votes == set()
 

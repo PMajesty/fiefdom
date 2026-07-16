@@ -235,19 +235,16 @@ ONBOARD_DAY3_GOODS = 15
 RAID_PACT_UNLOCK_DAY = 3
 
 # --- Досрочный тик (голосование) ---
-# Континент: доля незамороженных усадеб; минимум FORCE_TICK_MIN_PLAYERS.
+# Континент: все незамороженные усадьбы; минимум FORCE_TICK_MIN_PLAYERS.
 FORCE_TICK_MIN_PLAYERS = 2
-FORCE_TICK_VOTE_FRAC = 0.60
 
 
 def force_tick_votes_needed(player_count: int) -> int:
     """Сколько голосов нужно, чтобы форсировать тик континента."""
-    import math
-
     n = max(0, int(player_count))
     if n < FORCE_TICK_MIN_PLAYERS:
         return FORCE_TICK_MIN_PLAYERS
-    return max(FORCE_TICK_MIN_PLAYERS, int(math.ceil(n * FORCE_TICK_VOTE_FRAC)))
+    return n
 
 
 # Feature flags по умолчанию
