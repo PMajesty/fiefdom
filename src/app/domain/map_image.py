@@ -20,18 +20,33 @@ LABEL_TOP_PX = 28
 PAD_PX = 16
 GRID_LINE_PX = 2
 # Меняйте при правках вида клетки - сброс кэша PNG/file_id.
-RENDER_REV = 2
+RENDER_REV = 4
 
 _FONT_PATH = Path(__file__).resolve().parents[1] / "assets" / "fonts" / "NotoSans-Regular.ttf"
 
 TILE_COLORS: dict[str, tuple[int, int, int]] = {
-    B.TILE_FIELD: (196, 178, 98),
-    B.TILE_FOREST: (61, 107, 79),
-    B.TILE_HILLS: (139, 115, 85),
-    B.TILE_RIVER: (74, 144, 164),
-    B.TILE_ROAD: (184, 160, 112),
-    B.TILE_RUINS: (107, 91, 91),
-    B.TILE_WILDS: (90, 107, 74),
+    B.TILE_FIELD: (210, 188, 110),
+    B.TILE_FOREST: (72, 118, 88),
+    B.TILE_HILLS: (156, 128, 96),
+    B.TILE_RIVER: (86, 152, 172),
+    B.TILE_ROAD: (196, 172, 124),
+    B.TILE_RUINS: (120, 104, 104),
+    B.TILE_WILDS: (98, 114, 82),
+}
+
+# Пиктограммы - заметно темнее заливки, чтобы читались на телефоне.
+TILE_MOTIF: dict[str, tuple[int, int, int]] = {
+    B.TILE_FIELD: (120, 88, 28),
+    B.TILE_FOREST: (28, 58, 36),
+    B.TILE_HILLS: (86, 60, 36),
+    B.TILE_RIVER: (28, 78, 104),
+    B.TILE_ROAD: (96, 72, 40),
+    B.TILE_RUINS: (52, 40, 40),
+    B.TILE_WILDS: (44, 56, 32),
+}
+TILE_MOTIF_FILL: dict[str, tuple[int, int, int]] = {
+    B.TILE_FOREST: (48, 92, 60),
+    B.TILE_RUINS: (88, 72, 72),
 }
 
 BUILDING_MARK: dict[str, str] = {
@@ -178,7 +193,89 @@ def _draw_centered_text(
     font: ImageFont.ImageFont,
     fill: tuple[int, int, int],
 ) -> None:
-    draw.text(xy, text, font=font, fill=fill, anchor="mm")
+    # Явный bbox: у кириллицы side-bearing часто съезжает при anchor="mm".
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+    x = xy[0] - tw / 2 - bbox[0]
+    y = xy[1] - th / 2 - bbox[1]
+    draw.text((x, y), text, font=font, fill=fill)
+
+
+def _draw_terrain_motif(
+    draw: ImageDraw.ImageDraw,
+    left: int,
+    top: int,
+    tile_type: str,
+) -> None:
+    """Простые пиктограммы местности - узнаются без текстовой легенды."""
+    ink = TILE_MOTIF.get(tile_type, (80, 80, 80))
+    fill = TILE_MOTIF_FILL.get(tile_type)
+    x0, y0 = left + 4, top + 4
+    x1, y1 = left + CELL_PX - 5, top + CELL_PX - 5
+    cx = left + CELL_PX // 2
+    cy = top + CELL_PX // 2
+
+    if tile_type == B.TILE_FIELD:
+        for i, dx in enumerate((10, 20, 30, 40)):
+            bx = left + dx
+            head = y1 - 20 - (i % 2) * 3
+            draw.line((bx, y1 - 3, bx, head + 4), fill=ink, width=2)
+            draw.ellipse((bx - 4, head - 2, bx + 4, head + 6), outline=ink, width=2)
+    elif tile_type == B.TILE_FOREST:
+        for ox, oy in ((14, 20), (36, 16), (26, 34)):
+            tip = (left + ox, top + oy - 14)
+            base_l = (left + ox - 9, top + oy + 2)
+            base_r = (left + ox + 9, top + oy + 2)
+            draw.polygon([tip, base_l, base_r], fill=fill or ink, outline=ink)
+            draw.line((left + ox, top + oy + 2, left + ox, top + oy + 9), fill=ink, width=2)
+    elif tile_type == B.TILE_HILLS:
+        draw.arc((x0, cy - 8, cx + 6, y1), start=200, end=340, fill=ink, width=3)
+        draw.arc((cx - 10, cy - 2, x1, y1 + 2), start=200, end=340, fill=ink, width=3)
+    elif tile_type == B.TILE_RIVER:
+        for yy in (top + 14, top + 28, top + 42):
+            pts = [
+                (x0, yy),
+                (x0 + 12, yy - 5),
+                (x0 + 24, yy + 3),
+                (x0 + 36, yy - 4),
+                (x1, yy + 2),
+            ]
+            draw.line(pts, fill=ink, width=3)
+    elif tile_type == B.TILE_ROAD:
+        draw.line((x0 + 2, y1 - 6, x1 - 2, y0 + 8), fill=ink, width=5)
+        for t in (0.18, 0.4, 0.62, 0.84):
+            px = x0 + 2 + (x1 - 4 - x0) * t
+            py = y1 - 6 + (y0 + 8 - (y1 - 6)) * t
+            draw.ellipse((px - 2, py - 2, px + 2, py + 2), fill=(232, 220, 200))
+    elif tile_type == B.TILE_RUINS:
+        draw.rectangle((x0 + 2, y0 + 12, x0 + 20, y1 - 4), fill=fill, outline=ink, width=2)
+        draw.line((x0 + 2, y0 + 22, x0 + 20, y0 + 22), fill=ink, width=2)
+        draw.rectangle((cx, cy - 2, x1 - 2, y1 - 6), outline=ink, width=2)
+        draw.line((cx + 6, cy - 2, cx + 14, y0 + 4), fill=ink, width=3)
+    elif tile_type == B.TILE_WILDS:
+        for ox, oy in ((10, 12), (30, 10), (18, 26), (36, 28), (14, 38), (28, 40)):
+            draw.ellipse((left + ox, top + oy, left + ox + 7, top + oy + 5), outline=ink, width=2)
+        draw.arc((x0, y0 + 4, x1, cy + 6), start=10, end=170, fill=ink, width=2)
+    else:
+        draw.line((x0, y0, x1, y1), fill=ink, width=1)
+
+
+def _draw_mark_badge(
+    draw: ImageDraw.ImageDraw,
+    cx: float,
+    cy: float,
+    text: str,
+    font: ImageFont.ImageFont,
+) -> None:
+    """Светлый кружок под меткой, чтобы буква читалась поверх пиктограмм."""
+    draw.ellipse(
+        (cx - 11, cy - 11, cx + 11, cy + 11),
+        fill=(245, 236, 214),
+        outline=GRID_COLOR,
+        width=1,
+    )
+    _draw_centered_text(draw, (cx, cy), text, font, OWNER_TEXT)
 
 
 def render_map_image(
@@ -199,7 +296,7 @@ def render_map_image(
     image = Image.new("RGB", (img_w, img_h), BG_COLOR)
     draw = ImageDraw.Draw(image)
     font_label = _load_font(16)
-    font_owner = _load_font(22)
+    font_owner = _load_font(20)
     font_building = _load_font(14)
 
     for x in range(width):
@@ -226,8 +323,11 @@ def render_map_image(
             right = left + CELL_PX
             bottom = top + CELL_PX
             tile = by_pos.get((x, y))
-            fill = TILE_COLORS.get(tile.tile_type if tile else "", (160, 160, 160))
+            tile_type = tile.tile_type if tile else ""
+            fill = TILE_COLORS.get(tile_type, (160, 160, 160))
             draw.rectangle((left, top, right, bottom), fill=fill)
+            if tile_type:
+                _draw_terrain_motif(draw, left, top, tile_type)
 
             if tile and tile.is_overgrown:
                 overlay = Image.new("RGBA", (CELL_PX, CELL_PX), OVERGROWN_TINT)
@@ -261,7 +361,7 @@ def render_map_image(
                 mark = MAP_EMPTY_MARK
             cx = left + CELL_PX / 2
             cy = top + CELL_PX / 2
-            _draw_centered_text(draw, (cx, cy), mark, font_owner, OWNER_TEXT)
+            _draw_mark_badge(draw, cx, cy, mark, font_owner)
             if building_visible_on_map(tile, highlight_fief_id):
                 bmark = BUILDING_MARK.get(tile.building or "", "?")
                 label = f"{bmark}{tile.building_level}"

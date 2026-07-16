@@ -68,6 +68,15 @@ def test_render_map_image_returns_valid_png():
     assert image.size[1] >= 2 * 56
 
 
+def test_terrain_motifs_differ_by_tile_type():
+    """Разные типы клеток дают разный PNG даже без владельцев."""
+    field = [_tile(0, 0, B.TILE_FIELD)]
+    forest = [_tile(0, 0, B.TILE_FOREST)]
+    river = [_tile(0, 0, B.TILE_RIVER)]
+    assert render_map_image(1, 1, field) != render_map_image(1, 1, forest)
+    assert render_map_image(1, 1, forest) != render_map_image(1, 1, river)
+
+
 def test_foreign_buildings_hidden_on_map_and_fingerprint():
     base = [
         _tile(0, 0, B.TILE_FIELD, owner=1, building=B.BLD_MANOR, building_level=1),
@@ -171,10 +180,10 @@ def test_build_map_caption_splits_when_over_limit():
     caption, extra = build_map_caption(title="Долина", day_number=2, footer=footer, limit=1024)
     assert len(caption) <= 1024
     assert extra == footer
-    short, none = build_map_caption(title="Долина", day_number=2, footer="Клетки:\nполе")
+    short, none = build_map_caption(title="Долина", day_number=2, footer="можно занять")
     assert none is None
     assert "Долина" in short
-    assert "Клетки:" in short
+    assert "можно занять" in short
 
 
 def test_engine_map_photo_uses_cache_across_requests():
@@ -202,7 +211,8 @@ def test_engine_map_photo_uses_cache_across_requests():
     assert first.png_bytes == second.png_bytes
     assert first.png_bytes[:8] == b"\x89PNG\r\n\x1a\n"
     assert "Долина" in first.caption
-    assert "Клетки:" in first.caption
+    assert "можно занять" in first.caption
+    assert "Владельцы:" in first.caption
 
     engine.remember_map_file_id(first.fingerprint, "AgADBAAD")
     third = engine.map_photo(1, highlight_fief_id=1)

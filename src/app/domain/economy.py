@@ -179,7 +179,7 @@ def render_map_parts(
 
     from app.domain.guide import map_tile_legend
 
-    footer_parts = [map_tile_legend()]
+    footer_parts: list[str] = []
     owner_lines = []
     for fid in fief_ids:
         name = legend.get(fid, f"#{fid}")
@@ -187,6 +187,7 @@ def render_map_parts(
         owner_lines.append(f"{marks[fid]} = {name}{suffix}")
     if owner_lines:
         footer_parts.append("Владельцы:\n" + "\n".join(owner_lines))
+    footer_parts.append(map_tile_legend())
     return "\n".join(lines), "\n\n".join(footer_parts)
 
 
