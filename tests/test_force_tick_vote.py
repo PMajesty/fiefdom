@@ -15,12 +15,12 @@ def test_force_tick_votes_needed_curve():
     assert B.force_tick_votes_needed(0) == 2
     assert B.force_tick_votes_needed(1) == 2
     assert B.force_tick_votes_needed(2) == 2
-    assert B.force_tick_votes_needed(3) == 2
-    assert B.force_tick_votes_needed(4) == 3
-    assert B.force_tick_votes_needed(5) == 4
-    assert B.force_tick_votes_needed(6) == 5
-    assert B.force_tick_votes_needed(7) == 5
-    assert B.force_tick_votes_needed(8) == 6
+    assert B.force_tick_votes_needed(3) == 3
+    assert B.force_tick_votes_needed(4) == 4
+    assert B.force_tick_votes_needed(5) == 5
+    assert B.force_tick_votes_needed(6) == 6
+    assert B.force_tick_votes_needed(7) == 7
+    assert B.force_tick_votes_needed(8) == 8
 
 
 def _realm(**overrides):
@@ -179,6 +179,25 @@ def test_force_tick_partial_then_force_free_slot():
     assert realm["last_tick_local_date"] == date(2026, 7, 16)
     assert votes == set()
     assert second["tick"]["digest"]
+
+
+def test_force_tick_requires_all_eligible_players():
+    fiefs = [_fief(10, 1001), _fief(11, 1002), _fief(12, 1003)]
+    engine, realm, votes = _engine_with_votes(fiefs)
+
+    first = engine.cast_force_tick_vote(10)
+    assert first["status"] == "voted"
+    assert first["progress"]["needed"] == 3
+    second = engine.cast_force_tick_vote(11)
+    assert second["status"] == "voted"
+    assert second["progress"]["votes"] == 2
+    assert realm["day_number"] == 5
+    assert 10 in votes and 11 in votes
+
+    third = engine.cast_force_tick_vote(12)
+    assert third["status"] == "forced"
+    assert realm["day_number"] == 6
+    assert votes == set()
 
 
 def test_force_tick_already_voted():

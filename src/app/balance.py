@@ -208,8 +208,7 @@ ONBOARD_DAY3_GOODS = 15
 RAID_PACT_UNLOCK_DAY = 3
 
 # --- Досрочный тик (голосование) ---
-# Нужно ≥ FORCE_TICK_MIN_PLAYERS усадеб; порог - round half-up от 75%:
-# 2/2, 2/3, 3/4, 4/5, 5/6, 5/7, 6/8…
+# Нужно ≥ FORCE_TICK_MIN_PLAYERS усадеб; порог - все незамороженные.
 FORCE_TICK_MIN_PLAYERS = 2
 
 
@@ -218,7 +217,7 @@ def force_tick_votes_needed(player_count: int) -> int:
     n = max(0, int(player_count))
     if n < FORCE_TICK_MIN_PLAYERS:
         return FORCE_TICK_MIN_PLAYERS
-    return (3 * n + 2) // 4
+    return n
 
 
 # Feature flags по умолчанию
