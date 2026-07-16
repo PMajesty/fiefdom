@@ -135,11 +135,28 @@ def test_tile_effect_overgrown_and_hungry():
 
 def test_tile_effect_manor_notes_militia_cap():
     manor = _tile(0, 0, B.TILE_FIELD, building=B.BLD_MANOR, building_level=1)
-    text = tile_effect_text(manor)
+    text = tile_effect_text(manor, current_might=0)
     assert f"+{B.MANOR_GRAIN} зерна" in text
     assert f"+{B.MANOR_GOODS} товаров" in text
     assert f"+{B.MANOR_MIGHT} силы" in text
-    assert "потолка дружины" in text
+    assert f"пока дружина ниже {B.MILITIA_FREE}" in text
+
+
+def test_tile_effect_manor_hides_might_at_free_cap():
+    manor = _tile(0, 0, B.TILE_FIELD, building=B.BLD_MANOR, building_level=1)
+    text = tile_effect_text(manor, current_might=B.MILITIA_FREE)
+    assert f"+{B.MANOR_GRAIN} зерна" in text
+    assert f"+{B.MANOR_GOODS} товаров" in text
+    assert f"+{B.MANOR_MIGHT} силы" not in text
+    assert "сила двора не копится" in text
+    assert f"потолка ({B.MILITIA_FREE})" in text
+
+
+def test_tile_effect_manor_partial_free_room():
+    manor = _tile(0, 0, B.TILE_FIELD, building=B.BLD_MANOR, building_level=1)
+    text = tile_effect_text(manor, current_might=B.MILITIA_FREE - 1)
+    assert "+1 силы" in text
+    assert "урезана до потолка" in text
 
 
 def test_format_holdings_lists_tiles_help_and_totals():
@@ -152,6 +169,7 @@ def test_format_holdings_lists_tiles_help_and_totals():
         tiles,
         fief_label="Усадьба @test",
         daily=daily,
+        current_might=0,
     )
     assert "Владения" in text
     assert "Усадьба @test" in text
@@ -162,7 +180,31 @@ def test_format_holdings_lists_tiles_help_and_totals():
     assert "Ферма - зерно" in text
     assert "Амбар - склад" in text
     assert "Итого в день: +10 зерна, +15 товаров, +2 силы" in text
-    assert f"+{B.FIEF_BASE_GOODS} товаров базы" in text
+    assert f"+{B.FIEF_BASE_GOODS} базы усадьбы" in text
+    assert "даже без мастерской" in text
+
+
+def test_format_holdings_manor_matches_total_at_cap():
+    tiles = [
+        _tile(0, 0, B.TILE_FIELD, building=B.BLD_MANOR, building_level=1),
+        _tile(1, 0, B.TILE_HILLS, building=B.BLD_WATCH, building_level=1),
+    ]
+    watch_might = B.WATCH_MIGHT[1] * B.NATIVE_BONUS
+    daily = Production(
+        grain=B.MANOR_GRAIN,
+        goods=B.MANOR_GOODS + B.FIEF_BASE_GOODS,
+        might=watch_might,
+        defense=B.WATCH_DEFENSE[1] * B.NATIVE_BONUS,
+    )
+    text = format_holdings(
+        tiles,
+        fief_label="Усадьба @test",
+        daily=daily,
+        current_might=B.MILITIA_FREE,
+    )
+    assert "сила двора не копится" in text
+    assert f"+{watch_might:.0f} силы" in text
+    assert f"+{daily.might:.0f} силы" in text.split("Итого в день:")[1]
 
 
 def test_format_holdings_empty_and_hungry_banner():
@@ -185,7 +227,7 @@ def test_engine_holdings_text_uses_fief_tiles():
         "id": 1,
         "name": "Усадьба Test",
         "hungry": 0,
-        "might": 3,
+        "might": B.MILITIA_FREE,
         "realm_id": 1,
     }
     db = MagicMock()
@@ -194,11 +236,13 @@ def test_engine_holdings_text_uses_fief_tiles():
     engine = Engine(db)
     with patch.object(engine, "fief_label", return_value="Усадьба Test"):
         with patch.object(
-            engine, "fief_prod", return_value=Production(grain=5, goods=13, might=2)
+            engine, "fief_prod", return_value=Production(grain=5, goods=13, might=0)
         ):
             text = engine.holdings_text(1)
     assert "А1 Поле · Двор I" in text
+    assert "сила двора не копится" in text
     assert "Итого в день" in text
+    assert "даже без мастерской" in text
     db.fief_tiles.assert_called_once_with(1)
 
 

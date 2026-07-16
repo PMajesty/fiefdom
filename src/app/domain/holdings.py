@@ -25,6 +25,12 @@ def building_level_roman(level: int) -> str:
     return _LEVEL_ROMAN.get(int(level), str(level))
 
 
+def manor_might_applied(nominal: float, current_might: int) -> float:
+    """Сколько силы двора реально копится при текущей дружине."""
+    free_room = max(0, B.MILITIA_FREE - max(0, int(current_might)))
+    return min(max(0.0, float(nominal)), float(free_room))
+
+
 def _format_prod_parts(prod: Production) -> list[str]:
     parts: list[str] = []
     if prod.grain:
@@ -48,7 +54,21 @@ def _barn_effect_line(level: int) -> str:
     )
 
 
-def tile_effect_text(tile: dict, *, hungry: bool = False) -> str:
+def _manor_might_note(nominal: float, applied: float) -> str:
+    cap = B.MILITIA_FREE
+    if applied <= 0:
+        return f"сила двора не копится: дружина уже у потолка ({cap})"
+    if applied + 1e-9 < nominal:
+        return f"сила двора урезана до потолка дружины ({cap})"
+    return f"сила двора копится, пока дружина ниже {cap}"
+
+
+def tile_effect_text(
+    tile: dict,
+    *,
+    hungry: bool = False,
+    current_might: int | None = None,
+) -> str:
     """Что клетка даёт сейчас (одна строка без префикса)."""
     if tile.get("is_overgrown"):
         return "не даёт дохода (заросло)"
@@ -68,22 +88,40 @@ def tile_effect_text(tile: dict, *, hungry: bool = False) -> str:
         return barn_line
 
     built = building_production(building, level, tile_type)
+    manor_note: str | None = None
+    might = passive.might + built.might
+    if building == B.BLD_MANOR and built.might and current_might is not None:
+        applied = manor_might_applied(built.might, current_might)
+        manor_note = _manor_might_note(built.might, applied)
+        might = passive.might + applied
+
     total = Production(
         grain=passive.grain + built.grain,
         goods=passive.goods + built.goods,
-        might=passive.might + built.might,
+        might=might,
         defense=passive.defense + built.defense,
     )
     if hungry:
         total = total.scale(B.HUNGER_PRODUCTION_MULT)
 
     parts = _format_prod_parts(total)
+    if building == B.BLD_MANOR and manor_note and total.might <= 0:
+        # Сила отключена потолком - в цифрах её нет, пояснение отдельно.
+        other = _format_prod_parts(
+            Production(grain=total.grain, goods=total.goods, defense=total.defense)
+        )
+        if other:
+            return f"{', '.join(other)}/день · {manor_note}"
+        return manor_note
+
     if not parts:
         return "без дохода"
 
     line = ", ".join(parts) + "/день"
-    if building == B.BLD_MANOR and built.might:
-        line += " (сила двора - до потолка дружины)"
+    if manor_note:
+        line += f" ({manor_note})"
+    elif building == B.BLD_MANOR and built.might and current_might is None:
+        line += f" (сила двора - пока дружина ниже {B.MILITIA_FREE})"
     return line
 
 
@@ -113,6 +151,7 @@ def format_holdings(
     fief_label: str,
     hungry: bool = False,
     daily: Production | None = None,
+    current_might: int | None = None,
 ) -> str:
     """HTML-карточка владений для лички."""
     ordered = sorted(tiles, key=lambda t: (int(t["y"]), int(t["x"])))
@@ -129,7 +168,9 @@ def format_holdings(
     else:
         for tile in ordered:
             lines.append(tile_headline(tile))
-            lines.append(f"  {tile_effect_text(tile, hungry=hungry)}")
+            lines.append(
+                f"  {tile_effect_text(tile, hungry=hungry, current_might=current_might)}"
+            )
             lines.append("")
 
     lines.append("Справка по зданиям:")
@@ -144,7 +185,8 @@ def format_holdings(
         )
         if B.FIEF_BASE_GOODS:
             lines.append(
-                f"(в итоге уже +{B.FIEF_BASE_GOODS} товаров базы усадьбы)"
+                f"(в сумму товаров уже входят +{B.FIEF_BASE_GOODS} "
+                "базы усадьбы - даются даже без мастерской)"
             )
 
     return "\n".join(lines).rstrip() + "\n"
