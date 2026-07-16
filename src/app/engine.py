@@ -19,6 +19,7 @@ from app.domain.economy import (
     fief_daily_production,
     pick_max_separated_tiles,
     render_map,
+    too_close_to_ruins,
 )
 from app.domain.events import (
     CATASTROPHES,
@@ -280,12 +281,21 @@ class Engine:
         if not cores:
             cores = [(t["x"], t["y"]) for t in tiles if t["owner_fief_id"]]
 
+        ruins = [
+            (int(t["x"]), int(t["y"]))
+            for t in tiles
+            if t["tile_type"] == B.TILE_RUINS
+        ]
+        blocked = (B.TILE_WILDS, B.TILE_ROAD, B.TILE_RIVER, B.TILE_RUINS)
         candidates = [
             t
             for t in tiles
             if t["owner_fief_id"] is None
-            and t["tile_type"] not in (B.TILE_WILDS, B.TILE_ROAD, B.TILE_RIVER)
+            and t["tile_type"] not in blocked
             and not t.get("is_overgrown")
+            and not too_close_to_ruins(
+                int(t["x"]), int(t["y"]), ruins, width, height
+            )
         ]
         return pick_max_separated_tiles(candidates, cores, width, height, count)
 
@@ -298,7 +308,18 @@ class Engine:
         tile = self.db._fetchone("SELECT * FROM map_tiles WHERE id=%s AND realm_id=%s;", (tile_id, realm_id))
         if not tile or tile["owner_fief_id"] is not None:
             raise ValueError("Клетка недоступна")
-        if tile["tile_type"] in (B.TILE_WILDS, B.TILE_ROAD, B.TILE_RIVER):
+        if tile["tile_type"] in (B.TILE_WILDS, B.TILE_ROAD, B.TILE_RIVER, B.TILE_RUINS):
+            raise ValueError("Нельзя начать здесь")
+
+        realm = self.db.get_realm(realm_id)
+        width, height = int(realm["width"]), int(realm["height"])
+        tiles = self.db.get_tiles(realm_id)
+        ruins = [
+            (int(t["x"]), int(t["y"]))
+            for t in tiles
+            if t["tile_type"] == B.TILE_RUINS
+        ]
+        if too_close_to_ruins(int(tile["x"]), int(tile["y"]), ruins, width, height):
             raise ValueError("Нельзя начать здесь")
 
         name = fief_name_for_user(user)

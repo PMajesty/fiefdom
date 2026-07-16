@@ -55,6 +55,8 @@ ROAD_PASSIVE_GOODS = 3
 FIEF_BASE_GOODS = 3
 RUINS_LOOT_MIN = 30
 RUINS_LOOT_MAX = 80
+# Стартовая усадьба не на руинах и не рядом (тор Манхэттен < этого порога).
+RUINS_SPAWN_MIN_DISTANCE = 2
 WILDS_CLAIM_MULT = 2
 WILDS_CLEAR_TO = (TILE_FIELD, TILE_FOREST, TILE_HILLS)
 

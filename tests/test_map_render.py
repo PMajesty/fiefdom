@@ -9,6 +9,7 @@ from app.domain.economy import (
     format_map_cell,
     pick_max_separated_tiles,
     render_map,
+    too_close_to_ruins,
     toroidal_manhattan,
 )
 
@@ -93,6 +94,24 @@ def test_adjacent_claimable_wraps_edges():
     assert (5, 0) in claimable  # wrap left→right
     assert (0, 5) in claimable  # wrap top→bottom
     assert (2, 2) not in claimable
+
+
+def test_too_close_to_ruins_blocks_self_and_orthogonal():
+    ruins = [(2, 2)]
+    w = h = 6
+    assert too_close_to_ruins(2, 2, ruins, w, h) is True
+    assert too_close_to_ruins(1, 2, ruins, w, h) is True
+    assert too_close_to_ruins(2, 1, ruins, w, h) is True
+    assert too_close_to_ruins(1, 1, ruins, w, h) is False  # диагональ, dist=2
+    assert too_close_to_ruins(0, 0, ruins, w, h) is False
+
+
+def test_too_close_to_ruins_wraps_toroidally():
+    ruins = [(0, 0)]
+    w = h = 6
+    assert too_close_to_ruins(5, 0, ruins, w, h) is True
+    assert too_close_to_ruins(0, 5, ruins, w, h) is True
+    assert too_close_to_ruins(5, 5, ruins, w, h) is False
 
 
 def test_pick_max_separated_from_existing_core():

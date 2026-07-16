@@ -183,6 +183,23 @@ def toroidal_manhattan(
     return toroidal_delta(x1, x2, width) + toroidal_delta(y1, y2, height)
 
 
+def too_close_to_ruins(
+    x: int,
+    y: int,
+    ruins: list[tuple[int, int]],
+    width: int,
+    height: int,
+    min_distance: int = B.RUINS_SPAWN_MIN_DISTANCE,
+) -> bool:
+    """True, если клетка на руинах или ближе min_distance по тору."""
+    if min_distance <= 0 or not ruins:
+        return False
+    return any(
+        toroidal_manhattan(x, y, rx, ry, width, height) < min_distance
+        for rx, ry in ruins
+    )
+
+
 def wrap_xy(x: int, y: int, width: int, height: int) -> tuple[int, int]:
     return (x % width, y % height)
 

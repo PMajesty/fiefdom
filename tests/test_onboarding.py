@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 os.environ.setdefault("ADMIN_USER_ID", "42")
 
 from app import balance as B
@@ -103,6 +105,10 @@ def test_join_fief_sets_onboard_step_2():
         "tile_type": B.TILE_FIELD,
         "owner_fief_id": None,
     }
+    db.get_realm.return_value = {"width": 6, "height": 6}
+    db.get_tiles.return_value = [
+        {"id": 50, "x": 1, "y": 2, "tile_type": B.TILE_FIELD, "owner_fief_id": None},
+    ]
     db.create_fief.return_value = {"id": 7, "name": "Усадьба @ivan"}
     engine = Engine(db)
     engine.maybe_grow_map = MagicMock(return_value=None)  # type: ignore[method-assign]
@@ -120,6 +126,77 @@ def test_join_fief_sets_onboard_step_2():
     assert "занять" in msg.lower() or "соседн" in msg
     assert str(B.CLAIM_COSTS[2]) in msg
     db.set_fief_names_for_user.assert_called_with(100, "Усадьба @ivan")
+
+
+def test_join_fief_rejects_ruins_tile():
+    db = MagicMock()
+    db.get_fief_by_user.return_value = None
+    db._fetchone.return_value = {
+        "id": 50,
+        "x": 1,
+        "y": 2,
+        "tile_type": B.TILE_RUINS,
+        "owner_fief_id": None,
+    }
+    engine = Engine(db)
+    user = SimpleNamespace(id=100, full_name="Иван", first_name="Иван", username="ivan")
+
+    with pytest.raises(ValueError, match="Нельзя начать здесь"):
+        engine.join_fief(1, user, tile_id=50)
+    db.create_fief.assert_not_called()
+
+
+def test_join_fief_rejects_tile_adjacent_to_ruins():
+    db = MagicMock()
+    db.get_fief_by_user.return_value = None
+    db._fetchone.return_value = {
+        "id": 50,
+        "x": 1,
+        "y": 2,
+        "tile_type": B.TILE_FIELD,
+        "owner_fief_id": None,
+    }
+    db.get_realm.return_value = {"width": 6, "height": 6}
+    db.get_tiles.return_value = [
+        {"id": 50, "x": 1, "y": 2, "tile_type": B.TILE_FIELD, "owner_fief_id": None},
+        {"id": 51, "x": 2, "y": 2, "tile_type": B.TILE_RUINS, "owner_fief_id": None},
+    ]
+    engine = Engine(db)
+    user = SimpleNamespace(id=100, full_name="Иван", first_name="Иван", username="ivan")
+
+    with pytest.raises(ValueError, match="Нельзя начать здесь"):
+        engine.join_fief(1, user, tile_id=50)
+    db.create_fief.assert_not_called()
+
+
+def test_starter_tile_choices_excludes_ruins_and_neighbors():
+    db = MagicMock()
+    db.get_realm.return_value = {"width": 5, "height": 5}
+    # Руины в (2,2): блок dist 0 и ortho-соседи (1,2)/(3,2)/(2,1)/(2,3)
+    tiles = []
+    tid = 0
+    for y in range(5):
+        for x in range(5):
+            tiles.append(
+                {
+                    "id": tid,
+                    "x": x,
+                    "y": y,
+                    "tile_type": B.TILE_RUINS if (x, y) == (2, 2) else B.TILE_FIELD,
+                    "owner_fief_id": None,
+                    "is_core": False,
+                    "is_overgrown": False,
+                }
+            )
+            tid += 1
+    db.get_tiles.return_value = tiles
+    engine = Engine(db)
+
+    picked = engine.starter_tile_choices(1, count=3)
+    coords = {(p["x"], p["y"]) for p in picked}
+    blocked = {(2, 2), (1, 2), (3, 2), (2, 1), (2, 3)}
+    assert coords.isdisjoint(blocked)
+    assert len(picked) == 3
 
 
 def test_onboard_patience_hint_when_unaffordable():

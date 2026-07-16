@@ -91,12 +91,24 @@ def generate_map(width: int, height: int, rng: random.Random | None = None) -> l
         for x in range(width)
     ]
 
-    # Валидация: достаточно кандидатов на спавн
-    spawnable = [
-        t
-        for t in tiles
-        if t.tile_type not in (B.TILE_WILDS, B.TILE_ROAD, B.TILE_RIVER)
-    ]
+    # Валидация: достаточно кандидатов на спавн (не руины и не рядом с ними)
+    ruins = [(t.x, t.y) for t in tiles if t.tile_type == B.TILE_RUINS]
+    blocked = (B.TILE_WILDS, B.TILE_ROAD, B.TILE_RIVER, B.TILE_RUINS)
+    min_d = B.RUINS_SPAWN_MIN_DISTANCE
+
+    def _spawn_ok(t: GenTile) -> bool:
+        if t.tile_type in blocked:
+            return False
+        if min_d <= 0 or not ruins:
+            return True
+        for rx, ry in ruins:
+            dx = abs(t.x - rx) % width
+            dy = abs(t.y - ry) % height
+            if min(dx, width - dx) + min(dy, height - dy) < min_d:
+                return False
+        return True
+
+    spawnable = [t for t in tiles if _spawn_ok(t)]
     if len(spawnable) < max(3, (width * height) // 5):
         return generate_map(width, height, rng)
     return tiles
