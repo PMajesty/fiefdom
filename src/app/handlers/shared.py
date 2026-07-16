@@ -165,14 +165,25 @@ def format_trade_post_announce(
     give = B.RES_NAMES_RU.get(give_res, give_res)
     want = B.RES_NAMES_RU.get(want_res, want_res)
     return (
-        f"🛒 {escape_html(fief_name)}: лот "
-        f"{int(give_amt)} {give} → {int(want_amt)} {want}"
+        f"🛒 {escape_html(fief_name)} выставляет лот: "
+        f"отдаёт {int(give_amt)} {give} за {int(want_amt)} {want}"
     )
 
 
-def format_trade_accept_announce(buyer_name: str, seller_name: str) -> str:
+def format_trade_accept_announce(
+    buyer_name: str,
+    seller_name: str,
+    give_amt: int,
+    give_res: str,
+    want_amt: int,
+    want_res: str,
+) -> str:
+    give = B.RES_NAMES_RU.get(give_res, give_res)
+    want = B.RES_NAMES_RU.get(want_res, want_res)
     return (
-        f"🛒 Сделка: {escape_html(buyer_name)} ↔ {escape_html(seller_name)}"
+        f"🛒 Сделка: {escape_html(buyer_name)} забрала "
+        f"{int(give_amt)} {give} у {escape_html(seller_name)} "
+        f"за {int(want_amt)} {want}"
     )
 
 

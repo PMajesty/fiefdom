@@ -569,6 +569,7 @@ async def cb_trade(callback: CallbackQuery) -> None:
 
         trade_id = int(parts[3])
         seller = None
+        trade = None
         if action == "a":
             trade = engine.db.get_trade(trade_id)
             if trade:
@@ -578,13 +579,18 @@ async def cb_trade(callback: CallbackQuery) -> None:
             msg = engine.cancel_trade(fief_id, trade_id)
         await _ok(callback)
         await reply_game(callback.message, msg, reply_markup=fief_home_kb(engine, fief_id))
-        if action == "a" and seller and msg.startswith("Сделка"):
+        if action == "a" and seller and trade and msg.startswith("Сделка"):
             engine.ensure_user(callback.from_user)
             await announce_realm(
                 callback.bot,
                 fief["realm_id"],
                 format_trade_accept_announce(
-                    engine.fief_label(fief), engine.fief_label(seller)
+                    engine.fief_label(fief),
+                    engine.fief_label(seller),
+                    trade["give_amt"],
+                    trade["give_res"],
+                    trade["want_amt"],
+                    trade["want_res"],
                 ),
             )
     except ValueError as exc:

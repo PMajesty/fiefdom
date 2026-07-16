@@ -510,9 +510,15 @@ def test_announce_formatters_escape_names():
     assert format_raid_announce("Набег X на Y") == "⚔️ Набег X на Y"
     assert format_trade_post_announce(
         "Усадьба <X>", 10, B.RES_GRAIN, 5, B.RES_GOODS
-    ) == "🛒 Усадьба &lt;X&gt;: лот 10 Зерно → 5 Товары"
-    assert format_trade_accept_announce("Покупатель", "Продавец <Y>") == (
-        "🛒 Сделка: Покупатель ↔ Продавец &lt;Y&gt;"
+    ) == (
+        "🛒 Усадьба &lt;X&gt; выставляет лот: "
+        "отдаёт 10 Зерно за 5 Товары"
+    )
+    assert format_trade_accept_announce(
+        "Покупатель", "Продавец <Y>", 10, B.RES_GRAIN, 5, B.RES_GOODS
+    ) == (
+        "🛒 Сделка: Покупатель забрала 10 Зерно "
+        "у Продавец &lt;Y&gt; за 5 Товары"
     )
     assert format_pact_create_announce("Основатель", "Север") == (
         '🤝 Новый пакт "Север" (Основатель)'
@@ -530,6 +536,9 @@ def test_announce_formatters_escape_names():
         format_join_announce("A"),
         format_raid_announce("B"),
         format_trade_post_announce("C", 1, B.RES_GRAIN, 2, B.RES_GOODS),
+        format_trade_accept_announce(
+            "A", "B", 1, B.RES_GRAIN, 2, B.RES_GOODS
+        ),
         format_pact_leave_announce("D", "E", dissolved=True),
     ):
         assert "\u2014" not in text
