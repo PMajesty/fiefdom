@@ -44,9 +44,8 @@ ADMIN_HELP_TEXT = (
     "Админ-команды (только личка). Сначала узнай id долины:\n"
     "<code>/вч_realms</code>\n"
     "\n"
-    "<b>Тик</b> (пересчитать день; без id - все долины):\n"
+    "<b>Тик континента</b> (все долины сразу):\n"
     "<code>/вч_tick</code>\n"
-    "<code>/вч_tick 1</code>\n"
     "\n"
     "<b>Выдать ресурсы</b> усадьбе (зерно товары сила):\n"
     "<code>/вч_grant 1 3 50 20 10</code>\n"
@@ -54,9 +53,12 @@ ADMIN_HELP_TEXT = (
     "<b>Событие</b> до следующего тика (ключ из списка при ошибке):\n"
     "<code>/вч_event 1 harvest</code>\n"
     "\n"
-    "<b>Удалить долину</b> - два шага:\n"
-    "1) <code>/вч_wipe_start 1</code> - бот пришлёт готовую команду с кодом\n"
-    "2) скопируй и отправь её (код + слово УДАЛИТЬ)\n"
+    "<b>Стереть континент</b> (все долины мира) - два шага:\n"
+    "1) <code>/вч_wipe_start 1</code> - id любой долины-якоря\n"
+    "2) скопируй и отправь команду с кодом + словом УДАЛИТЬ\n"
+    "\n"
+    "<b>Новая долина</b>: в группе <code>/вотчина</code> - "
+    "автоматически встаёт на дорогу порталов рядом со случайной.\n"
     "\n"
     "<b>Заморозка</b> усадьбы: 1 = заморозить, 0 = снять:\n"
     "<code>/вч_freeze 3 1</code>\n"
@@ -95,24 +97,20 @@ async def cmd_tick(message: Message, bot: Bot) -> None:
         return
     engine = get_engine()
     try:
-        parts = (message.text or "").split()
-        if len(parts) >= 2:
-            realm_id = int(parts[1])
-            realms = [engine.db.get_realm(realm_id)]
-            if not realms[0]:
-                raise ValueError("Долина не найдена")
-        else:
-            realms = engine.db.list_realms()
-            if not realms:
-                raise ValueError("Нет долин")
-
-        for realm in realms:
-            result = engine.run_realm_tick(realm["id"])
-            digest = result.get("digest") or ""
-            chat_id = result.get("chat_id") or realm["chat_id"]
-            if digest and chat_id:
-                await post_digest(bot, chat_id, realm["id"], digest)
-            await answer_html(message, f"Тик realm={realm['id']} выполнен.")
+        world = engine.db.get_or_create_world()
+        result = engine.run_world_tick(int(world["id"]))
+        n = 0
+        for item in result.get("realms") or []:
+            digest = item.get("digest") or ""
+            chat_id = item.get("chat_id")
+            realm_id = item.get("realm_id")
+            if digest and chat_id and realm_id:
+                await post_digest(bot, chat_id, int(realm_id), digest)
+                n += 1
+        await answer_html(
+            message,
+            f"Тик континента выполнен ({n} сводок).",
+        )
     except ValueError as exc:
         await answer_html(message, str(exc))
     except Exception:
@@ -169,21 +167,27 @@ async def cmd_event(message: Message) -> None:
         realm = engine.db.get_realm(realm_id)
         if not realm:
             raise ValueError("Долина не найдена")
+        world_id = engine._world_id_for_realm(realm_id)
         if key in MINOR_EVENTS:
             meta = MINOR_EVENTS[key]
-            engine.db.update_realm(
-                realm_id,
+            engine.db.update_world(
+                world_id,
                 active_minor_key=key,
                 active_minor_until=None,
             )
-            note = f"Событие \"{meta['name_ru']}\" до следующего тика. {meta['mechanics']}"
+            engine.db.sync_realms_clock_from_world(world_id)
+            note = (
+                f"Событие континента \"{meta['name_ru']}\" до следующего тика. "
+                f"{meta['mechanics']}"
+            )
         else:
-            engine.db.update_realm(
-                realm_id,
+            engine.db.update_world(
+                world_id,
                 active_minor_key=key,
                 active_minor_until=None,
             )
-            note = f"Установлен ключ события \"{key}\" до следующего тика."
+            engine.db.sync_realms_clock_from_world(world_id)
+            note = f"Ключ события континента \"{key}\" до следующего тика."
         await answer_html(message, note)
     except ValueError as exc:
         await answer_html(message, str(exc))

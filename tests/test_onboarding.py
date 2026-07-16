@@ -574,7 +574,8 @@ def test_guide_explains_patrol():
 
     text = game_guide()
     assert "<b>Дозор</b>" in text
-    assert f"{B.PATROL_COST_MIGHT} силы" in text
+    assert "силу не тратит" in text
+    assert "1 действие" in text
     assert f"+{B.PATROL_DEFENSE_BONUS} к защите" in text
     assert f"на {B.PATROL_TICKS} тик(а)" in text
     assert "сторожка даёт защиту постоянно" in text

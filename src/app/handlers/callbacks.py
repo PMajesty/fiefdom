@@ -231,6 +231,16 @@ def _ensure_owner(engine, fief_id: int, user_id: int) -> dict:
     return fief
 
 
+def _ensure_owner_active(engine, fief_id: int, user_id: int) -> dict:
+    fief = _ensure_owner(engine, fief_id, user_id)
+    if not engine.fief_is_active_play(fief):
+        raise ValueError(
+            "Сначала выберите эту долину активной "
+            "(откройте усадьбу здесь или список в /start)"
+        )
+    return fief
+
+
 @router.callback_query(F.data.startswith("pick:"))
 async def cb_pick_starter(callback: CallbackQuery) -> None:
     engine = get_engine()
@@ -330,20 +340,18 @@ async def cb_more(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("ftv:"))
 async def cb_force_tick_vote(callback: CallbackQuery) -> None:
-    """Голос за досрочный тик долины."""
+    """Голос за досрочный тик континента (без спама в чат)."""
     engine = get_engine()
     try:
         fief_id = int(callback.data.split(":")[1])
-        fief = _ensure_owner(engine, fief_id, callback.from_user.id)
+        _ensure_owner_active(engine, fief_id, callback.from_user.id)
         result = engine.cast_force_tick_vote(fief_id)
         status = result["status"]
         progress = result["progress"]
-        label = engine.fief_label(result["fief"])
-        realm_id = int(fief["realm_id"])
 
         if status == "too_few":
             await callback.answer(
-                f"Нужно минимум {B.FORCE_TICK_MIN_PLAYERS} игрока в долине",
+                f"Нужно минимум {B.FORCE_TICK_MIN_PLAYERS} игрока на континенте",
                 show_alert=True,
             )
             return
@@ -358,12 +366,6 @@ async def cb_force_tick_vote(callback: CallbackQuery) -> None:
                 f"Голос учтён: {progress['votes']}/{progress['needed']}",
                 show_alert=True,
             )
-            await announce_realm(
-                callback.bot,
-                realm_id,
-                f"⏳ {label} голосует за тик сейчас "
-                f"({progress['votes']}/{progress['needed']})",
-            )
             await reply_game(
                 callback.message,
                 engine.status_card(fief_id),
@@ -371,23 +373,22 @@ async def cb_force_tick_vote(callback: CallbackQuery) -> None:
             )
             return
 
-        # status == "forced"
         tick = result.get("tick") or {}
-        digest = tick.get("digest")
-        chat_id = tick.get("chat_id")
-        await callback.answer("Досрочный тик! Сводка в чате долины.", show_alert=True)
-        await announce_realm(
-            callback.bot,
-            realm_id,
-            f"⚡ Долина проголосовала за тик сейчас - ход делает {label}.",
+        await callback.answer(
+            "Досрочный тик континента! Сводки в чатах долин.",
+            show_alert=True,
         )
-        if digest and chat_id:
-            await post_digest(callback.bot, chat_id, realm_id, digest)
-        deserter_event = tick.get("deserter_event")
-        if deserter_event and chat_id:
-            from app.scheduler import post_deserter_race
+        from app.scheduler import post_deserter_race
 
-            await post_deserter_race(callback.bot, chat_id, deserter_event)
+        for item in tick.get("realms") or []:
+            digest = item.get("digest")
+            chat_id = item.get("chat_id")
+            realm_id = item.get("realm_id")
+            if digest and chat_id and realm_id:
+                await post_digest(callback.bot, chat_id, int(realm_id), digest)
+            deserter_event = item.get("deserter_event")
+            if deserter_event and chat_id:
+                await post_deserter_race(callback.bot, chat_id, deserter_event)
         await reply_game(
             callback.message,
             engine.status_card(fief_id),
@@ -671,18 +672,14 @@ async def cb_raid(callback: CallbackQuery) -> None:
             return
 
         if len(parts) == 2:
-            others = [
-                o
-                for o in engine.db.list_fiefs(fief["realm_id"])
-                if o["id"] != fief_id and not o.get("frozen")
-            ]
+            others = engine.list_raid_target_fiefs(fief_id)
             await _ok(callback)
             if not others:
                 await answer_html(callback.message, "Некого грабить.")
                 return
             await answer_html(
                 callback.message,
-                "Выберите цель:",
+                "Выберите цель (долина и соседи по порталу):",
                 reply_markup=dm_mod.raid_targets_kb(fief_id, others, engine),
             )
             return

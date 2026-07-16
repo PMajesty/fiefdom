@@ -33,6 +33,11 @@ class RaidActionResult:
     intercept_applied: bool = False
     interceptor_fief_id: int | None = None
     interceptor_user_id: int | None = None
+    attacker_realm_id: int = 0
+    victim_realm_id: int = 0
+    via_portal: bool = False
+    attacker_public_line: str = ""
+    victim_public_line: str = ""
 
     def victim_dm_text(self) -> str:
         if self.success:

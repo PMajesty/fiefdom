@@ -451,7 +451,10 @@ def test_patrol_confirm_callback_shape():
     assert patrol_prompt_callback(9) == "pat:9"
     assert patrol_confirm_callback(9) == "pat:9:ok"
     text = patrol_confirm_text()
-    assert f"−{B.PATROL_COST_MIGHT} силы" in text
+    if B.PATROL_COST_MIGHT > 0:
+        assert f"−{B.PATROL_COST_MIGHT} силы" in text
+    else:
+        assert "силы" not in text
     assert "1 действие" in text
     assert f"на {B.PATROL_TICKS} тик(а)" in text
     assert f"+{B.PATROL_DEFENSE_BONUS} защиты" in text

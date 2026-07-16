@@ -371,6 +371,343 @@ class Database:
                 "UPDATE fiefs SET patrol_until = NULL, shield_until = NULL "
                 "WHERE patrol_until IS NOT NULL OR shield_until IS NOT NULL;"
             )
+            self._ensure_world_schema()
+
+    def _ensure_world_schema(self) -> None:
+        """Континент: один world, линейный chain_index, зеркало часов на realms."""
+        self.cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS worlds (
+                id BIGSERIAL PRIMARY KEY,
+                name TEXT NOT NULL DEFAULT 'Континент',
+                day_number INT NOT NULL DEFAULT 1,
+                tick_index INT NOT NULL DEFAULT 0,
+                timezone TEXT NOT NULL DEFAULT 'Europe/Moscow',
+                last_tick_at TIMESTAMPTZ,
+                last_tick_local_date DATE,
+                last_tick_slot INT,
+                next_catastrophe_tick INT,
+                next_catastrophe_key TEXT,
+                last_catastrophe_key TEXT,
+                next_catastrophe_at TIMESTAMPTZ,
+                active_minor_key TEXT,
+                active_minor_until TIMESTAMPTZ,
+                pending_minor_key TEXT,
+                forced_tick_count INT NOT NULL DEFAULT 0,
+                wipe_confirm_code TEXT,
+                wipe_confirm_until TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+        self.cursor.execute(
+            "ALTER TABLE realms ADD COLUMN IF NOT EXISTS world_id BIGINT "
+            "REFERENCES worlds(id);"
+        )
+        self.cursor.execute(
+            "ALTER TABLE realms ADD COLUMN IF NOT EXISTS chain_index INT;"
+        )
+        self.cursor.execute(
+            "ALTER TABLE tick_force_votes ADD COLUMN IF NOT EXISTS world_id BIGINT "
+            "REFERENCES worlds(id) ON DELETE CASCADE;"
+        )
+        self.cursor.execute(
+            "ALTER TABLE raids_log ADD COLUMN IF NOT EXISTS victim_realm_id BIGINT;"
+        )
+        # Один континент + миграция существующих долин.
+        self.cursor.execute("SELECT id FROM worlds ORDER BY id LIMIT 1;")
+        world_row = self.cursor.fetchone()
+        if not world_row:
+            self.cursor.execute(
+                """
+                INSERT INTO worlds (name, day_number, tick_index, timezone)
+                VALUES ('Континент', 1, 0, 'Europe/Moscow')
+                RETURNING id;
+                """
+            )
+            world_id = int(self.cursor.fetchone()[0])
+        else:
+            world_id = int(world_row[0])
+
+        self.cursor.execute(
+            "SELECT COUNT(*) FROM realms WHERE world_id IS NULL OR chain_index IS NULL;"
+        )
+        need_attach = int(self.cursor.fetchone()[0] or 0)
+        if need_attach > 0:
+            self.cursor.execute(
+                """
+                SELECT id, tick_index, day_number, timezone,
+                       last_tick_at, last_tick_local_date, last_tick_slot,
+                       next_catastrophe_tick, next_catastrophe_key,
+                       last_catastrophe_key, active_minor_key, pending_minor_key,
+                       forced_tick_count
+                FROM realms
+                ORDER BY tick_index DESC, day_number DESC, id ASC
+                LIMIT 1;
+                """
+            )
+            leader = self.cursor.fetchone()
+            if leader:
+                (
+                    _lid,
+                    l_tick,
+                    l_day,
+                    l_tz,
+                    l_tick_at,
+                    l_tick_date,
+                    l_tick_slot,
+                    l_next_cat_tick,
+                    l_next_cat_key,
+                    l_last_cat_key,
+                    l_active_minor,
+                    l_pending_minor,
+                    l_forced,
+                ) = leader
+                self.cursor.execute(
+                    """
+                    UPDATE worlds SET
+                        day_number=%s, tick_index=%s, timezone=%s,
+                        last_tick_at=%s, last_tick_local_date=%s, last_tick_slot=%s,
+                        next_catastrophe_tick=%s, next_catastrophe_key=%s,
+                        last_catastrophe_key=%s, active_minor_key=%s,
+                        pending_minor_key=%s, forced_tick_count=%s
+                    WHERE id=%s;
+                    """,
+                    (
+                        int(l_day or 1),
+                        int(l_tick or 0),
+                        l_tz or "Europe/Moscow",
+                        l_tick_at,
+                        l_tick_date,
+                        l_tick_slot,
+                        l_next_cat_tick,
+                        l_next_cat_key,
+                        l_last_cat_key,
+                        l_active_minor,
+                        l_pending_minor,
+                        int(l_forced or 0),
+                        world_id,
+                    ),
+                )
+                g_tick = int(l_tick or 0)
+                self.cursor.execute("SELECT id, tick_index FROM realms ORDER BY id;")
+                for rid, r_tick in self.cursor.fetchall():
+                    delta = g_tick - int(r_tick or 0)
+                    if delta == 0:
+                        continue
+                    rid_i = int(rid)
+                    for col in (
+                        "patrol_until_tick",
+                        "shield_until_tick",
+                        "last_raid_tick",
+                        "last_active_tick",
+                    ):
+                        self.cursor.execute(
+                            f"UPDATE fiefs SET {col} = {col} + %s "
+                            f"WHERE realm_id=%s AND {col} IS NOT NULL;",
+                            (delta, rid_i),
+                        )
+                    for table, col in (
+                        ("trade_offers", "expires_tick"),
+                        ("pact_invites", "expires_tick"),
+                        ("personal_deals", "expires_tick"),
+                        ("realm_events", "resolves_tick"),
+                        ("raids_log", "tick_index"),
+                    ):
+                        self.cursor.execute(
+                            f"UPDATE {table} SET {col} = {col} + %s "
+                            f"WHERE realm_id=%s AND {col} IS NOT NULL;",
+                            (delta, rid_i),
+                        )
+
+            self.cursor.execute(
+                """
+                WITH ordered AS (
+                    SELECT id, ROW_NUMBER() OVER (ORDER BY id) - 1 AS idx
+                    FROM realms
+                )
+                UPDATE realms r
+                SET world_id = %s,
+                    chain_index = ordered.idx
+                FROM ordered
+                WHERE r.id = ordered.id;
+                """,
+                (world_id,),
+            )
+            self.cursor.execute(
+                """
+                UPDATE realms SET
+                    day_number = w.day_number,
+                    tick_index = w.tick_index,
+                    timezone = w.timezone,
+                    last_tick_at = w.last_tick_at,
+                    last_tick_local_date = w.last_tick_local_date,
+                    last_tick_slot = w.last_tick_slot,
+                    next_catastrophe_tick = w.next_catastrophe_tick,
+                    next_catastrophe_key = w.next_catastrophe_key,
+                    last_catastrophe_key = w.last_catastrophe_key,
+                    active_minor_key = w.active_minor_key,
+                    pending_minor_key = w.pending_minor_key,
+                    forced_tick_count = w.forced_tick_count
+                FROM worlds w
+                WHERE w.id = %s AND realms.world_id = w.id;
+                """,
+                (world_id,),
+            )
+
+        self.cursor.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_realms_world_chain
+            ON realms(world_id, chain_index);
+            """
+        )
+        self.cursor.execute(
+            """
+            UPDATE tick_force_votes v
+            SET world_id = r.world_id
+            FROM realms r
+            WHERE v.realm_id = r.id AND v.world_id IS NULL;
+            """
+        )
+        self.cursor.execute(
+            """
+            UPDATE raids_log
+            SET victim_realm_id = realm_id
+            WHERE victim_realm_id IS NULL;
+            """
+        )
+
+    # --- world ---
+    def get_or_create_world(self) -> dict:
+        row = self._fetchone("SELECT * FROM worlds ORDER BY id LIMIT 1;")
+        if row:
+            return row
+        with self.lock:
+            self.cursor.execute(
+                """
+                INSERT INTO worlds (name) VALUES ('Континент') RETURNING *;
+                """
+            )
+            cols = [d[0] for d in self.cursor.description]
+            data = dict(zip(cols, self.cursor.fetchone()))
+            self.commit()
+            return data
+
+    def get_world(self, world_id: int | None = None) -> dict | None:
+        if world_id is None:
+            return self.get_or_create_world()
+        return self._fetchone("SELECT * FROM worlds WHERE id=%s;", (int(world_id),))
+
+    def update_world(self, world_id: int, **fields: Any) -> None:
+        if not fields:
+            return
+        cols = []
+        vals = []
+        for k, v in fields.items():
+            cols.append(f"{k}=%s")
+            vals.append(v)
+        vals.append(int(world_id))
+        with self.lock:
+            self.cursor.execute(
+                f"UPDATE worlds SET {', '.join(cols)} WHERE id=%s;",
+                tuple(vals),
+            )
+            self.commit()
+
+    def sync_realms_clock_from_world(self, world_id: int) -> None:
+        """Зеркалит континентальные часы/события на все долины мира."""
+        with self.lock:
+            self.cursor.execute(
+                """
+                UPDATE realms SET
+                    day_number = w.day_number,
+                    tick_index = w.tick_index,
+                    timezone = w.timezone,
+                    last_tick_at = w.last_tick_at,
+                    last_tick_local_date = w.last_tick_local_date,
+                    last_tick_slot = w.last_tick_slot,
+                    next_catastrophe_tick = w.next_catastrophe_tick,
+                    next_catastrophe_key = w.next_catastrophe_key,
+                    last_catastrophe_key = w.last_catastrophe_key,
+                    active_minor_key = w.active_minor_key,
+                    pending_minor_key = w.pending_minor_key,
+                    forced_tick_count = w.forced_tick_count
+                FROM worlds w
+                WHERE w.id = %s AND realms.world_id = w.id;
+                """,
+                (int(world_id),),
+            )
+            self.commit()
+
+    def list_realms_by_chain(self, world_id: int) -> list[dict]:
+        return self._fetchall(
+            "SELECT * FROM realms WHERE world_id=%s ORDER BY chain_index, id;",
+            (int(world_id),),
+        )
+
+    def shift_chain_indices(self, world_id: int, from_index: int, delta: int = 1) -> None:
+        """Сдвигает индексы по одному с хвоста, чтобы не бить UNIQUE(world_id, chain_index)."""
+        with self.lock:
+            self.cursor.execute(
+                """
+                SELECT id, chain_index FROM realms
+                WHERE world_id=%s AND chain_index >= %s
+                ORDER BY chain_index DESC;
+                """,
+                (int(world_id), int(from_index)),
+            )
+            rows = self.cursor.fetchall()
+            for rid, idx in rows:
+                self.cursor.execute(
+                    "UPDATE realms SET chain_index=%s WHERE id=%s;",
+                    (int(idx) + int(delta), int(rid)),
+                )
+            self.commit()
+
+    def recompact_chain_indices(self, world_id: int) -> None:
+        with self.lock:
+            self.cursor.execute(
+                """
+                WITH ordered AS (
+                    SELECT id, ROW_NUMBER() OVER (ORDER BY chain_index, id) - 1 AS idx
+                    FROM realms WHERE world_id=%s
+                )
+                UPDATE realms r
+                SET chain_index = ordered.idx
+                FROM ordered
+                WHERE r.id = ordered.id;
+                """,
+                (int(world_id),),
+            )
+            self.commit()
+
+    def list_adjacent_realms(self, realm_id: int) -> list[dict]:
+        realm = self.get_realm(realm_id)
+        if not realm or realm.get("world_id") is None or realm.get("chain_index") is None:
+            return []
+        return self._fetchall(
+            """
+            SELECT * FROM realms
+            WHERE world_id=%s
+              AND id <> %s
+              AND ABS(chain_index - %s) = 1
+            ORDER BY chain_index;
+            """,
+            (int(realm["world_id"]), int(realm_id), int(realm["chain_index"])),
+        )
+
+    def realms_are_adjacent(self, realm_a: int, realm_b: int) -> bool:
+        if int(realm_a) == int(realm_b):
+            return True
+        a = self.get_realm(realm_a)
+        b = self.get_realm(realm_b)
+        if not a or not b:
+            return False
+        if a.get("world_id") is None or a.get("world_id") != b.get("world_id"):
+            return False
+        if a.get("chain_index") is None or b.get("chain_index") is None:
+            return False
+        return abs(int(a["chain_index"]) - int(b["chain_index"])) == 1
 
     # --- users ---
     def upsert_user(self, telegram_id: int, username: str | None, display_name: str) -> None:
@@ -426,14 +763,29 @@ class Database:
         tick_minute: int,
         feature_flags: dict,
         next_catastrophe_tick: int,
+        *,
+        world_id: int | None = None,
+        chain_index: int | None = None,
+        day_number: int = 1,
+        tick_index: int = 0,
+        last_tick_local_date=None,
+        last_tick_slot: int | None = None,
+        next_catastrophe_key: str | None = None,
+        pending_minor_key: str | None = None,
+        active_minor_key: str | None = None,
     ) -> dict:
         with self.lock:
             self.cursor.execute(
                 """
                 INSERT INTO realms (
                     chat_id, title, width, height, timezone, tick_hour, tick_minute,
-                    feature_flags, next_catastrophe_tick, tick_index
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,0)
+                    feature_flags, next_catastrophe_tick, tick_index, day_number,
+                    world_id, chain_index, last_tick_local_date, last_tick_slot,
+                    next_catastrophe_key, pending_minor_key, active_minor_key
+                ) VALUES (
+                    %s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,
+                    %s,%s,%s,%s,%s,%s,%s
+                )
                 RETURNING *;
                 """,
                 (
@@ -446,6 +798,15 @@ class Database:
                     tick_minute,
                     json.dumps(feature_flags),
                     next_catastrophe_tick,
+                    int(tick_index),
+                    int(day_number),
+                    world_id,
+                    chain_index,
+                    last_tick_local_date,
+                    last_tick_slot,
+                    next_catastrophe_key,
+                    pending_minor_key,
+                    active_minor_key,
                 ),
             )
             row = self.cursor.fetchone()
@@ -782,15 +1143,19 @@ class Database:
     # --- raids ---
     def log_raid(self, **fields: Any) -> dict:
         with self.lock:
+            attacker_realm = fields["realm_id"]
+            victim_realm = fields.get("victim_realm_id", attacker_realm)
             self.cursor.execute(
                 """
                 INSERT INTO raids_log (
-                    realm_id, attacker_fief_id, victim_fief_id, success,
-                    might_spent, grain_stolen, goods_stolen, public_line, tick_index
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *;
+                    realm_id, victim_realm_id, attacker_fief_id, victim_fief_id,
+                    success, might_spent, grain_stolen, goods_stolen, public_line,
+                    tick_index
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *;
                 """,
                 (
-                    fields["realm_id"],
+                    attacker_realm,
+                    victim_realm,
                     fields["attacker_fief_id"],
                     fields["victim_fief_id"],
                     fields["success"],
@@ -951,25 +1316,34 @@ class Database:
         )
 
     def add_force_tick_vote(self, realm_id: int, fief_id: int) -> bool:
-        """True если голос записан впервые."""
+        """True если голос записан впервые. Голос континентальный (world_id)."""
+        realm = self.get_realm(realm_id)
+        world_id = int(realm["world_id"]) if realm and realm.get("world_id") else None
         with self.lock:
             self.cursor.execute(
                 """
-                INSERT INTO tick_force_votes (realm_id, fief_id)
-                VALUES (%s, %s)
-                ON CONFLICT DO NOTHING
+                INSERT INTO tick_force_votes (realm_id, fief_id, world_id)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (realm_id, fief_id) DO NOTHING
                 RETURNING fief_id;
                 """,
-                (int(realm_id), int(fief_id)),
+                (int(realm_id), int(fief_id), world_id),
             )
             row = self.cursor.fetchone()
             self.commit()
             return row is not None
 
     def list_force_tick_votes(self, realm_id: int) -> list[dict]:
+        """Совместимость: голоса долины. Для континента используйте list_world_force_tick_votes."""
         return self._fetchall(
             "SELECT * FROM tick_force_votes WHERE realm_id=%s;",
             (int(realm_id),),
+        )
+
+    def list_world_force_tick_votes(self, world_id: int) -> list[dict]:
+        return self._fetchall(
+            "SELECT * FROM tick_force_votes WHERE world_id=%s;",
+            (int(world_id),),
         )
 
     def clear_force_tick_votes(self, realm_id: int) -> int:
@@ -978,6 +1352,16 @@ class Database:
             self.cursor.execute(
                 "DELETE FROM tick_force_votes WHERE realm_id=%s RETURNING fief_id;",
                 (int(realm_id),),
+            )
+            rows = self.cursor.fetchall()
+            self.commit()
+            return len(rows)
+
+    def clear_world_force_tick_votes(self, world_id: int) -> int:
+        with self.lock:
+            self.cursor.execute(
+                "DELETE FROM tick_force_votes WHERE world_id=%s RETURNING fief_id;",
+                (int(world_id),),
             )
             rows = self.cursor.fetchall()
             self.commit()

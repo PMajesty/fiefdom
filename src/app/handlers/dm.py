@@ -200,9 +200,11 @@ def format_build_tile_button(
 
 
 def patrol_confirm_text() -> str:
+    cost = int(B.PATROL_COST_MIGHT)
+    cost_bit = f"−{cost} силы, " if cost > 0 else ""
     return (
         f"Выставить дозор? Усилит защиту от набегов на {B.PATROL_TICKS} тик(а) "
-        f"(−{B.PATROL_COST_MIGHT} силы, 1 действие, +{B.PATROL_DEFENSE_BONUS} защиты)."
+        f"({cost_bit}1 действие, +{B.PATROL_DEFENSE_BONUS} защиты)."
     )
 
 
@@ -425,6 +427,10 @@ def raid_targets_kb(fief_id: int, others: list[dict], engine=None) -> InlineKeyb
     rows = []
     for o in others[:20]:
         label = engine.fief_label(o) if engine is not None else o["name"]
+        if o.get("via_portal") and engine is not None:
+            realm = engine.db.get_realm(o["realm_id"]) or {}
+            title = str(realm.get("title") or "портал")[:12]
+            label = f"{title}: {label}"
         rows.append(
             [
                 InlineKeyboardButton(
@@ -787,17 +793,13 @@ async def _offer_raid(message: Message, engine, fief: dict) -> None:
             reply_markup=fief_home_kb(engine, fief["id"]),
         )
         return
-    others = [
-        o
-        for o in engine.db.list_fiefs(fief["realm_id"])
-        if o["id"] != fief["id"] and not o.get("frozen")
-    ]
+    others = engine.list_raid_target_fiefs(int(fief["id"]))
     if not others:
         await answer_html(message, "Некого грабить.")
         return
     await answer_html(
         message,
-        "Выберите цель набега:",
+        "Выберите цель набега (своя долина и соседи по порталу):",
         reply_markup=raid_targets_kb(fief["id"], others, engine),
     )
 
@@ -855,12 +857,18 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
             reply_markup=fief_home_kb(engine, pending["fief_id"]),
         )
         await _notify_raid_parties(message.bot, result)
-        attacker = engine.db.get_fief(pending["fief_id"])
-        if attacker:
+        await announce_realm(
+            message.bot,
+            result.attacker_realm_id or 0,
+            format_raid_announce(result.attacker_public_line or result.public_line),
+        )
+        if result.via_portal and result.victim_realm_id:
             await announce_realm(
                 message.bot,
-                attacker["realm_id"],
-                format_raid_announce(result.public_line),
+                result.victim_realm_id,
+                format_raid_announce(
+                    result.victim_public_line or result.public_line
+                ),
             )
         return True
 
@@ -1065,19 +1073,24 @@ def _parse_send_line(text: str) -> tuple[str, int] | None:
 
 
 def _resolve_fief_ref(engine, realm_id: int, text: str) -> dict | None:
+    """Ищет усадьбу в долине и соседних по порталу (для передачи)."""
     text = text.strip()
+    realm_ids = {int(realm_id)}
+    for nb in engine.db.list_adjacent_realms(int(realm_id)):
+        realm_ids.add(int(nb["id"]))
     if text.isdigit():
         f = engine.db.get_fief(int(text))
-        if f and f["realm_id"] == realm_id:
+        if f and int(f["realm_id"]) in realm_ids:
             return f
         return None
     needle = text.lower()
-    for f in engine.db.list_fiefs(realm_id):
-        label = engine.fief_label(f)
-        if f["name"].lower() == needle or label.lower() == needle:
-            return f
-        user = engine.db.get_user(f["user_id"])
-        uname = (user.get("username") or "").strip().lower() if user else ""
-        if uname and needle in {uname, f"@{uname}", f"усадьба @{uname}"}:
-            return f
+    for rid in sorted(realm_ids):
+        for f in engine.db.list_fiefs(rid):
+            label = engine.fief_label(f)
+            if f["name"].lower() == needle or label.lower() == needle:
+                return f
+            user = engine.db.get_user(f["user_id"])
+            uname = (user.get("username") or "").strip().lower() if user else ""
+            if uname and needle in {uname, f"@{uname}", f"усадьба @{uname}"}:
+                return f
     return None

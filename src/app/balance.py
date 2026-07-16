@@ -177,8 +177,8 @@ RAID_VICTIM_SHIELD_TICKS = 3
 RAID_SAME_VICTIM_TICKS = 6
 RAID_ATTACKER_COOLDOWN_TICKS = 2
 
-PATROL_COST_MIGHT = 5
-PATROL_DEFENSE_BONUS = 10
+PATROL_COST_MIGHT = 0
+PATROL_DEFENSE_BONUS = 18
 PATROL_TICKS = 2
 
 INTERCEPT_MIGHT = 5
@@ -235,16 +235,19 @@ ONBOARD_DAY3_GOODS = 15
 RAID_PACT_UNLOCK_DAY = 3
 
 # --- Досрочный тик (голосование) ---
-# Нужно ≥ FORCE_TICK_MIN_PLAYERS усадеб; порог - все незамороженные.
+# Континент: доля незамороженных усадеб; минимум FORCE_TICK_MIN_PLAYERS.
 FORCE_TICK_MIN_PLAYERS = 2
+FORCE_TICK_VOTE_FRAC = 0.60
 
 
 def force_tick_votes_needed(player_count: int) -> int:
-    """Сколько голосов нужно, чтобы форсировать тик."""
+    """Сколько голосов нужно, чтобы форсировать тик континента."""
+    import math
+
     n = max(0, int(player_count))
     if n < FORCE_TICK_MIN_PLAYERS:
         return FORCE_TICK_MIN_PLAYERS
-    return n
+    return max(FORCE_TICK_MIN_PLAYERS, int(math.ceil(n * FORCE_TICK_VOTE_FRAC)))
 
 
 # Feature flags по умолчанию

@@ -18,6 +18,8 @@ def _utcnow() -> datetime:
 def _base_realm(**overrides):
     data = {
         "id": 1,
+        "world_id": 1,
+        "chain_index": 0,
         "title": "Долина",
         "chat_id": -100,
         "day_number": 3,
@@ -25,10 +27,72 @@ def _base_realm(**overrides):
         "pending_raid_lines": [],
         "active_minor_key": None,
         "active_minor_until": None,
+        "pending_minor_key": None,
         "tick_index": 0,
+        "forced_tick_count": 0,
+        "last_tick_local_date": None,
+        "last_tick_slot": None,
     }
     data.update(overrides)
     return data
+
+
+def _attach_world(db, realm, fiefs: list[dict]) -> dict:
+    """Мок континента для run_realm_tick → run_world_tick."""
+    world = {
+        "id": 1,
+        "name": "Континент",
+        "day_number": realm.get("day_number", 1),
+        "tick_index": realm.get("tick_index", 0),
+        "timezone": realm.get("timezone") or "Europe/Moscow",
+        "last_tick_local_date": realm.get("last_tick_local_date"),
+        "last_tick_slot": realm.get("last_tick_slot"),
+        "forced_tick_count": realm.get("forced_tick_count", 0),
+        "active_minor_key": realm.get("active_minor_key"),
+        "pending_minor_key": realm.get("pending_minor_key"),
+        "active_minor_until": None,
+        "next_catastrophe_tick": 99,
+        "next_catastrophe_key": None,
+        "last_catastrophe_key": None,
+    }
+    db.get_or_create_world.return_value = world
+    db.get_world.return_value = world
+    db.list_realms_by_chain.return_value = [realm]
+    db.clear_world_force_tick_votes = MagicMock(return_value=0)
+
+    def sync(_wid):
+        for k in (
+            "day_number",
+            "tick_index",
+            "timezone",
+            "last_tick_at",
+            "last_tick_local_date",
+            "last_tick_slot",
+            "active_minor_key",
+            "pending_minor_key",
+            "forced_tick_count",
+            "next_catastrophe_tick",
+            "next_catastrophe_key",
+            "last_catastrophe_key",
+        ):
+            if k in world:
+                realm[k] = world[k]
+
+    db.sync_realms_clock_from_world.side_effect = sync
+
+    def update_world(_wid, **fields):
+        world.update(fields)
+        sync(_wid)
+
+    db.update_world.side_effect = update_world
+    db.get_user.side_effect = lambda uid: {
+        "telegram_id": uid,
+        "last_realm_id": 1,
+    }
+    db.list_fiefs_by_user.side_effect = lambda uid: [
+        f for f in fiefs if int(f["user_id"]) == int(uid)
+    ]
+    return world
 
 
 def _base_fief(**overrides):
@@ -57,6 +121,7 @@ def test_tick_applies_harvest_mult_same_day():
     db = MagicMock()
     realm = _base_realm()
     fief = _base_fief()
+    _attach_world(db, realm, [fief])
     db.get_realm.return_value = realm
     db.list_open_trades.return_value = []
     db.list_expired_open_trades.return_value = []
@@ -120,6 +185,7 @@ def test_tick_drought_mitigated_fief_gets_full_mult():
     realm = _base_realm()
     watered = _base_fief(id=10, name="Политая")
     dry = _base_fief(id=11, user_id=1002, name="Сухая")
+    _attach_world(db, realm, [watered, dry])
     db.get_realm.return_value = realm
     db.list_open_trades.return_value = []
     db.list_expired_open_trades.return_value = []
@@ -186,6 +252,7 @@ def test_tick_always_rerolls_minor_even_if_key_active():
     """Каждый тик закрывает старый минор и крутит новый."""
     db = MagicMock()
     realm = _base_realm(active_minor_key="harvest", tick_index=3)
+    _attach_world(db, realm, [])
     db.get_realm.return_value = realm
     db.list_open_trades.return_value = []
     db.list_expired_open_trades.return_value = []
@@ -330,6 +397,7 @@ def test_engine_raid_returns_victim_user_id():
 def _tick_engine_with_schedule(realm: dict):
     db = MagicMock()
     fief = _base_fief()
+    _attach_world(db, realm, [fief])
     db.get_realm.return_value = realm
     db.list_open_trades.return_value = []
     db.list_expired_open_trades.return_value = []
