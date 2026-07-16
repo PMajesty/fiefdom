@@ -170,6 +170,12 @@ RAID_SUCCESS_R = 0.33
 RAID_LOOT_R_MULT = 0.35
 RAID_LOOT_MAX_FRAC = 0.40
 RAID_LOOT_MAX_DAYS_PROD = 3
+# Добыча: у порога успеха тонкая, к overkill (ratio) выходит на полную.
+RAID_LOOT_OVERKILL_R = 0.67
+RAID_LOOT_EDGE_FACTOR = 0.40
+# Случайный разброс добычи после учёта overkill.
+RAID_LOOT_RND_MIN = 0.85
+RAID_LOOT_RND_MAX = 1.15
 # Доля потерянной силы при удачном набеге (провал - вся выделенная сила).
 RAID_SUCCESS_MIGHT_LOSS_FRAC = 0.75
 # Длительности в тиках долины (4 тика/день: 10:00, 13:00, 16:00 и 19:00).

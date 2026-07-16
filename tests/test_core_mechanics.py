@@ -7,7 +7,14 @@ import random
 from app import balance as B
 from app.domain.economy import TileView, fief_daily_production
 from app.domain.map_gen import generate_map
-from app.domain.raids import loot_amounts, resolve_raid, standing_raid_defense
+from random import Random
+
+from app.domain.raids import (
+    loot_amounts,
+    loot_overkill_factor,
+    resolve_raid,
+    standing_raid_defense,
+)
 from app.domain.tick import FiefTickState, apply_fief_tick, collect_pending
 
 
@@ -117,9 +124,58 @@ def test_raid_fail_loses_all_might():
 
 
 def test_raid_loot_caps():
-    g, d = loot_amounts(0.9, 100, 100, 5, 5)
+    g, d = loot_amounts(0.9, 100, 100, 5, 5, rng=Random(0))
     assert g + d <= int(0.40 * 200)  # max stash frac
     assert g + d <= int(3 * (5 + 5))  # max days of prod
+
+
+def test_loot_overkill_factor_edge_vs_crush():
+    assert loot_overkill_factor(B.RAID_SUCCESS_R) == B.RAID_LOOT_EDGE_FACTOR
+    assert loot_overkill_factor(B.RAID_LOOT_OVERKILL_R) == 1.0
+    assert loot_overkill_factor(0.99) == 1.0
+    mid = (B.RAID_SUCCESS_R + B.RAID_LOOT_OVERKILL_R) / 2
+    assert B.RAID_LOOT_EDGE_FACTOR < loot_overkill_factor(mid) < 1.0
+
+
+def test_loot_amounts_edge_thinner_than_overkill():
+    # Один и тот же rng-свинг: у порога добыча заметно меньше, чем при перевесе.
+    edge_g, edge_d = loot_amounts(
+        B.RAID_SUCCESS_R, 200, 200, 50, 50, rng=Random(1)
+    )
+    crush_g, crush_d = loot_amounts(0.75, 200, 200, 50, 50, rng=Random(1))
+    assert edge_g + edge_d > 0
+    assert crush_g + crush_d > edge_g + edge_d
+
+
+class _FixedLootSwing:
+    def __init__(self, value: float) -> None:
+        self.value = value
+
+    def uniform(self, _a: float, _b: float) -> float:
+        return self.value
+
+
+def test_loot_amounts_swing_moves_haul():
+    low_g, low_d = loot_amounts(
+        0.75, 200, 200, 50, 50, rng=_FixedLootSwing(B.RAID_LOOT_RND_MIN)
+    )
+    high_g, high_d = loot_amounts(
+        0.75, 200, 200, 50, 50, rng=_FixedLootSwing(B.RAID_LOOT_RND_MAX)
+    )
+    assert high_g + high_d > low_g + low_d
+
+
+def test_loot_amounts_edge_small_stash_not_empty():
+    g, d = loot_amounts(
+        B.RAID_SUCCESS_R,
+        8,
+        8,
+        50,
+        50,
+        rng=_FixedLootSwing(B.RAID_LOOT_RND_MIN),
+    )
+    assert g + d >= 1
+    assert g + d <= 16
 
 
 def test_raid_success_might_loss_severe():
@@ -135,6 +191,7 @@ def test_raid_success_might_loss_severe():
         barn_level=0,
         victim_daily_grain=20,
         victim_daily_goods=20,
+        rng=Random(0),
     )
     assert r.success is True
     assert r.might_lost == max(1, int(round(8 * B.RAID_SUCCESS_MIGHT_LOSS_FRAC)))

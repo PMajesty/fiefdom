@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from random import Random
 
 from app import balance as B
 
@@ -92,15 +93,31 @@ def unprotected_stash(grain: int, goods: int, barn_level: int) -> tuple[int, int
     return max(0, ug), max(0, ugds)
 
 
+def loot_overkill_factor(ratio: float) -> float:
+    """1.0 при сильном перевесе; RAID_LOOT_EDGE_FACTOR у порога успеха."""
+    lo = float(B.RAID_SUCCESS_R)
+    hi = float(B.RAID_LOOT_OVERKILL_R)
+    if hi <= lo:
+        return 1.0
+    t = (float(ratio) - lo) / (hi - lo)
+    t = max(0.0, min(1.0, t))
+    edge = float(B.RAID_LOOT_EDGE_FACTOR)
+    return edge + (1.0 - edge) * t
+
+
 def loot_amounts(
     ratio: float,
     unprot_grain: int,
     unprot_goods: int,
     victim_daily_grain: float,
     victim_daily_goods: float,
+    rng: Random | None = None,
 ) -> tuple[int, int]:
-    raw_g = ratio * B.RAID_LOOT_R_MULT * unprot_grain
-    raw_d = ratio * B.RAID_LOOT_R_MULT * unprot_goods
+    rng = rng or Random()
+    swing = rng.uniform(float(B.RAID_LOOT_RND_MIN), float(B.RAID_LOOT_RND_MAX))
+    factor = loot_overkill_factor(ratio) * swing
+    raw_g = ratio * B.RAID_LOOT_R_MULT * unprot_grain * factor
+    raw_d = ratio * B.RAID_LOOT_R_MULT * unprot_goods * factor
     total_unprot = unprot_grain + unprot_goods
     desired = raw_g + raw_d
     if desired <= 0 or total_unprot <= 0:
@@ -110,7 +127,16 @@ def loot_amounts(
     scale = min(1.0, cap_frac / desired, (cap_days / desired) if desired else 1.0)
     g = min(int(raw_g * scale), unprot_grain)
     d = min(int(raw_d * scale), unprot_goods)
-    return max(0, g), max(0, d)
+    g, d = max(0, g), max(0, d)
+    # У порога int() часто обнуляет оба; успех при ненулевом складе даёт хотя бы кроху.
+    if g + d == 0 and total_unprot > 0:
+        if unprot_grain >= unprot_goods and unprot_grain > 0:
+            g = 1
+        elif unprot_goods > 0:
+            d = 1
+        else:
+            g = 1
+    return g, d
 
 
 def standing_raid_defense(
@@ -145,6 +171,7 @@ def resolve_raid(
     victim_daily_goods: float,
     fog_ignores_patrol: bool = False,
     victim_might: int = 0,
+    rng: Random | None = None,
 ) -> RaidResult:
     defense = standing_raid_defense(
         watch_defense=watch_defense,
@@ -168,7 +195,9 @@ def resolve_raid(
         )
 
     ug, ud = unprotected_stash(victim_grain, victim_goods, barn_level)
-    g, d = loot_amounts(r, ug, ud, victim_daily_grain, victim_daily_goods)
+    g, d = loot_amounts(
+        r, ug, ud, victim_daily_grain, victim_daily_goods, rng=rng
+    )
     might_lost = max(1, int(round(attack_might * B.RAID_SUCCESS_MIGHT_LOSS_FRAC)))
     might_lost = min(attack_might, might_lost)
     return RaidResult(
