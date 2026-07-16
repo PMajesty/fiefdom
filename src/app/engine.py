@@ -954,10 +954,11 @@ class Engine:
             return "🛒 Рынок пуст."
         lines = ["🛒 Рынок:"]
         for o in offers:
-            tgt = f" → только вам" if o.get("target_fief_id") else ""
+            tgt = ", только вам" if o.get("target_fief_id") else ""
             lines.append(
-                f"#{o['id']}: {o['give_amt']} {B.RES_NAMES_RU[o['give_res']]} "
-                f"→ {o['want_amt']} {B.RES_NAMES_RU[o['want_res']]}{tgt}"
+                f"#{o['id']}: отдаёт {o['give_amt']} "
+                f"{B.RES_NAMES_RU[o['give_res']]} за {o['want_amt']} "
+                f"{B.RES_NAMES_RU[o['want_res']]}{tgt}"
             )
         return "\n".join(lines)
 
@@ -1140,9 +1141,9 @@ class Engine:
         if offers:
             best = max(offers, key=lambda o: o["give_amt"] + o["want_amt"])
             market_line = (
-                f"{format_lots_count(len(offers))}. Лучший: {best['give_amt']} "
-                f"{B.RES_NAMES_RU[best['give_res']]} за {best['want_amt']} "
-                f"{B.RES_NAMES_RU[best['want_res']]}"
+                f"{format_lots_count(len(offers))}. Лучший: отдаёт "
+                f"{best['give_amt']} {B.RES_NAMES_RU[best['give_res']]} за "
+                f"{best['want_amt']} {B.RES_NAMES_RU[best['want_res']]}"
             )
 
         day = realm["day_number"] + 1

@@ -561,7 +561,7 @@ async def cb_trade(callback: CallbackQuery) -> None:
             await reply_game(
                 callback.message,
                 "Отправьте лот: <code>зерно 10 товары 5</code>\n"
-                "(отдаю количество → хочу количество).\n"
+                "(сначала что отдаёте, потом что хотите взамен).\n"
                 "Или напишите \"отмена\".",
                 reply_markup=dm_mod.pending_cancel_kb(fief_id),
             )

@@ -768,7 +768,8 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
         if not parsed:
             await reply_game(
                 message,
-                "Формат: <code>зерно 10 товары 5</code> (отдаю → хочу).\n"
+                "Формат: <code>зерно 10 товары 5</code> "
+                "(сначала что отдаёте, потом что хотите взамен).\n"
                 "Или напишите \"отмена\".",
                 reply_markup=pending_cancel_kb(pending["fief_id"]),
             )

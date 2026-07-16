@@ -68,6 +68,40 @@ def test_format_lots_count_pluralization():
     assert digest.ru_plural(0, "лот", "лота", "лотов") == "лотов"
 
 
+def test_market_text_states_give_and_want_clearly():
+    from unittest.mock import MagicMock
+
+    from app import balance as B
+    from app.engine import Engine
+
+    db = MagicMock()
+    db.list_open_trades.return_value = [
+        {
+            "id": 15,
+            "give_amt": 1,
+            "give_res": B.RES_GRAIN,
+            "want_amt": 1,
+            "want_res": B.RES_GOODS,
+            "target_fief_id": None,
+        },
+        {
+            "id": 9,
+            "give_amt": 3,
+            "give_res": B.RES_GOODS,
+            "want_amt": 10,
+            "want_res": B.RES_GRAIN,
+            "target_fief_id": 7,
+        },
+    ]
+    text = Engine(db).market_text(1, fief_id=7)
+    assert text == (
+        "🛒 Рынок:\n"
+        "#15: отдаёт 1 Зерно за 1 Товары\n"
+        "#9: отдаёт 3 Товары за 10 Зерно, только вам"
+    )
+    assert "→" not in text
+
+
 def test_catastrophes_table_complete():
     expected = {
         "bandit_night",
@@ -214,14 +248,14 @@ def test_format_digest_gdd_shape():
             "Набег Оли на Иру отбит.",
         ],
         event_line="Засуха - урожай слабее; полив за товары в личке.",
-        market_line="3 лота. Лучший: 40 зерна за 25 товаров (Ваня).",
+        market_line="3 лота. Лучший: отдаёт 40 Зерно за 25 Товары.",
         feud_lines=["Саша против Кирилла - неделя вторая."],
         sunday_extra=None,
     )
     assert text.startswith("🏰 Долина друзей - день 43")
     assert "🌙 Ночью: Саша ограбил Кирилла (−34 товара). Набег Оли на Иру отбит." in text
     assert "📜 Сегодня: Засуха - урожай слабее; полив за товары в личке." in text
-    assert "🛒 Рынок: 3 лота. Лучший: 40 зерна за 25 товаров (Ваня)." in text
+    assert "🛒 Рынок: 3 лота. Лучший: отдаёт 40 Зерно за 25 Товары." in text
     assert "⚔️ Вражда: Саша против Кирилла - неделя вторая." in text
     assert "Вражда: Вражда:" not in text
     assert "farm_mult" not in text
