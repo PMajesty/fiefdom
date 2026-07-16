@@ -169,10 +169,88 @@ def _advance_catastrophe_schedule(engine, world: dict, key: str, tick_index: int
     engine.db.sync_realms_clock_from_world(int(world["id"]))
 
 
+def _wave_pair(event: dict) -> tuple[str, int]:
+    return (str(event.get("event_key")), int(event.get("resolves_tick") or 0))
+
+
+def _pick_canonical_catastrophe_wave(
+    active_pairs: list[tuple[dict, dict]], world: dict
+) -> tuple[str, int]:
+    """Каноническая волна при расхождении активных катастроф между долинами.
+
+    Порядок: большинство; ключ по состоянию расписания; earliest resolves_tick;
+    стабильный event_key.
+    """
+    counts: dict[tuple[str, int], int] = {}
+    for _realm, ev in active_pairs:
+        pair = _wave_pair(ev)
+        counts[pair] = counts.get(pair, 0) + 1
+    max_count = max(counts.values())
+    candidates = [pair for pair, n in counts.items() if n == max_count]
+    if len(candidates) == 1:
+        return candidates[0]
+
+    tick_index = int(world.get("tick_index") or 0)
+    next_tick = world.get("next_catastrophe_tick")
+    schedule_due = next_tick is not None and tick_index >= int(next_tick)
+    # Due: волна ещё из next_*; уже сдвинули - из last_* (текущая/прошлая волна).
+    preferred_key = (
+        world.get("next_catastrophe_key")
+        if schedule_due
+        else world.get("last_catastrophe_key")
+    )
+    if preferred_key is not None:
+        keyed = [p for p in candidates if p[0] == str(preferred_key)]
+        if keyed:
+            candidates = keyed
+            if len(candidates) == 1:
+                return candidates[0]
+
+    min_resolves = min(p[1] for p in candidates)
+    candidates = [p for p in candidates if p[1] == min_resolves]
+    if len(candidates) == 1:
+        return candidates[0]
+
+    candidates.sort(key=lambda p: p[0])
+    return candidates[0]
+
+
+def _heal_divergent_catastrophe_wave(
+    engine, world: dict, active_pairs: list[tuple[dict, dict]]
+) -> tuple[str, int, set[int]]:
+    """Сводит расходящиеся активные волны к одной; без игровых штрафов/лута.
+
+    Возвращает (event_key, resolves_tick, realm_ids с канонической волной).
+    """
+    key, resolves_tick = _pick_canonical_catastrophe_wave(active_pairs, world)
+    canonical = (key, resolves_tick)
+    have_ids: set[int] = set()
+    closed: list[int] = []
+    for realm, ev in active_pairs:
+        rid = int(realm["id"])
+        if _wave_pair(ev) == canonical:
+            have_ids.add(rid)
+            continue
+        # Sync heal: закрываем без _resolve_bandit_night и прочих gameplay-эффектов.
+        engine.db.update_event(int(ev["id"]), status="resolved")
+        closed.append(rid)
+    logger.warning(
+        "catastrophe wave divergence healed world=%s canonical=%s resolves_tick=%s "
+        "kept_realms=%s closed_realms=%s",
+        world.get("id"),
+        key,
+        resolves_tick,
+        sorted(have_ids),
+        sorted(closed),
+    )
+    return key, resolves_tick, have_ids
+
+
 async def _maybe_post_world_catastrophe(bot: Bot, engine, world: dict) -> None:
     """Глобальная катастрофа: сначала все события в БД, потом сдвиг расписания, потом посты.
 
     Неполный fan-out дополняется на следующем опросе без второго цикла бед.
+    Расхождение ключей активной волны лечится до resume, а не стопорит fan-out навсегда.
     """
     tick_index = int(world.get("tick_index") or 0)
     next_tick = world.get("next_catastrophe_tick")
@@ -187,16 +265,17 @@ async def _maybe_post_world_catastrophe(bot: Bot, engine, world: dict) -> None:
             active_pairs.append((realm, ev))
 
     if active_pairs:
-        wave_keys = {
-            (str(ev.get("event_key")), int(ev.get("resolves_tick") or 0))
-            for _r, ev in active_pairs
-        }
+        wave_keys = {_wave_pair(ev) for _r, ev in active_pairs}
         if len(wave_keys) != 1:
-            return
-        key, resolves_tick = next(iter(wave_keys))
-        have_ids = {int(r["id"]) for r, _ev in active_pairs}
+            key, resolves_tick, have_ids = _heal_divergent_catastrophe_wave(
+                engine, world, active_pairs
+            )
+        else:
+            key, resolves_tick = next(iter(wave_keys))
+            have_ids = {int(r["id"]) for r, _ev in active_pairs}
         meta = CATASTROPHES.get(key) or {}
         narrative = meta.get("canned_narrative") or ""
+        wave_expired = resolves_tick <= tick_index
         window_t = max(1, resolves_tick - tick_index) if resolves_tick >= tick_index else 1
         for realm in realms:
             if int(realm["id"]) in have_ids:
@@ -204,6 +283,18 @@ async def _maybe_post_world_catastrophe(bot: Bot, engine, world: dict) -> None:
             payload: dict = {"threshold_hint": True}
             if key == "cattle_plague":
                 payload = {"mitigated_fief_ids": []}
+            if wave_expired:
+                # Sync-placeholder: не открываем active, который сразу получит fail-штрафы.
+                engine.db.create_event(
+                    realm_id=realm["id"],
+                    kind="catastrophe",
+                    event_key=key,
+                    payload=payload,
+                    narrative=narrative,
+                    status="resolved",
+                    resolves_tick=resolves_tick,
+                )
+                continue
             event = engine.db.create_event(
                 realm_id=realm["id"],
                 kind="catastrophe",

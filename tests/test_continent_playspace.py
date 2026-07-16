@@ -78,11 +78,13 @@ def test_send_resources_allows_far_same_world():
         target.update(fields)
 
     db.update_fief.side_effect = update_fief
+    db.get_realm.return_value = {"id": 1, "world_id": 9}
     engine = Engine(db)
     engine.require_active_fief = MagicMock(return_value=sender)
     engine.collect_for_fief = MagicMock()
     engine.barn_level = MagicMock(return_value=0)
     engine.fief_label = MagicMock(side_effect=lambda f: f["name"])
+    engine.world_tick_incomplete = MagicMock(return_value=False)
 
     msg = engine.send_resources(1, 2, B.RES_GRAIN, 10)
     assert sender["grain"] == 40
@@ -116,6 +118,7 @@ def test_invite_to_pact_allows_other_valley_same_world():
     db.create_pact_invite.return_value = {"id": 9}
 
     engine = Engine(db)
+    engine.world_tick_incomplete = MagicMock(return_value=False)
     invite = engine.invite_to_pact(1, 2)
     assert invite["id"] == 9
     db.create_pact_invite.assert_called_once()
@@ -159,6 +162,7 @@ def test_accept_trade_allows_other_valley_same_world():
     engine = Engine(db)
     engine.collect_for_fief = MagicMock()
     engine.barn_level = MagicMock(return_value=0)
+    engine.world_tick_incomplete = MagicMock(return_value=False)
 
     msg = engine.accept_trade(2, 7)
     assert msg.startswith("Сделка")

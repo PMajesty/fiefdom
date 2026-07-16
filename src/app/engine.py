@@ -1007,6 +1007,9 @@ class Engine:
             int(atk["realm_id"]), int(vic["realm_id"])
         ):
             raise ValueError("Цель не найдена")
+        self._require_cross_valley_caught_up(
+            int(atk["realm_id"]), int(vic["realm_id"])
+        )
         if atk["id"] == vic["id"]:
             raise ValueError("Нельзя грабить себя")
         if int(atk["user_id"]) == int(vic["user_id"]):
@@ -1050,11 +1053,17 @@ class Engine:
         patrol = tick_active(vic.get("patrol_until_tick"), tick_index)
         intercept = False
         interceptor = None
+        # Пока континент догоняет тик - чужие долины не тратят силу на перехват.
+        incomplete_world = self.world_tick_incomplete(
+            self._world_id_for_realm(int(vic["realm_id"]))
+        )
         if vic.get("pact_id"):
             for m in self.db.pact_members(vic["pact_id"]):
                 if m["id"] == vic["id"]:
                     continue
                 if not m.get("cover_allies"):
+                    continue
+                if incomplete_world and int(m["realm_id"]) != int(vic["realm_id"]):
                     continue
                 if m["might"] >= B.INTERCEPT_MIGHT:
                     intercept = True
@@ -1087,6 +1096,9 @@ class Engine:
             vic_line = f"Из \"{atk_valley}\": {result.public_line}"
 
         with self.db.transaction():
+            self._require_cross_valley_caught_up(
+                int(atk["realm_id"]), int(vic["realm_id"])
+            )
             self._spend_action(atk)
             atk = self.db.get_fief(attacker_id)
             self.db.update_fief(
@@ -1174,6 +1186,13 @@ class Engine:
         if give_amt <= 0 or want_amt <= 0:
             raise ValueError("Количество должно быть > 0")
         fief = self.db.get_fief(fief_id)
+        if target_fief_id is not None:
+            target = self.db.get_fief(target_fief_id)
+            if not target:
+                raise ValueError("Усадьба не найдена")
+            self._require_cross_valley_caught_up(
+                int(fief["realm_id"]), int(target["realm_id"])
+            )
         self.collect_for_fief(fief_id)
         fief = self.db.get_fief(fief_id)
         have = fief["grain"] if give_res == B.RES_GRAIN else fief["goods"]
@@ -1181,6 +1200,13 @@ class Engine:
             raise ValueError("Недостаточно ресурса для предложения")
         with self.db.transaction():
             fief = self.db.get_fief(fief_id)
+            if target_fief_id is not None:
+                target = self.db.get_fief(target_fief_id)
+                if not target:
+                    raise ValueError("Усадьба не найдена")
+                self._require_cross_valley_caught_up(
+                    int(fief["realm_id"]), int(target["realm_id"])
+                )
             have = fief["grain"] if give_res == B.RES_GRAIN else fief["goods"]
             if have < give_amt:
                 raise ValueError("Недостаточно ресурса для предложения")
@@ -1217,6 +1243,9 @@ class Engine:
             int(buyer["realm_id"]), int(trade["realm_id"])
         ):
             raise ValueError("Другой континент")
+        self._require_cross_valley_caught_up(
+            int(buyer["realm_id"]), int(trade["realm_id"])
+        )
         self.collect_for_fief(fief_id)
         buyer = self.db.get_fief(fief_id)
         want = trade["want_res"]
@@ -1234,6 +1263,10 @@ class Engine:
             live = self.db.get_trade(trade_id)
             if not live or live["status"] != "open":
                 return "Лот уже закрыт или недоступен."
+            buyer = self.db.get_fief(fief_id)
+            self._require_cross_valley_caught_up(
+                int(buyer["realm_id"]), int(live["realm_id"])
+            )
             expires_tick = live.get("expires_tick")
             if expires_tick is None or int(expires_tick) <= tick_index:
                 self._refund_trade(live)
@@ -1313,6 +1346,9 @@ class Engine:
             int(sender["realm_id"]), int(receiver["realm_id"])
         ):
             raise ValueError("Другой континент")
+        self._require_cross_valley_caught_up(
+            int(sender["realm_id"]), int(receiver["realm_id"])
+        )
         if int(sender["user_id"]) == int(receiver["user_id"]):
             raise ValueError("Нельзя передать своей другой усадьбе")
         if sender.get("frozen") or receiver.get("frozen"):
@@ -1326,6 +1362,9 @@ class Engine:
             receiver = self.db.get_fief(to_fief_id)
             if not sender or not receiver:
                 raise ValueError("Усадьба не найдена")
+            self._require_cross_valley_caught_up(
+                int(sender["realm_id"]), int(receiver["realm_id"])
+            )
             have = sender["grain"] if res == B.RES_GRAIN else sender["goods"]
             if have < amt:
                 raise ValueError("Недостаточно ресурса")
@@ -1407,19 +1446,30 @@ class Engine:
             int(founder["realm_id"]), int(target["realm_id"])
         ):
             raise ValueError("Другой континент")
+        self._require_cross_valley_caught_up(
+            int(founder["realm_id"]), int(target["realm_id"])
+        )
         if founder_fief_id == target_fief_id:
             raise ValueError("Нельзя пригласить себя")
         if self.db.get_open_pact_invite(pact["id"], target_fief_id):
             raise ValueError("Приглашение уже отправлено")
         realm = self.db.get_realm(founder["realm_id"]) or {}
         tick_index = int(realm.get("tick_index") or 0)
-        invite = self.db.create_pact_invite(
-            realm_id=founder["realm_id"],
-            pact_id=pact["id"],
-            inviter_fief_id=founder_fief_id,
-            target_fief_id=target_fief_id,
-            expires_tick=tick_index + B.PACT_INVITE_EXPIRE_TICKS,
-        )
+        with self.db.transaction():
+            founder = self.db.get_fief(founder_fief_id)
+            target = self.db.get_fief(target_fief_id)
+            if not founder or not target:
+                raise ValueError("Усадьба не найдена")
+            self._require_cross_valley_caught_up(
+                int(founder["realm_id"]), int(target["realm_id"])
+            )
+            invite = self.db.create_pact_invite(
+                realm_id=founder["realm_id"],
+                pact_id=pact["id"],
+                inviter_fief_id=founder_fief_id,
+                target_fief_id=target_fief_id,
+                expires_tick=tick_index + B.PACT_INVITE_EXPIRE_TICKS,
+            )
         return invite
 
     def accept_pact_invite(self, target_fief_id: int, invite_id: int) -> str:
@@ -1446,10 +1496,22 @@ class Engine:
             int(target["realm_id"]), int(pact["realm_id"])
         ):
             raise ValueError("Другой континент")
+        self._require_cross_valley_caught_up(
+            int(target["realm_id"]), int(pact["realm_id"])
+        )
         members = self.db.pact_members(pact["id"])
         if len(members) >= B.PACT_SIZE_MAX:
             raise ValueError("Пакт полон")
         with self.db.transaction():
+            target = self.db.get_fief(target_fief_id)
+            pact = self.db.get_pact(invite["pact_id"])
+            if not target:
+                raise ValueError("Усадьба не найдена")
+            if not pact:
+                raise ValueError("Пакт распущен")
+            self._require_cross_valley_caught_up(
+                int(target["realm_id"]), int(pact["realm_id"])
+            )
             claimed = self.db.claim_open_pact_invite(invite_id, "accepted")
             if not claimed:
                 raise ValueError("Приглашение недоступно")
@@ -1483,16 +1545,30 @@ class Engine:
         fief = self.db.get_fief(fief_id)
         if not fief.get("pact_id"):
             raise ValueError("Вы не в пакте")
-        pact_id = fief["pact_id"]
-        pact = self.db.get_pact(pact_id)
-        self.db.update_fief(fief_id, pact_id=None)
-        members = self.db.pact_members(pact_id)
-        if len(members) < B.PACT_SIZE_MIN:
-            self.db.dissolve_pact(pact_id)
-            return "Вы вышли. Пакт распущен (меньше 2 участников)."
-        if pact and pact["founder_fief_id"] == fief_id and members:
-            self.db._update("pacts", pact_id, {"founder_fief_id": members[0]["id"]})
-        return "Вы вышли из пакта."
+        with self.db.transaction():
+            fief = self.db.get_fief(fief_id)
+            if not fief.get("pact_id"):
+                raise ValueError("Вы не в пакте")
+            pact_id = fief["pact_id"]
+            pact = self.db.get_pact(pact_id)
+            remaining = [
+                m
+                for m in self.db.pact_members(pact_id)
+                if int(m["id"]) != int(fief_id)
+            ]
+            if len(remaining) < B.PACT_SIZE_MIN:
+                leaver_realm = int(fief["realm_id"])
+                if any(int(m["realm_id"]) != leaver_realm for m in remaining):
+                    self._require_continent_caught_up(leaver_realm)
+                self.db.update_fief(fief_id, pact_id=None)
+                self.db.dissolve_pact(pact_id)
+                return "Вы вышли. Пакт распущен (меньше 2 участников)."
+            self.db.update_fief(fief_id, pact_id=None)
+            if pact and pact["founder_fief_id"] == fief_id and remaining:
+                self.db._update(
+                    "pacts", pact_id, {"founder_fief_id": remaining[0]["id"]}
+                )
+            return "Вы вышли из пакта."
 
     def set_cover(self, fief_id: int, enabled: bool) -> str:
         self.db.update_fief(fief_id, cover_allies=enabled)
@@ -1601,8 +1677,26 @@ class Engine:
             f"Голоса за тик сейчас: {progress['votes']}/{progress['needed']}"
         )
 
+    def _forced_tick_mandate_open(self, world_id: int) -> bool:
+        """Есть ли ещё кворум голосов за досрочный тик на континенте."""
+        eligible = self.force_tick_eligible_fiefs_world(world_id)
+        n = len(eligible)
+        if n < B.FORCE_TICK_MIN_PLAYERS:
+            return False
+        eligible_ids = {int(f["id"]) for f in eligible}
+        votes = sum(
+            1
+            for v in self.db.list_world_force_tick_votes(world_id)
+            if int(v["fief_id"]) in eligible_ids
+        )
+        return votes >= B.force_tick_votes_needed(n)
+
     def cast_force_tick_vote(self, fief_id: int) -> dict[str, Any]:
-        """Голос за досрочный тик континента. При пороге - run_world_tick(forced)."""
+        """Голос за досрочный тик континента. При пороге - run_world_tick(forced).
+
+        Голоса не сбрасываем здесь: сброс только после успешного сдвига часов
+        в run_world_tick(forced=True), иначе падение до тика теряет мандат.
+        """
         fief = self.require_active_fief(fief_id)
         if fief.get("frozen"):
             raise ValueError("Усадьба заморожена")
@@ -1624,15 +1718,16 @@ class Engine:
                     "progress": progress,
                     "fief": fief,
                 }
-            cleared = self.db.clear_world_force_tick_votes(world_id)
-            if cleared < progress["needed"]:
-                return {
-                    "status": "voted" if added else "already",
-                    "progress": self.force_tick_progress(realm_id),
-                    "fief": fief,
-                }
 
         tick_result = self.run_world_tick(world_id, forced=True)
+        # Incomplete/resume или нет мандата: дня не форсировали - не врём "forced".
+        # Голоса остаются до реального сдвига часов после догона.
+        if tick_result.get("forced_skipped") or tick_result.get("resumed"):
+            return {
+                "status": "voted" if added else "already",
+                "progress": self.force_tick_progress(realm_id),
+                "fief": fief,
+            }
         return {
             "status": "forced",
             "progress": self.force_tick_progress(realm_id),
@@ -1656,6 +1751,21 @@ class Engine:
             if int(realm["last_economy_tick"]) < tick:
                 return True
         return False
+
+    def _require_continent_caught_up(self, realm_id: int) -> None:
+        """Междолинные мутации запрещены, пока часть долин не догнала тик."""
+        if self.world_tick_incomplete(self._world_id_for_realm(realm_id)):
+            raise ValueError(
+                "Континент ещё догоняет тик. "
+                "Междолинные действия временно недоступны."
+            )
+
+    def _require_cross_valley_caught_up(
+        self, realm_a: int, realm_b: int
+    ) -> None:
+        if int(realm_a) == int(realm_b):
+            return
+        self._require_continent_caught_up(int(realm_a))
 
     def run_world_tick(
         self,
@@ -1720,8 +1830,24 @@ class Engine:
                 world_fields["forced_tick_count"] = (
                     int(world.get("forced_tick_count") or 0) + 1
                 )
-            self.db.update_world(wid, **world_fields)
-            self.db.sync_realms_clock_from_world(wid)
+            # Часы мира + зеркала долин + сброс голосов - один COMMIT.
+            # Иначе crash между update_world и sync оставляет economy на stale realm clock.
+            # Голоса сбрасываем при любом сдвиге часов (scheduled и forced), чтобы
+            # кворум до advance не дал лишний forced-день после resume-догона.
+            with self.db.transaction():
+                if forced and not self._forced_tick_mandate_open(wid):
+                    return {
+                        "world_id": wid,
+                        "realms": [],
+                        "digest": None,
+                        "chat_id": None,
+                        "resumed": False,
+                        "incomplete": self.world_tick_incomplete(wid),
+                        "forced_skipped": True,
+                    }
+                self.db.update_world(wid, **world_fields)
+                self.db.sync_realms_clock_from_world(wid)
+                self.db.clear_world_force_tick_votes(wid)
 
         realm_results = []
         for realm in self.db.list_realms_by_chain(wid):
@@ -1768,7 +1894,11 @@ class Engine:
             if world.get("pending_minor_key") is None:
                 next_minor = roll_minor_event(random.Random())
                 self.db.update_world(wid, pending_minor_key=next_minor or "")
-            self.db.clear_world_force_tick_votes(wid)
+            # Страховка: сброс после успешного сдвига в этом вызове.
+            # На resume не трогаем - голоса, набранные во время incomplete,
+            # остаются мандатом на следующий force после догона.
+            if not resuming:
+                self.db.clear_world_force_tick_votes(wid)
             self.db.sync_realms_clock_from_world(wid)
 
         posted = [x for x in realm_results if not x.get("skipped")]

@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from datetime import date
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from app import balance as B
 from app.engine import Engine
@@ -38,6 +40,7 @@ def _realm(**overrides):
         "last_tick_local_date": date(2026, 7, 16),
         "last_tick_slot": 0,
         "forced_tick_count": 0,
+        "last_economy_tick": 0,
     }
     data.update(overrides)
     return data
@@ -258,6 +261,131 @@ def test_force_tick_already_voted():
     assert result["progress"]["votes"] == 1
 
 
+def test_force_tick_keeps_votes_if_tick_raises_before_advance():
+    """Инвариант: голоса живут, пока forced-сдвиг часов не зафиксирован.
+
+    cast_force_tick_vote больше не clear'ит до run_world_tick; если тик
+    падает до advance, кворум сохраняется.
+    """
+    fiefs = [_fief(10, 1001), _fief(11, 1002)]
+    engine, realm, votes = _engine_with_votes(fiefs, votes={10})
+    engine.run_world_tick = MagicMock(side_effect=RuntimeError("boom before tick"))
+
+    with pytest.raises(RuntimeError, match="boom before tick"):
+        engine.cast_force_tick_vote(11)
+
+    assert votes == {10, 11}
+    assert realm["day_number"] == 5
+    assert realm["tick_index"] == 0
+    engine.run_world_tick.assert_called_once_with(1, forced=True)
+
+
+def test_forced_tick_clears_votes_with_clock_advance_even_if_incomplete():
+    """После успешного forced-advance голоса сброшены; resume без повторного голосования."""
+    fiefs = [_fief(10, 1001), _fief(11, 1002)]
+    engine, realm, votes = _engine_with_votes(fiefs, votes={10, 11})
+    world = engine.db.get_world.return_value
+    engine.run_realm_tick = MagicMock(
+        side_effect=RuntimeError("realm economy failed")
+    )
+
+    with patch("app.engine.roll_minor_event", return_value=None):
+        result = engine.run_world_tick(1, forced=True)
+
+    assert result["incomplete"] is True
+    assert world["tick_index"] == 1
+    assert world["forced_tick_count"] == 1
+    assert votes == set()
+    assert realm.get("last_economy_tick") == 0
+
+
+def test_forced_tick_skips_second_advance_without_mandate():
+    """Параллельный forced без голосов не двигает часы повторно."""
+    fiefs = [_fief(10, 1001), _fief(11, 1002)]
+    engine, realm, votes = _engine_with_votes(fiefs, votes=set())
+    assert votes == set()
+
+    result = engine.run_world_tick(1, forced=True)
+    assert result.get("forced_skipped") is True
+    assert realm["day_number"] == 5
+    assert realm["tick_index"] == 0
+
+
+def test_cast_maps_forced_skipped_to_voted_with_progress():
+    """forced_skipped не выдаёт status forced; прогресс голосов обновлён."""
+    fiefs = [_fief(10, 1001), _fief(11, 1002)]
+    engine, realm, votes = _engine_with_votes(fiefs, votes={10})
+    engine.run_world_tick = MagicMock(
+        return_value={
+            "world_id": 1,
+            "realms": [],
+            "digest": None,
+            "chat_id": None,
+            "resumed": False,
+            "incomplete": False,
+            "forced_skipped": True,
+        }
+    )
+
+    result = engine.cast_force_tick_vote(11)
+
+    assert result["status"] == "voted"
+    assert result["progress"]["votes"] == 2
+    assert result["progress"]["needed"] == 2
+    assert "tick" not in result
+    assert votes == {10, 11}
+    assert realm["day_number"] == 5
+    engine.run_world_tick.assert_called_once_with(1, forced=True)
+
+
+def test_cast_maps_forced_skipped_to_already_with_progress():
+    fiefs = [_fief(10, 1001), _fief(11, 1002)]
+    engine, _, votes = _engine_with_votes(fiefs, votes={10, 11})
+    engine.run_world_tick = MagicMock(
+        return_value={
+            "world_id": 1,
+            "realms": [],
+            "digest": None,
+            "chat_id": None,
+            "resumed": False,
+            "incomplete": False,
+            "forced_skipped": True,
+        }
+    )
+
+    result = engine.cast_force_tick_vote(10)
+
+    assert result["status"] == "already"
+    assert result["progress"]["votes"] == 2
+    assert result["progress"]["needed"] == 2
+    assert votes == {10, 11}
+
+
+def test_cast_quorum_during_incomplete_does_not_claim_forced():
+    """При догоне экономики кворум не форсирует новый день и не сжигает голоса."""
+    fiefs = [_fief(10, 1001), _fief(11, 1002)]
+    engine, realm, votes = _engine_with_votes(fiefs, votes={10})
+    world = engine.db.get_world.return_value
+    world["tick_index"] = 3
+    world["day_number"] = 8
+    world["forced_tick_count"] = 1
+    realm["tick_index"] = 3
+    realm["day_number"] = 8
+    realm["last_economy_tick"] = 2
+    engine.run_realm_tick = MagicMock(
+        return_value={"realm_id": 1, "digest": "d", "chat_id": -100}
+    )
+
+    result = engine.cast_force_tick_vote(11)
+
+    assert result["status"] == "voted"
+    assert world["tick_index"] == 3
+    assert world["day_number"] == 8
+    assert world["forced_tick_count"] == 1
+    assert votes == {10, 11}
+    assert realm["last_economy_tick"] == 3
+
+
 def test_scheduled_tick_clears_votes_without_forced_counter():
     fiefs = [_fief(10, 1001), _fief(11, 1002)]
     engine, realm, votes = _engine_with_votes(fiefs, votes={10, 11})
@@ -266,6 +394,47 @@ def test_scheduled_tick_clears_votes_without_forced_counter():
     assert realm["last_tick_slot"] == 1
     assert realm.get("forced_tick_count", 0) == 0
     assert votes == set()
+
+
+def test_scheduled_advance_clears_votes_before_resume_no_stale_quorum():
+    """Scheduled advance сбрасывает кворум в TX; resume не даёт бесплатный forced-день."""
+    fiefs = [_fief(10, 1001), _fief(11, 1002)]
+    engine, realm, votes = _engine_with_votes(fiefs, votes={10, 11})
+    world = engine.db.get_world.return_value
+    engine.run_realm_tick = MagicMock(
+        side_effect=RuntimeError("realm economy failed")
+    )
+
+    with patch("app.engine.roll_minor_event", return_value=None):
+        first = engine.run_world_tick(1, tick_slot=1)
+
+    assert first["incomplete"] is True
+    assert first["resumed"] is False
+    assert world["tick_index"] == 1
+    assert world["day_number"] == 6
+    assert world.get("forced_tick_count", 0) == 0
+    assert votes == set()
+    assert realm.get("last_economy_tick") == 0
+
+    engine.run_realm_tick = MagicMock(
+        return_value={"realm_id": 1, "digest": "d", "chat_id": -100}
+    )
+    with patch("app.engine.roll_minor_event", return_value=None):
+        resumed = engine.run_world_tick(1)
+
+    assert resumed["resumed"] is True
+    assert resumed["incomplete"] is False
+    assert world["tick_index"] == 1
+    assert world["day_number"] == 6
+    assert votes == set()
+    assert realm.get("last_economy_tick") == 1
+
+    # Без новых голосов forced не двигает день повторно (нет stale quorum).
+    skipped = engine.run_world_tick(1, forced=True)
+    assert skipped.get("forced_skipped") is True
+    assert world["tick_index"] == 1
+    assert world["day_number"] == 6
+    assert world.get("forced_tick_count", 0) == 0
 
 
 def test_more_menu_shows_force_tick_button():

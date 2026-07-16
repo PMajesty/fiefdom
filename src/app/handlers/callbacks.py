@@ -362,6 +362,12 @@ async def cb_force_tick_vote(callback: CallbackQuery) -> None:
                 reply_markup=fief_home_kb(engine, fief_id),
             )
             return
+        if status != "forced":
+            await callback.answer(
+                f"Голос учтён: {progress['votes']}/{progress['needed']}",
+                show_alert=True,
+            )
+            return
 
         tick = result.get("tick") or {}
         await callback.answer(
