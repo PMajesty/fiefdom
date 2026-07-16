@@ -68,6 +68,7 @@ def apply_fief_tick(state: FiefTickState) -> TickOutcome:
         state.tiles,
         hungry=state.hungry,
         farm_mult=state.farm_mult,
+        current_might=int(state.might),
     )
     if state.workshop_mult != 1.0:
         prod = Production(

@@ -6,6 +6,12 @@ from random import Random
 from typing import Sequence
 
 from app import balance as B
+from app.domain.events import (
+    MINOR_EVENTS,
+    SHIPPED_CATASTROPHE_KEYS,
+    SHIPPED_MINOR_KEYS,
+    event_name_ru,
+)
 
 FACT_WEALTH = "wealth"
 FACT_MIGHT = "might"
@@ -17,10 +23,9 @@ TRUTH_FULL = "full"
 TRUTH_FUZZY = "fuzzy"
 TRUTH_FALSE = "false"
 
-# Заголовок всегда напоминает новичкам: это не разведка.
-RUMOR_SECTION_HEADER = "👂 Слухи (не факты - базар может врать):"
+RUMOR_SECTION_HEADER = "👂 Слухи рынка:"
 RUMOR_EMPTY_PULL = (
-    "👂 Слухи - сплетни рынка, не разведка. Сегодня базар молчит.\n"
+    "👂 Слухи рынка. Сегодня площадь молчит.\n"
     "Новые строки появляются в утренней сводке группы."
 )
 
@@ -34,6 +39,14 @@ class FiefRumorSnapshot:
     might: int
     buildings: tuple[tuple[str, int], ...] = ()
     patrol_active: bool = False
+
+
+@dataclass(frozen=True)
+class UpcomingEventHint:
+    """Что рынок может предвещать: ключ и вид (minor/catastrophe)."""
+
+    kind: str
+    key: str
 
 
 def wealth_total(grain: int, goods: int) -> int:
@@ -131,7 +144,7 @@ def _false_building(
     snap: FiefRumorSnapshot,
     rng: Random,
 ) -> tuple[str, int]:
-    all_bld = (B.BLD_FARM, B.BLD_WORKSHOP, B.BLD_WATCH, B.BLD_BARN)
+    all_bld = (B.BLD_MANOR, B.BLD_FARM, B.BLD_WORKSHOP, B.BLD_WATCH, B.BLD_BARN)
     owned = {b for b, _ in snap.buildings}
     missing = [b for b in all_bld if b not in owned]
     if missing:
@@ -186,24 +199,72 @@ def _eligible_fact_types(snap: FiefRumorSnapshot) -> list[str]:
     return types
 
 
+def _event_pool(kind: str) -> list[str]:
+    if kind == "catastrophe":
+        return sorted(SHIPPED_CATASTROPHE_KEYS)
+    return sorted(k for k in SHIPPED_MINOR_KEYS if k in MINOR_EVENTS)
+
+
+def compose_event_rumor(
+    hint: UpcomingEventHint,
+    rng: Random,
+    *,
+    accuracy: float | None = None,
+) -> str:
+    """Слух о грядущем событии: accuracy шанс назвать верный ключ."""
+    accuracy = B.RUMOR_EVENT_ACCURACY if accuracy is None else accuracy
+    pool = _event_pool(hint.kind)
+    if not pool:
+        return "На рынке шепчут, будто долина чего-то ждёт."
+    named = hint.key
+    if rng.random() >= accuracy:
+        others = [k for k in pool if k != hint.key]
+        if others:
+            named = rng.choice(others)
+    title = event_name_ru(hint.kind, named)
+    if hint.kind == "catastrophe":
+        return f"Шепчут, будто близится беда: {title}."
+    return f"Говорят, завтра долина встретит: {title}."
+
+
+def roll_event_rumor_lines(
+    hints: Sequence[UpcomingEventHint],
+    rng: Random,
+    *,
+    line_chance: float | None = None,
+) -> list[str]:
+    """До 1 строки-предвестия из доступных подсказок."""
+    rng = rng or Random()
+    if not hints:
+        return []
+    line_chance = B.RUMOR_EVENT_LINE_CHANCE if line_chance is None else line_chance
+    if rng.random() >= line_chance:
+        return []
+    hint = rng.choice(list(hints))
+    return [compose_event_rumor(hint, rng)]
+
+
 def roll_daily_rumors(
     fiefs: Sequence[FiefRumorSnapshot],
     rng: Random | None = None,
     *,
     max_lines: int | None = None,
     line_chance: float | None = None,
+    event_hints: Sequence[UpcomingEventHint] | None = None,
 ) -> list[str]:
     """Ролл слухов дня. Пустой список = в сводку секцию не добавляем."""
     rng = rng or Random()
+    event_lines = roll_event_rumor_lines(event_hints or (), rng)
     if len(fiefs) < 1:
-        return []
+        return event_lines
 
     max_lines = B.RUMOR_MAX_PER_DAY if max_lines is None else max_lines
     line_chance = B.RUMOR_LINE_CHANCE if line_chance is None else line_chance
     used: set[tuple[int, str]] = set()
-    lines: list[str] = []
+    lines: list[str] = list(event_lines)
 
-    for _ in range(max_lines):
+    fief_slots = max(0, max_lines - len(lines))
+    for _ in range(fief_slots):
         if rng.random() >= line_chance:
             continue
         pool = list(fiefs)
@@ -239,5 +300,5 @@ def format_rumors_pull(lines: Sequence[str]) -> str:
         return RUMOR_EMPTY_PULL
     return (
         f"{section}\n\n"
-        "<i>Это сплетни, не доклад разведки. Верить базарату - на свой страх.</i>"
+        "<i>Сплетни площади - кто во что верит.</i>"
     )

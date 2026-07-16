@@ -21,6 +21,11 @@ def test_minor_events_table_complete():
         "drought",
         "wedding",
         "omen",
+        "blight",
+        "press_gang",
+        "fire",
+        "toll",
+        "spoilage",
     }
     assert set(events.MINOR_EVENTS) == expected
     for key, row in events.MINOR_EVENTS.items():
@@ -131,20 +136,27 @@ def test_shipped_minor_keys_documented_and_subset():
             "drought",
             "wedding",
             "omen",
+            "blight",
+            "press_gang",
+            "fire",
+            "toll",
+            "spoilage",
         }
     )
     assert events.SHIPPED_MINOR_KEYS <= set(events.MINOR_EVENTS)
     gated = set(events.MINOR_EVENTS) - events.SHIPPED_MINOR_KEYS
     assert gated == {"trader"}
+    assert set(events.MINOR_EVENT_WEIGHTS) >= events.SHIPPED_MINOR_KEYS
 
 
 def test_shipped_catastrophe_keys_documented_and_subset():
-    assert events.SHIPPED_CATASTROPHE_KEYS == frozenset({"bandit_night"})
+    assert events.SHIPPED_CATASTROPHE_KEYS == frozenset(
+        {"bandit_night", "cattle_plague"}
+    )
     assert events.SHIPPED_CATASTROPHE_KEYS <= set(events.CATASTROPHES)
     gated = set(events.CATASTROPHES) - events.SHIPPED_CATASTROPHE_KEYS
     assert gated == {
         "flood",
-        "cattle_plague",
         "rat_king",
         "dragon_rumors",
         "black_fair",
@@ -154,13 +166,14 @@ def test_shipped_catastrophe_keys_documented_and_subset():
 def test_gated_content_remains_in_tables():
     assert "trader" in events.MINOR_EVENTS
     assert isinstance(events.minor_effect("trader"), dict)
-    for key in ("deserter", "drought"):
+    for key in ("deserter", "drought", "blight", "fire"):
         assert key in events.MINOR_EVENTS
         assert key in events.SHIPPED_MINOR_KEYS
         assert isinstance(events.minor_effect(key), dict)
     for key in ("flood", "cattle_plague", "rat_king", "dragon_rumors", "black_fair"):
         assert key in events.CATASTROPHES
         assert isinstance(events.catastrophe_effect(key), dict)
+    assert "cattle_plague" in events.SHIPPED_CATASTROPHE_KEYS
 
 
 def test_roll_minor_event_quiet_and_hit():

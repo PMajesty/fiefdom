@@ -139,26 +139,33 @@ async def _maybe_post_catastrophe(bot: Bot, engine, realm: dict) -> None:
         return
 
     rng = random.Random()
-    key = pick_catastrophe(rng, realm.get("last_catastrophe_key"))
+    key = realm.get("next_catastrophe_key") or pick_catastrophe(
+        rng, realm.get("last_catastrophe_key")
+    )
     meta = CATASTROPHES[key]
     window_t = rng.randint(B.CATASTROPHE_WINDOW_TICKS_MIN, B.CATASTROPHE_WINDOW_TICKS_MAX)
     resolves_tick = tick_index + window_t
     narrative = meta["canned_narrative"]
+    payload: dict = {"threshold_hint": True}
+    if key == "cattle_plague":
+        payload = {"mitigated_fief_ids": []}
     event = engine.db.create_event(
         realm_id=realm["id"],
         kind="catastrophe",
         event_key=key,
-        payload={"threshold_hint": True},
+        payload=payload,
         narrative=narrative,
         status="active",
         resolves_tick=resolves_tick,
     )
 
     delay = next_catastrophe_delay_ticks(rng)
+    next_key = pick_catastrophe(rng, key)
     engine.db.update_realm(
         realm["id"],
         last_catastrophe_key=key,
         next_catastrophe_tick=tick_index + delay,
+        next_catastrophe_key=next_key,
         next_catastrophe_at=None,
     )
 
@@ -167,6 +174,11 @@ async def _maybe_post_catastrophe(bot: Bot, engine, realm: dict) -> None:
     if key == "bandit_night":
         need = int(math.ceil(B.BANDIT_NIGHT_MIGHT_PER_PLAYER * players))
         extra = f"\nНужно собрать ≥ {need} силы. Вклад: кнопка ниже (−5 силы за нажатие)."
+    elif key == "cattle_plague":
+        extra = (
+            "\nПоля без тягла дают половину. В личке: "
+            "\"Забить скот\" (−20 зерна) - снять мор у своей усадьбы."
+        )
 
     text = (
         f"⚠️ <b>{meta['name_ru']}</b>\n"
@@ -205,6 +217,9 @@ async def _resolve_expired_catastrophes(bot: Bot, engine, realm: dict) -> None:
         key = ev.get("event_key")
         if key == "bandit_night":
             result_text = _resolve_bandit_night(engine, realm, ev)
+        elif key == "cattle_plague":
+            engine.db.update_event(ev["id"], status="resolved")
+            result_text = "Мор скота отступил. Поля снова дышат."
         else:
             engine.db.update_event(ev["id"], status="resolved")
             meta = CATASTROPHES.get(key) or {}
@@ -244,7 +259,7 @@ def _resolve_bandit_night(engine, realm: dict, event: dict) -> str:
             continue
         if f.get("frozen"):
             continue
-        loss = max(1, int(f["grain"] * 0.15))
+        loss = max(1, int(f["grain"] * B.BANDIT_NIGHT_FAIL_GRAIN_FRAC))
         engine.db.update_fief(f["id"], grain=max(0, f["grain"] - loss))
         loss_note.append(f["name"])
 

@@ -103,7 +103,7 @@ async def cb_deserter_claim(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("drt:"))
 async def cb_drought_mitigate(callback: CallbackQuery) -> None:
-    """Полив засухи: −10 товаров, иммунитет этой усадьбы."""
+    """Полив засухи: товары за иммунитет этой усадьбы."""
     engine = get_engine()
     try:
         fief_id = int(callback.data.split(":")[1])
@@ -123,6 +123,104 @@ async def cb_drought_mitigate(callback: CallbackQuery) -> None:
         await callback.answer(str(exc), show_alert=True)
     except Exception:
         logger.exception("cb_drought_mitigate")
+        await callback.answer("Ошибка", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("cpl:"))
+async def cb_cattle_plague_mitigate(callback: CallbackQuery) -> None:
+    engine = get_engine()
+    try:
+        fief_id = int(callback.data.split(":")[1])
+        _ensure_owner(engine, fief_id, callback.from_user.id)
+        result = engine.mitigate_cattle_plague(fief_id)
+        if result == "already":
+            await callback.answer("Мор у вас уже снят", show_alert=True)
+            return
+        await _ok(callback)
+        await reply_game(
+            callback.message,
+            "Скот забит - мор больше не душит ваши фермы.\n"
+            + engine.status_card(fief_id),
+            reply_markup=fief_home_kb(engine, fief_id),
+        )
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+    except Exception:
+        logger.exception("cb_cattle_plague_mitigate")
+        await callback.answer("Ошибка", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("gth:"))
+async def cb_gather(callback: CallbackQuery) -> None:
+    engine = get_engine()
+    try:
+        parts = callback.data.split(":")
+        fief_id = int(parts[1])
+        _ensure_owner(engine, fief_id, callback.from_user.id)
+        if len(parts) == 2:
+            await _ok(callback)
+            await answer_html(
+                callback.message,
+                (
+                    "Сбор за 1 действие - плоская добыча, здания не нужны:\n"
+                    f"• зерно +{B.GATHER_GRAIN}\n"
+                    f"• товары +{B.GATHER_GOODS}\n"
+                    f"• сила +{B.GATHER_MIGHT}"
+                ),
+                reply_markup=dm_mod.gather_resources_kb(fief_id),
+            )
+            return
+        resource = parts[2]
+        msg = engine.gather_resource(fief_id, resource)
+        await _ok(callback)
+        await reply_game(
+            callback.message,
+            msg + "\n" + engine.status_card(fief_id),
+            reply_markup=fief_home_kb(engine, fief_id),
+        )
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+    except Exception:
+        logger.exception("cb_gather")
+        await callback.answer("Ошибка", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("dml:"))
+async def cb_demolish(callback: CallbackQuery) -> None:
+    engine = get_engine()
+    try:
+        parts = callback.data.split(":")
+        fief_id = int(parts[1])
+        _ensure_owner(engine, fief_id, callback.from_user.id)
+        if len(parts) == 2:
+            tiles = [
+                t
+                for t in engine.db.fief_tiles(fief_id)
+                if not t.get("is_overgrown")
+            ]
+            await _ok(callback)
+            await answer_html(
+                callback.message,
+                (
+                    f"Снос здания: 1 действие, возврат "
+                    f"{int(B.DEMOLISH_REFUND_FRAC * 100)}% вложенных товаров. "
+                    "Двор (главная клетка) снести нельзя."
+                ),
+                reply_markup=dm_mod.demolish_tiles_kb(fief_id, tiles),
+            )
+            return
+        x, y = int(parts[2]), int(parts[3])
+        msg = engine.demolish_building(fief_id, x, y)
+        await _ok(callback)
+        await reply_game(
+            callback.message,
+            msg + "\n" + engine.status_card(fief_id),
+            reply_markup=fief_home_kb(engine, fief_id),
+        )
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+    except Exception:
+        logger.exception("cb_demolish")
         await callback.answer("Ошибка", show_alert=True)
 
 
@@ -217,6 +315,7 @@ async def cb_more(callback: CallbackQuery) -> None:
             reply_markup=more_menu_kb(
                 fief_id,
                 drought_mitigate=engine.fief_can_mitigate_drought(fief_id),
+                cattle_plague_mitigate=engine.fief_can_mitigate_cattle_plague(fief_id),
                 raid_pact_open=open_,
                 lock_hint=hint,
                 force_tick_progress=force_prog,
@@ -467,7 +566,7 @@ async def cb_build(callback: CallbackQuery) -> None:
             return
 
         building = parts[2]
-        if building not in B.BUILDING_COSTS:
+        if building not in B.PLAYER_BUILDINGS:
             await callback.answer("Неизвестное здание", show_alert=True)
             return
 

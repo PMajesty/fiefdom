@@ -324,7 +324,7 @@ def building_types_kb(
     cost_mult: float = 1.0,
 ) -> InlineKeyboardMarkup:
     rows = []
-    for key in B.BUILDING_NAMES_RU:
+    for key in B.PLAYER_BUILDINGS:
         rows.append(
             [
                 InlineKeyboardButton(
@@ -332,6 +332,65 @@ def building_types_kb(
                     callback_data=f"bld:{fief_id}:{key}",
                 )
             ]
+        )
+    rows.append([InlineKeyboardButton(text="< Меню", callback_data=f"st:{fief_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def gather_resources_kb(fief_id: int) -> InlineKeyboardMarkup:
+    fid = int(fief_id)
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"Зерно +{B.GATHER_GRAIN}",
+                    callback_data=f"gth:{fid}:{B.RES_GRAIN}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"Товары +{B.GATHER_GOODS}",
+                    callback_data=f"gth:{fid}:{B.RES_GOODS}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"Сила +{B.GATHER_MIGHT}",
+                    callback_data=f"gth:{fid}:{B.RES_MIGHT}",
+                )
+            ],
+            [InlineKeyboardButton(text="< Меню", callback_data=f"st:{fid}")],
+        ]
+    )
+
+
+def demolish_tiles_kb(fief_id: int, tiles: list[dict]) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for t in tiles[:24]:
+        building = t.get("building")
+        level = int(t.get("building_level") or 0)
+        if not building or level <= 0:
+            continue
+        if building == B.BLD_MANOR or t.get("is_core"):
+            continue
+        name = B.BUILDING_NAMES_RU.get(building, building)
+        refund = B.demolish_refund_goods(str(building), level)
+        label = f"{coord_label(t['x'], t['y'])} {name}{level} · +{refund}"
+        row.append(
+            InlineKeyboardButton(
+                text=label,
+                callback_data=f"dml:{fief_id}:{t['x']}:{t['y']}",
+            )
+        )
+        if len(row) >= 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    if not rows:
+        rows.append(
+            [InlineKeyboardButton(text="Нечего сносить", callback_data=f"st:{fief_id}")]
         )
     rows.append([InlineKeyboardButton(text="< Меню", callback_data=f"st:{fief_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)

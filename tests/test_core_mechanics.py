@@ -118,8 +118,27 @@ def test_raid_fail_loses_all_might():
 
 def test_raid_loot_caps():
     g, d = loot_amounts(0.9, 100, 100, 5, 5)
-    assert g + d <= 50  # 25% of 200
-    assert g + d <= 20  # 2 days prod
+    assert g + d <= int(0.40 * 200)  # max stash frac
+    assert g + d <= int(3 * (5 + 5))  # max days of prod
+
+
+def test_raid_success_might_loss_severe():
+    r = resolve_raid(
+        attacker_name="A",
+        victim_name="B",
+        attack_might=8,
+        watch_defense=0,
+        patrol_active=False,
+        intercept=False,
+        victim_grain=200,
+        victim_goods=200,
+        barn_level=0,
+        victim_daily_grain=20,
+        victim_daily_goods=20,
+    )
+    assert r.success is True
+    assert r.might_lost == max(1, int(round(8 * B.RAID_SUCCESS_MIGHT_LOSS_FRAC)))
+    assert r.grain_stolen + r.goods_stolen > 0
 
 
 def test_collect_respects_cap():

@@ -17,7 +17,8 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
             "лишнее зерно быстро находит хозяина с острым мечом."
         ),
         "button_labels": None,
-        "mechanics": "farm_mult+25%/1t",
+        "mechanics": "farm_mult+15%/1t",
+        "tone": "good",
     },
     "fog": {
         "id": "fog",
@@ -30,6 +31,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
         ),
         "button_labels": None,
         "mechanics": "raids_ignore_patrol/1t",
+        "tone": "bad",
     },
     "trader": {
         "id": "trader",
@@ -42,6 +44,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
         ),
         "button_labels": None,
         "mechanics": "dm_deals:2/1t",
+        "tone": "good",
     },
     "rats": {
         "id": "rats",
@@ -53,7 +56,8 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
             "Утром считают дыры - и проклятия."
         ),
         "button_labels": None,
-        "mechanics": "unprot_grain>150:-10%",
+        "mechanics": "unprot_grain>80:-20%",
+        "tone": "bad",
     },
     "fair": {
         "id": "fair",
@@ -66,6 +70,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
         ),
         "button_labels": None,
         "mechanics": "trade_bonus+5%/1t",
+        "tone": "good",
     },
     "deserter": {
         "id": "deserter",
@@ -78,6 +83,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
         ),
         "button_labels": ["Взять в дружину"],
         "mechanics": "first_claim:+10_might",
+        "tone": "mixed",
     },
     "good_stone": {
         "id": "good_stone",
@@ -90,6 +96,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
         ),
         "button_labels": None,
         "mechanics": "upgrade_cost-25%/1t",
+        "tone": "good",
     },
     "drought": {
         "id": "drought",
@@ -97,11 +104,12 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
         "digest_line": "Засуха - урожай слабее; полив за товары в личке.",
         "canned_narrative": (
             "Земля потрескалась, как старая кожа, и ручьи стали пыльными бороздами. "
-            "Без полива нива отдаст едва ли две трети. У кого есть товары на воду - "
+            "Без полива нива отдаст едва ли половину. У кого есть товары на воду - "
             "ещё может спасти свой край."
         ),
-        "button_labels": ["Полив (10 товаров)"],
-        "mechanics": "farm_mult-30%/1t;mitigate:10_goods",
+        "button_labels": ["Полив (15 товаров)"],
+        "mechanics": "farm_mult-45%/1t;mitigate:15_goods",
+        "tone": "bad",
     },
     "wedding": {
         "id": "wedding",
@@ -113,7 +121,8 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
             "Завтра счастье кончится, зерно - останется."
         ),
         "button_labels": None,
-        "mechanics": "trade_complete:+8_grain/1t",
+        "mechanics": "trade_complete:+5_grain/1t",
+        "tone": "good",
     },
     "omen": {
         "id": "omen",
@@ -126,6 +135,72 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
         ),
         "button_labels": None,
         "mechanics": "foreshadow_only",
+        "tone": "mixed",
+    },
+    "blight": {
+        "id": "blight",
+        "name_ru": "Порча товаров",
+        "digest_line": "Порча товаров - часть запасов сгнила в пути.",
+        "canned_narrative": (
+            "В ларях завелась плесень, будто чужая зависть. "
+            "Товары, что лежали без дела, превратились в труху и стыд. "
+            "К вечеру считают убытки и ругаются тише обычного."
+        ),
+        "button_labels": None,
+        "mechanics": "goods:-18%",
+        "tone": "bad",
+    },
+    "press_gang": {
+        "id": "press_gang",
+        "name_ru": "Набор в дружину",
+        "digest_line": "Набор в дружину - часть силы ушла с вербовщиками.",
+        "canned_narrative": (
+            "По дороге прошли люди с барабаном и цепями: \"за короля\" и \"за пайку\". "
+            "Кто слабо держал копьё - ушёл с ними. Во дворах стало пустее, "
+            "а в головах - злее."
+        ),
+        "button_labels": None,
+        "mechanics": "might:-3",
+        "tone": "bad",
+    },
+    "fire": {
+        "id": "fire",
+        "name_ru": "Пожар",
+        "digest_line": "Пожар - одно здание повреждено и ждёт ремонта.",
+        "canned_narrative": (
+            "Искра нашлась сама: то ли искра из горна, то ли чужая месть. "
+            "Огонь лизнул крышу и ушёл, оставив чёрные брёвна и работу на неделю. "
+            "Чинить придётся своими руками и товарами."
+        ),
+        "button_labels": None,
+        "mechanics": "damage_random_building",
+        "tone": "bad",
+    },
+    "toll": {
+        "id": "toll",
+        "name_ru": "Дорожный побор",
+        "digest_line": "Дорожный побор - с каждой усадьбы сняли товары.",
+        "canned_narrative": (
+            "У моста стоят чужие счётчики с улыбками мытарей. "
+            "\"На дорогу\", говорят они, и мешки становятся легче. "
+            "Спорить с алебардой - плохая арифметика."
+        ),
+        "button_labels": None,
+        "mechanics": "goods:-12_flat",
+        "tone": "bad",
+    },
+    "spoilage": {
+        "id": "spoilage",
+        "name_ru": "Гниль в закромах",
+        "digest_line": "Гниль в закромах - часть зерна пропала.",
+        "canned_narrative": (
+            "Зерно согрелось само собой и пошло чёрными пятнами. "
+            "Даже амбар не всегда спасает от сырости и чужого глаза. "
+            "Утром мешки легче - и совесть тоже."
+        ),
+        "button_labels": None,
+        "mechanics": "grain:-15%",
+        "tone": "bad",
     },
 }
 
@@ -161,7 +236,7 @@ CATASTROPHES: dict[str, dict[str, Any]] = {
             "оборвёт мор у себя раньше остальных."
         ),
         "button_labels": ["Забить скот (20 зерна)"],
-        "mechanics": "farm_mult-50%/4t;mitigate:20_grain",
+        "mechanics": "farm_mult-50%/window;mitigate:20_grain",
     },
     "rat_king": {
         "id": "rat_king",
@@ -211,34 +286,64 @@ SHIPPED_MINOR_KEYS: frozenset[str] = frozenset(
         "drought",
         "wedding",
         "omen",
+        "blight",
+        "press_gang",
+        "fire",
+        "toll",
+        "spoilage",
     }
 )
 
-# Живой ролл катастроф: только с contribute/resolve UI. Остальные - stub до проводки.
-SHIPPED_CATASTROPHE_KEYS: frozenset[str] = frozenset({"bandit_night"})
+# Веса ролла: больше плохих, меньше "подарочных".
+MINOR_EVENT_WEIGHTS: dict[str, int] = {
+    "harvest": 3,
+    "fog": 5,
+    "rats": 6,
+    "fair": 3,
+    "deserter": 4,
+    "good_stone": 3,
+    "drought": 6,
+    "wedding": 2,
+    "omen": 3,
+    "blight": 6,
+    "press_gang": 5,
+    "fire": 5,
+    "toll": 5,
+    "spoilage": 6,
+}
+
+# Живой ролл катастроф: contribute/resolve UI.
+SHIPPED_CATASTROPHE_KEYS: frozenset[str] = frozenset(
+    {"bandit_night", "cattle_plague"}
+)
 
 _MINOR_EFFECTS: dict[str, dict[str, Any]] = {
-    "harvest": {"farm_mult": 1.25, "duration_ticks": 1},
+    "harvest": {"farm_mult": 1.15, "duration_ticks": 1},
     "fog": {"raids_ignore_patrol": True, "duration_ticks": 1},
     "trader": {"dm_deals": 2, "duration_ticks": 1},
-    "rats": {"unprot_grain_threshold": 150, "loss_frac": 0.10},
+    "rats": {"unprot_grain_threshold": 80, "loss_frac": 0.20},
     "fair": {"trade_bonus_frac": 0.05, "duration_ticks": 1},
     "deserter": {"first_claim_might": 10, "group_message": True},
     "good_stone": {"upgrade_cost_mult": 0.75, "duration_ticks": 1},
     "drought": {
-        "farm_mult": 0.70,
+        "farm_mult": 0.55,
         "duration_ticks": 1,
-        "mitigate": {"goods": 10, "action": "полив"},
+        "mitigate": {"goods": 15, "action": "полив"},
     },
-    "wedding": {"trade_gift_grain": 8, "duration_ticks": 1},
+    "wedding": {"trade_gift_grain": 5, "duration_ticks": 1},
     "omen": {"foreshadow": True},
+    "blight": {"goods_loss_frac": 0.18},
+    "press_gang": {"might_loss": 3},
+    "fire": {"damage_random_building": True},
+    "toll": {"goods_flat_loss": 12},
+    "spoilage": {"grain_loss_frac": 0.15},
 }
 
 _CATASTROPHE_EFFECTS: dict[str, dict[str, Any]] = {
     "bandit_night": {
         "might_per_player": B.BANDIT_NIGHT_MIGHT_PER_PLAYER,
         "loot_goods_per_player": B.BANDIT_NIGHT_LOOT_PER_PLAYER,
-        "fail_unprot_grain_frac": 0.15,
+        "fail_unprot_grain_frac": B.BANDIT_NIGHT_FAIL_GRAIN_FRAC,
         "fail_lowest_defense_count": 2,
         "fail_worst_building_delta": -1,
     },
@@ -250,7 +355,6 @@ _CATASTROPHE_EFFECTS: dict[str, dict[str, Any]] = {
     },
     "cattle_plague": {
         "farm_mult": 0.50,
-        "duration_ticks": 4,
         "mitigate": {"grain": 20, "action": "забить_скот"},
     },
     "rat_king": {
@@ -299,7 +403,8 @@ def roll_minor_event(rng: Random) -> str | None:
     pool = _shipped_minor_pool()
     if not pool:
         return None
-    return rng.choice(pool)
+    weights = [max(1, int(MINOR_EVENT_WEIGHTS.get(k, 1))) for k in pool]
+    return rng.choices(pool, weights=weights, k=1)[0]
 
 
 def pick_catastrophe(rng: Random, last_key: str | None) -> str:
@@ -327,3 +432,11 @@ def catastrophe_effect(key: str) -> dict[str, Any]:
     if key not in _CATASTROPHE_EFFECTS:
         raise KeyError(f"Неизвестная катастрофа: {key}")
     return dict(_CATASTROPHE_EFFECTS[key])
+
+
+def event_name_ru(kind: str, key: str) -> str:
+    if kind == "catastrophe":
+        meta = CATASTROPHES.get(key) or {}
+    else:
+        meta = MINOR_EVENTS.get(key) or {}
+    return str(meta.get("name_ru") or key)

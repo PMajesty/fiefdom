@@ -320,6 +320,7 @@ def more_menu_kb(
     fief_id: int,
     *,
     drought_mitigate: bool = False,
+    cattle_plague_mitigate: bool = False,
     raid_pact_open: bool = True,
     lock_hint: str | None = None,
     force_tick_progress: tuple[int, int] | None = None,
@@ -335,8 +336,17 @@ def more_menu_kb(
         rows.append(
             [
                 InlineKeyboardButton(
-                    text="Полив (10 товаров)",
+                    text="Полив (15 товаров)",
                     callback_data=f"drt:{fid}",
+                )
+            ]
+        )
+    if cattle_plague_mitigate:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="Забить скот (20 зерна)",
+                    callback_data=f"cpl:{fid}",
                 )
             ]
         )
@@ -372,6 +382,10 @@ def more_menu_kb(
             [
                 InlineKeyboardButton(text="Земля", callback_data=f"clm:{fid}"),
                 InlineKeyboardButton(text="Строить", callback_data=f"bld:{fid}"),
+            ],
+            [
+                InlineKeyboardButton(text="Сбор", callback_data=f"gth:{fid}"),
+                InlineKeyboardButton(text="Снос", callback_data=f"dml:{fid}"),
             ],
             [
                 InlineKeyboardButton(text="Дозор", callback_data=f"pat:{fid}"),
@@ -427,7 +441,7 @@ def main_menu_kb(
         1,
         [
             InlineKeyboardButton(
-                text="Полив (10 товаров)",
+                text="Полив (15 товаров)",
                 callback_data=f"drt:{fid}",
             )
         ],
@@ -439,10 +453,15 @@ def fief_home_kb(engine: Engine, fief_id: int) -> InlineKeyboardMarkup:
     """Дом с CTA по актуальному снимку усадьбы из БД."""
     fief = engine.db.get_fief(fief_id)
     can_water = False
+    can_plague = False
     try:
         can_water = engine.fief_can_mitigate_drought(fief_id)
     except Exception:
         can_water = False
+    try:
+        can_plague = engine.fief_can_mitigate_cattle_plague(fief_id)
+    except Exception:
+        can_plague = False
     if not fief:
         return main_menu_kb(fief_id, drought_mitigate=can_water)
     tiles = engine.db.fief_tiles(fief_id)

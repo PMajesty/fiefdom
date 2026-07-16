@@ -47,6 +47,12 @@ def tile_passive(tile_type: str) -> Production:
 def building_production(building: str, level: int, tile_type: str) -> Production:
     if level <= 0 or not building:
         return Production()
+    if building == B.BLD_MANOR:
+        return Production(
+            grain=float(B.MANOR_GRAIN),
+            goods=float(B.MANOR_GOODS),
+            might=float(B.MANOR_MIGHT),
+        )
     native = B.NATIVE_TILE.get(building)
     bonus = B.NATIVE_BONUS if native and tile_type == native else 1.0
     if building == B.BLD_FARM:
@@ -66,9 +72,11 @@ def fief_daily_production(
     *,
     hungry: bool = False,
     farm_mult: float = 1.0,
+    current_might: int = 0,
 ) -> Production:
     total = Production()
     active_tiles = 0
+    manor_might = 0.0
     for t in tiles:
         if t.is_overgrown:
             continue
@@ -77,12 +85,24 @@ def fief_daily_production(
         b = building_production(t.building or "", t.building_level, t.tile_type)
         if t.building == B.BLD_FARM:
             b = Production(grain=b.grain * farm_mult, goods=b.goods, might=b.might, defense=b.defense)
+        if t.building == B.BLD_MANOR:
+            manor_might += b.might
+            b = Production(grain=b.grain, goods=b.goods, might=0.0, defense=b.defense)
         total = Production(
             grain=total.grain + p.grain + b.grain,
             goods=total.goods + p.goods + b.goods,
             might=total.might + p.might + b.might,
             defense=total.defense + b.defense,
         )
+    # Сила двора только до бесплатного потолка дружины.
+    free_room = max(0, B.MILITIA_FREE - max(0, int(current_might)))
+    manor_applied = min(manor_might, float(free_room))
+    total = Production(
+        grain=total.grain,
+        goods=total.goods,
+        might=total.might + manor_applied,
+        defense=total.defense,
+    )
     if active_tiles > 0 and B.FIEF_BASE_GOODS:
         total = Production(
             grain=total.grain,

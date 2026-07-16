@@ -24,6 +24,7 @@ from app.domain.economy import (
 from app.domain.events import (
     CATASTROPHES,
     MINOR_EVENTS,
+    catastrophe_effect,
     event_digest_line,
     minor_effect,
     next_catastrophe_delay_ticks,
@@ -34,7 +35,12 @@ from app.domain.ticks import tick_active
 from app.balance import best_rectangle
 from app.domain.map_gen import GenTile, append_strip, coord_label, generate_map
 from app.domain.raids import RaidActionResult, resolve_raid
-from app.domain.rumors import FiefRumorSnapshot, format_rumors_pull, roll_daily_rumors
+from app.domain.rumors import (
+    FiefRumorSnapshot,
+    UpcomingEventHint,
+    format_rumors_pull,
+    roll_daily_rumors,
+)
 from app.domain.tick import FiefTickState, apply_fief_tick, collect_pending
 from app.domain.tick_schedule import (
     format_next_tick_line,
@@ -196,7 +202,9 @@ class Engine:
         width, height = best_rectangle(B.MAP_MIN_TILES)
         tiles = generate_map(width, height)
         tz = TIMEZONE
-        delay = next_catastrophe_delay_ticks(random.Random())
+        rng = random.Random()
+        delay = next_catastrophe_delay_ticks(rng)
+        first_cat = pick_catastrophe(rng, None)
         realm = self.db.create_realm(
             chat_id=chat_id,
             title=title or "Долина",
@@ -208,6 +216,7 @@ class Engine:
             feature_flags=dict(B.DEFAULT_FEATURE_FLAGS),
             next_catastrophe_tick=delay,
         )
+        self.db.update_realm(realm["id"], next_catastrophe_key=first_cat)
         # первый тик - завтра (не сразу после основания днём)
         from zoneinfo import ZoneInfo
 
@@ -353,8 +362,8 @@ class Engine:
         self.db.update_tile(
             tile["id"],
             owner_fief_id=fief["id"],
-            building=B.BLD_FARM,
-            building_level=B.STARTING_FARM_LEVEL,
+            building=B.BLD_MANOR,
+            building_level=B.STARTING_MANOR_LEVEL,
             is_core=True,
         )
         self.db.set_last_realm(user.id, realm_id)
@@ -362,7 +371,7 @@ class Engine:
         return fief, (
             f"🏡 {name} основана на {coord_label(tile['x'], tile['y'])} "
             f"({B.TILE_NAMES_RU[tile['tile_type']]}).\n"
-            f"Стартовый набор: ферма I, {B.STARTING_GRAIN} зерна, "
+            f"Стартовый набор: двор (главная клетка), {B.STARTING_GRAIN} зерна, "
             f"{B.STARTING_GOODS} товаров, {B.STARTING_MIGHT} силы.\n"
             f"Урожай собирается сам. Первый квест - занять соседнюю клетку "
             f"(от {B.CLAIM_COSTS[2]} товаров)."
@@ -408,7 +417,12 @@ class Engine:
             )
             for t in self.db.fief_tiles(fief["id"])
         ]
-        return fief_daily_production(views, hungry=bool(fief["hungry"]), farm_mult=farm_mult)
+        return fief_daily_production(
+            views,
+            hungry=bool(fief["hungry"]),
+            farm_mult=farm_mult,
+            current_might=int(fief.get("might") or 0),
+        )
 
     def collect_for_fief(self, fief_id: int, *, include_might: bool = True) -> list[str]:
         fief = self.db.get_fief(fief_id)
@@ -705,8 +719,14 @@ class Engine:
             self._onboard_build(fief_id)
             return f"Отремонтирован {B.BUILDING_NAMES_RU[current]} {level} (−{cost} товаров)."
 
+        if current == B.BLD_MANOR:
+            raise ValueError("Двор - главная клетка, его нельзя заменить")
+        if building == B.BLD_MANOR:
+            raise ValueError("Двор ставится только при основании усадьбы")
+        if building not in B.PLAYER_BUILDINGS:
+            raise ValueError("Неизвестное здание")
         if current and current != building:
-            raise ValueError("На клетке уже другое здание (снос только катастрофами)")
+            raise ValueError("На клетке уже другое здание - сначала снесите его")
         if not current:
             target_level = 1
         else:
@@ -731,6 +751,71 @@ class Engine:
         )
         self._onboard_build(fief_id)
         return f"{B.BUILDING_NAMES_RU[building]} {target_level} на {coord_label(x, y)} (−{cost} товаров)."
+
+    def demolish_building(self, fief_id: int, x: int, y: int) -> str:
+        """Снос здания на клетке: 1 действие, возврат доли вложенных товаров."""
+        fief = self.db.get_fief(fief_id)
+        if not fief:
+            raise ValueError("Усадьба не найдена")
+        tile = self.db.get_tile(fief["realm_id"], x, y)
+        if not tile or tile["owner_fief_id"] != fief_id:
+            raise ValueError("Это не ваша клетка")
+        if tile.get("is_overgrown"):
+            raise ValueError("Клетка заросла")
+        building = tile.get("building")
+        level = int(tile.get("building_level") or 0)
+        if not building or level <= 0:
+            raise ValueError("На клетке нет здания")
+        if building == B.BLD_MANOR or tile.get("is_core"):
+            raise ValueError("Главную клетку с двором снести нельзя")
+        if building not in B.BUILDING_COSTS:
+            raise ValueError("Это здание нельзя снести")
+        refund = B.demolish_refund_goods(building, level)
+        self._spend_action(fief)
+        fief = self.db.get_fief(fief_id)
+        self.db.update_fief(fief_id, goods=int(fief["goods"]) + refund)
+        self.db.update_tile(
+            tile["id"],
+            building=None,
+            building_level=0,
+            damaged=False,
+        )
+        name = B.BUILDING_NAMES_RU.get(building, building)
+        return (
+            f"Снесено: {name} {level} на {coord_label(x, y)}. "
+            f"Возврат {refund} товаров ({int(B.DEMOLISH_REFUND_FRAC * 100)}%)."
+        )
+
+    def gather_resource(self, fief_id: int, resource: str) -> str:
+        """Потратить 1 действие на плоский сбор одного ресурса."""
+        if resource not in (B.RES_GRAIN, B.RES_GOODS, B.RES_MIGHT):
+            raise ValueError("Можно собрать зерно, товары или силу")
+        fief = self.db.get_fief(fief_id)
+        if not fief:
+            raise ValueError("Усадьба не найдена")
+        if fief.get("frozen"):
+            raise ValueError("Усадьба заморожена")
+        amount = B.gather_amount(resource)
+        self.collect_for_fief(fief_id, include_might=(resource != B.RES_MIGHT))
+        fief = self.db.get_fief(fief_id)
+        self._spend_action(fief)
+        fief = self.db.get_fief(fief_id)
+        if resource == B.RES_MIGHT:
+            self.db.update_fief(fief_id, might=int(fief["might"]) + amount)
+            return f"Сбор: +{amount} силы (−1 действие)."
+        barn = self.barn_level(fief_id)
+        cap = B.stash_cap(barn)
+        if resource == B.RES_GRAIN:
+            room = max(0, cap - int(fief["grain"]))
+            gained = min(amount, room)
+            self.db.update_fief(fief_id, grain=int(fief["grain"]) + gained)
+            suffix = "" if gained == amount else " (склад почти полон)"
+            return f"Сбор: +{gained} зерна (−1 действие).{suffix}"
+        room = max(0, cap - int(fief["goods"]))
+        gained = min(amount, room)
+        self.db.update_fief(fief_id, goods=int(fief["goods"]) + gained)
+        suffix = "" if gained == amount else " (склад почти полон)"
+        return f"Сбор: +{gained} товаров (−1 действие).{suffix}"
 
     def _onboard_claim(self, fief_id: int) -> None:
         fief = self.db.get_fief(fief_id)
@@ -1006,9 +1091,10 @@ class Engine:
                     self.db.update_fief(fief_id, goods=buyer["goods"] + add)
 
                 if wedding:
+                    gift = int(minor_effect("wedding").get("trade_gift_grain") or 5)
                     for fid in (fief_id, trade["offerer_fief_id"]):
                         f = self.db.get_fief(fid)
-                        self.db.update_fief(fid, grain=f["grain"] + 8)
+                        self.db.update_fief(fid, grain=f["grain"] + gift)
         if expired:
             raise ValueError("Лот истёк")
         return f"Сделка #{trade_id} закрыта."
@@ -1371,6 +1457,11 @@ class Engine:
         realm = self.db.get_realm(realm_id) or realm
         base_farm_mult = self._realm_farm_mult(realm)
         drought_mitigated = self._drought_mitigated_fief_ids(realm_id, realm)
+        plague_ev = self._active_cattle_plague(realm_id)
+        plague_mitigated: set[int] = set()
+        if plague_ev is not None:
+            payload = plague_ev.get("payload") or {}
+            plague_mitigated = {int(x) for x in (payload.get("mitigated_fief_ids") or [])}
 
         outcomes = []
         for fief in self.db.list_fiefs(realm_id):
@@ -1405,11 +1496,9 @@ class Engine:
                     )
 
             farm_mult = base_farm_mult
-            if (
-                base_farm_mult < 1.0
-                and realm.get("active_minor_key") == "drought"
-                and int(fief["id"]) in drought_mitigated
-            ):
+            if base_farm_mult < 1.0 and int(fief["id"]) in drought_mitigated:
+                farm_mult = 1.0
+            if base_farm_mult < 1.0 and int(fief["id"]) in plague_mitigated:
                 farm_mult = 1.0
 
             state = FiefTickState(
@@ -1479,7 +1568,15 @@ class Engine:
             sunday_extra = self._sunday_extra(realm_id)
 
         grow_msg = self.maybe_grow_map(realm_id)
-        rumor_lines = roll_daily_rumors(self._rumor_snapshots(realm_id), random.Random())
+        realm = self.db.get_realm(realm_id) or realm
+        next_minor = roll_minor_event(random.Random())
+        # "" = заранее известный тихий день; NULL в колонке = ещё не свёрстано.
+        self.db.update_realm(realm_id, pending_minor_key=next_minor or "")
+        rumor_lines = roll_daily_rumors(
+            self._rumor_snapshots(realm_id),
+            random.Random(),
+            event_hints=self._upcoming_event_hints(realm_id),
+        )
         digest = format_digest(
             realm_title=realm["title"],
             day=day,
@@ -1507,15 +1604,23 @@ class Engine:
         }
 
     def _prepare_tick_minor(self, realm_id: int) -> tuple[str | None, dict | None]:
-        """Новый ролл минора на каждый тик."""
+        """Берёт заранее свёрстанный минор (для слухов) или роллит заново."""
         realm = self.db.get_realm(realm_id)
         if not realm:
             return None, None
 
         tick_index = int(realm.get("tick_index") or 0)
         self._resolve_active_minor_events(realm_id)
-        minor_key = roll_minor_event(random.Random())
+        pending_raw = realm.get("pending_minor_key")
+        if pending_raw is None:
+            minor_key = roll_minor_event(random.Random())
+        else:
+            minor_key = pending_raw or None
+            self.db.update_realm(realm_id, pending_minor_key=None)
         if not minor_key:
+            self.db.update_realm(realm_id, active_minor_key=None, active_minor_until=None)
+            return None, None
+        if minor_key not in MINOR_EVENTS:
             self.db.update_realm(realm_id, active_minor_key=None, active_minor_until=None)
             return None, None
 
@@ -1566,9 +1671,11 @@ class Engine:
     def _realm_farm_mult(self, realm: dict) -> float:
         key = realm.get("active_minor_key")
         if key == "harvest":
-            return float(minor_effect("harvest").get("farm_mult") or 1.25)
+            return float(minor_effect("harvest").get("farm_mult") or 1.15)
         if key == "drought":
-            return float(minor_effect("drought").get("farm_mult") or 0.70)
+            return float(minor_effect("drought").get("farm_mult") or 0.55)
+        if self._active_cattle_plague(int(realm["id"])) is not None:
+            return float(catastrophe_effect("cattle_plague").get("farm_mult") or 0.50)
         return 1.0
 
     def _drought_mitigated_fief_ids(self, realm_id: int, realm: dict | None = None) -> set[int]:
@@ -1619,7 +1726,7 @@ class Engine:
         return "ok"
 
     def mitigate_drought(self, fief_id: int) -> str:
-        """Полив: −10 товаров, иммунитет этой усадьбы к farm_mult засухи."""
+        """Полив: товары за иммунитет этой усадьбы к farm_mult засухи."""
         fief = self.db.get_fief(fief_id)
         if not fief:
             raise ValueError("Усадьба не найдена")
@@ -1630,7 +1737,7 @@ class Engine:
             raise ValueError("Долина не найдена")
         if realm.get("active_minor_key") != "drought":
             raise ValueError("Сейчас нет засухи")
-        cost = int((minor_effect("drought").get("mitigate") or {}).get("goods") or 10)
+        cost = int((minor_effect("drought").get("mitigate") or {}).get("goods") or 15)
         if int(fief["goods"]) < cost:
             raise ValueError("Недостаточно товаров")
         mitigated = self._drought_mitigated_fief_ids(fief["realm_id"], realm)
@@ -1646,18 +1753,100 @@ class Engine:
         self.db.update_event(ev["id"], payload=payload)
         return "ok"
 
+    def _active_cattle_plague(self, realm_id: int) -> dict | None:
+        for ev in self.db.get_active_events(realm_id, kind="catastrophe"):
+            if ev.get("event_key") == "cattle_plague":
+                return ev
+        return None
+
+    def fief_can_mitigate_cattle_plague(self, fief_id: int) -> bool:
+        fief = self.db.get_fief(fief_id)
+        if not fief or fief.get("frozen"):
+            return False
+        ev = self._active_cattle_plague(fief["realm_id"])
+        if not ev:
+            return False
+        payload = ev.get("payload") or {}
+        mitigated = {int(x) for x in (payload.get("mitigated_fief_ids") or [])}
+        return int(fief_id) not in mitigated
+
+    def mitigate_cattle_plague(self, fief_id: int) -> str:
+        """Забить скот: зерно за снятие штрафа мора у этой усадьбы."""
+        fief = self.db.get_fief(fief_id)
+        if not fief:
+            raise ValueError("Усадьба не найдена")
+        if fief.get("frozen"):
+            raise ValueError("Усадьба заморожена")
+        ev = self._active_cattle_plague(fief["realm_id"])
+        if not ev:
+            raise ValueError("Сейчас нет мора скота")
+        cost = int((catastrophe_effect("cattle_plague").get("mitigate") or {}).get("grain") or 20)
+        if int(fief["grain"]) < cost:
+            raise ValueError("Недостаточно зерна")
+        payload = dict(ev.get("payload") or {})
+        mitigated = {int(x) for x in (payload.get("mitigated_fief_ids") or [])}
+        if int(fief_id) in mitigated:
+            return "already"
+        payload["mitigated_fief_ids"] = sorted(mitigated | {int(fief_id)})
+        self.db.update_fief(fief_id, grain=int(fief["grain"]) - cost)
+        self.db.update_event(ev["id"], payload=payload)
+        return "ok"
+
     def _resolve_active_minor_events(self, realm_id: int) -> None:
         for ev in self.db.get_active_events(realm_id, kind="minor"):
             self.db.update_event(ev["id"], status="resolved")
 
     def _apply_instant_minor(self, realm_id: int, key: str) -> None:
+        eff = minor_effect(key)
         if key == "rats":
+            threshold = int(eff.get("unprot_grain_threshold") or 80)
+            loss_frac = float(eff.get("loss_frac") or 0.20)
             for fief in self.db.list_fiefs(realm_id):
                 barn = self.barn_level(fief["id"])
                 unprot = int(fief["grain"] * (1.0 - B.barn_protect_frac(barn)))
-                if unprot > 150:
-                    loss = max(1, int(unprot * 0.10))
+                if unprot > threshold:
+                    loss = max(1, int(unprot * loss_frac))
                     self.db.update_fief(fief["id"], grain=max(0, fief["grain"] - loss))
+            return
+        if key == "blight":
+            frac = float(eff.get("goods_loss_frac") or 0.18)
+            for fief in self.db.list_fiefs(realm_id):
+                loss = max(1, int(int(fief["goods"]) * frac)) if int(fief["goods"]) > 0 else 0
+                if loss:
+                    self.db.update_fief(fief["id"], goods=max(0, int(fief["goods"]) - loss))
+            return
+        if key == "spoilage":
+            frac = float(eff.get("grain_loss_frac") or 0.15)
+            for fief in self.db.list_fiefs(realm_id):
+                loss = max(1, int(int(fief["grain"]) * frac)) if int(fief["grain"]) > 0 else 0
+                if loss:
+                    self.db.update_fief(fief["id"], grain=max(0, int(fief["grain"]) - loss))
+            return
+        if key == "toll":
+            flat = int(eff.get("goods_flat_loss") or 12)
+            for fief in self.db.list_fiefs(realm_id):
+                self.db.update_fief(fief["id"], goods=max(0, int(fief["goods"]) - flat))
+            return
+        if key == "press_gang":
+            loss = int(eff.get("might_loss") or 3)
+            for fief in self.db.list_fiefs(realm_id):
+                self.db.update_fief(fief["id"], might=max(0, int(fief["might"]) - loss))
+            return
+        if key == "fire":
+            for fief in self.db.list_fiefs(realm_id):
+                tiles = [
+                    t
+                    for t in self.db.fief_tiles(fief["id"])
+                    if t.get("building")
+                    and t.get("building") != B.BLD_MANOR
+                    and not t.get("is_overgrown")
+                    and not t.get("damaged")
+                ]
+                if not tiles:
+                    continue
+                victim = random.choice(tiles)
+                self.db.update_tile(victim["id"], damaged=True)
+            return
 
     def _feud_lines(self, realm_id: int) -> list[str]:
         realm = self.db.get_realm(realm_id) or {}
@@ -1715,6 +1904,24 @@ class Engine:
                 )
             )
         return out
+
+    def _upcoming_event_hints(self, realm_id: int) -> list[UpcomingEventHint]:
+        realm = self.db.get_realm(realm_id) or {}
+        hints: list[UpcomingEventHint] = []
+        pending = realm.get("pending_minor_key")
+        if pending:
+            hints.append(UpcomingEventHint(kind="minor", key=str(pending)))
+        next_tick = realm.get("next_catastrophe_tick")
+        next_key = realm.get("next_catastrophe_key")
+        tick_index = int(realm.get("tick_index") or 0)
+        if (
+            next_tick is not None
+            and next_key
+            and int(next_tick) - tick_index <= B.RUMOR_CATASTROPHE_WARN_TICKS
+            and int(next_tick) > tick_index
+        ):
+            hints.append(UpcomingEventHint(kind="catastrophe", key=str(next_key)))
+        return hints
 
     def rumors_text(self, realm_id: int) -> str:
         realm = self.db.get_realm(realm_id)

@@ -91,7 +91,15 @@ COLLECT_CAP_DAYS_BASE = 3
 STARTING_GRAIN = 30
 STARTING_GOODS = 30
 STARTING_MIGHT = 5
-STARTING_FARM_LEVEL = 1
+STARTING_MANOR_LEVEL = 1
+
+# Разовый сбор ресурса за 1 действие (плоско, без зданий).
+GATHER_GRAIN = 12
+GATHER_GOODS = 10
+GATHER_MIGHT = 2
+
+# Снос: доля возврата от суммы базовых затрат уровней 1..N.
+DEMOLISH_REFUND_FRAC = 0.66
 
 # --- Содержание ---
 def land_upkeep(tile_count: int) -> int:
@@ -107,19 +115,25 @@ ACTIONS_PER_DAY = 1
 ACTIONS_BANK_MAX = 3
 
 # --- Здания ---
+BLD_MANOR = "manor"
 BLD_FARM = "farm"
 BLD_WORKSHOP = "workshop"
 BLD_WATCH = "watchtower"
 BLD_BARN = "barn"
 
 BUILDING_NAMES_RU = {
+    BLD_MANOR: "Двор",
     BLD_FARM: "Ферма",
     BLD_WORKSHOP: "Мастерская",
     BLD_WATCH: "Сторожка",
     BLD_BARN: "Амбар",
 }
 
+# Строятся игроком (двор ставится только при основании усадьбы).
+PLAYER_BUILDINGS = (BLD_FARM, BLD_WORKSHOP, BLD_WATCH, BLD_BARN)
+
 NATIVE_TILE = {
+    BLD_MANOR: None,
     BLD_FARM: TILE_FIELD,
     BLD_WORKSHOP: TILE_FOREST,
     BLD_WATCH: TILE_HILLS,
@@ -135,6 +149,11 @@ BUILDING_COSTS = {
     BLD_BARN: {1: 30, 2: 70, 3: 150},
 }
 
+# Главная клетка (двор): меньше зерна чем ферма I, больше товаров, сила до free cap.
+MANOR_GRAIN = 5
+MANOR_GOODS = 8
+MANOR_MIGHT = 2
+
 FARM_YIELD = {1: 8, 2: 14, 3: 22}
 WORKSHOP_YIELD = {1: 5, 2: 9, 3: 14}
 WATCH_DEFENSE = {1: 6, 2: 12, 3: 20}
@@ -148,9 +167,11 @@ REPAIR_COST_MULT = 0.5  # от стоимости апгрейда на этот
 # --- Набеги ---
 RAID_MIN_MIGHT = 5
 RAID_SUCCESS_R = 0.33
-RAID_LOOT_R_MULT = 0.20
-RAID_LOOT_MAX_FRAC = 0.25
-RAID_LOOT_MAX_DAYS_PROD = 2
+RAID_LOOT_R_MULT = 0.35
+RAID_LOOT_MAX_FRAC = 0.40
+RAID_LOOT_MAX_DAYS_PROD = 3
+# Доля потерянной силы при удачном набеге (провал - вся выделенная сила).
+RAID_SUCCESS_MIGHT_LOSS_FRAC = 0.75
 # Длительности в тиках долины (2 тика/день: 13:00 и 19:00).
 RAID_VICTIM_SHIELD_TICKS = 3
 RAID_SAME_VICTIM_TICKS = 6
@@ -170,7 +191,7 @@ PACT_SIZE_MIN = 2
 PACT_SIZE_MAX = 5
 PACT_INVITE_EXPIRE_TICKS = 4
 
-# --- Слухи (сплетни в утренней сводке; не разведка) ---
+# --- Слухи (сплетни в утренней сводке) ---
 RUMOR_MAX_PER_DAY = 2
 RUMOR_LINE_CHANCE = 0.70
 RUMOR_TRUTH_FULL = 0.50
@@ -178,6 +199,11 @@ RUMOR_TRUTH_FUZZY = 0.35
 # остаток (~0.15) - ложный слух
 RUMOR_WEALTH_BANDS = (40, 120, 300)  # границы: тощая / сытая / тугая / ломится
 RUMOR_MIGHT_BANDS = (8, 20)  # тонка / крепкая / много копий
+# Предвестия событий: доля правдивых имён из пула.
+RUMOR_EVENT_ACCURACY = 0.66
+RUMOR_EVENT_LINE_CHANCE = 0.55
+# За сколько тиков до беды рынок начинает шептать о катастрофе.
+RUMOR_CATASTROPHE_WARN_TICKS = 4
 
 # --- Торговля ---
 TRADE_EXPIRE_TICKS = 4
@@ -191,8 +217,9 @@ CATASTROPHE_GAP_TICKS = 8
 CATASTROPHE_WINDOW_TICKS_MIN = 1
 CATASTROPHE_WINDOW_TICKS_MAX = 2
 
-BANDIT_NIGHT_MIGHT_PER_PLAYER = 2.5
-BANDIT_NIGHT_LOOT_PER_PLAYER = 8
+BANDIT_NIGHT_MIGHT_PER_PLAYER = 3.0
+BANDIT_NIGHT_LOOT_PER_PLAYER = 12
+BANDIT_NIGHT_FAIL_GRAIN_FRAC = 0.25
 
 # --- Отсутствие (тики без активности игрока) ---
 DORMANT_TICKS = 14
@@ -289,6 +316,19 @@ def building_upgrade_cost(building: str, target_level: int) -> int:
     return costs[target_level]
 
 
+def building_invested_goods(building: str, level: int) -> int:
+    """Сумма базовых затрат уровней 1..level (без скидок событий)."""
+    if building not in BUILDING_COSTS or level <= 0:
+        return 0
+    costs = BUILDING_COSTS[building]
+    return sum(int(costs[lv]) for lv in range(1, int(level) + 1) if lv in costs)
+
+
+def demolish_refund_goods(building: str, level: int) -> int:
+    invested = building_invested_goods(building, level)
+    return int(invested * DEMOLISH_REFUND_FRAC)
+
+
 def repair_cost(building: str, level_to_restore: int) -> int:
     """Стоимость починки до level_to_restore (= апгрейд на этот уровень × 0.5)."""
     return int(building_upgrade_cost(building, level_to_restore) * REPAIR_COST_MULT)
@@ -307,9 +347,13 @@ def build_action_cost(
     cost_mult: float = 1.0,
 ) -> int | None:
     """Стоимость постройки/апгрейда/ремонта выбранного типа на клетке, или None."""
+    if building not in PLAYER_BUILDINGS:
+        return None
     current = tile.get("building")
     level = int(tile.get("building_level") or 0)
     damaged = bool(tile.get("damaged"))
+    if current == BLD_MANOR and not damaged:
+        return None
     if damaged:
         if current == building:
             return repair_cost(current, level)
@@ -342,10 +386,20 @@ def min_any_build_action_cost(tiles: list[dict], *, cost_mult: float = 1.0) -> i
     """Минимальная цена любого доступного строительства/апгрейда/ремонта."""
     costs = [
         c
-        for building in BUILDING_COSTS
+        for building in PLAYER_BUILDINGS
         if (c := cheapest_build_action_cost(building, tiles, cost_mult=cost_mult)) is not None
     ]
     return min(costs) if costs else None
+
+
+def gather_amount(resource: str) -> int:
+    if resource == RES_GRAIN:
+        return GATHER_GRAIN
+    if resource == RES_GOODS:
+        return GATHER_GOODS
+    if resource == RES_MIGHT:
+        return GATHER_MIGHT
+    raise ValueError(f"Нельзя собрать: {resource}")
 
 
 def map_target_tiles(player_count: int) -> int:

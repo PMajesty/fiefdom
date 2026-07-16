@@ -79,18 +79,19 @@ def test_roll_daily_rumors_empty_realm():
     assert rumors.roll_daily_rumors([], Random(1)) == []
 
 
-def test_format_rumor_section_has_disclaimer():
+def test_format_rumor_section_header_soft():
     section = rumors.format_rumor_section(["У Ивана, говорят, дружина тонка."])
     assert section is not None
-    assert "не факты" in section
-    assert "базар может врать" in section
+    assert "не факты" not in section
+    assert "базар может врать" not in section
+    assert "Слухи рынка" in section
     assert "• У Ивана" in section
 
 
 def test_format_rumors_pull_empty_explains():
     text = rumors.format_rumors_pull([])
-    assert "не разведка" in text
     assert "молчит" in text
+    assert "не факты" not in text
 
 
 def test_format_digest_includes_rumor_section():
@@ -104,9 +105,37 @@ def test_format_digest_includes_rumor_section():
         sunday_extra=None,
         rumor_lines=["У Кирилла, говорят, амбар ломится."],
     )
-    assert "👂 Слухи (не факты - базар может врать):" in text
+    assert "👂 Слухи рынка:" in text
     assert "• У Кирилла, говорят, амбар ломится." in text
     assert text.index("Слухи") < text.index("Кирилла")
+
+
+def test_compose_event_rumor_accuracy():
+    hint = rumors.UpcomingEventHint(kind="minor", key="drought")
+    truths = 0
+    for seed in range(200):
+        line = rumors.compose_event_rumor(hint, Random(seed))
+        assert "Засуха" in line or line.startswith("Говорят")
+        if "Засуха" in line:
+            truths += 1
+    assert 0.50 <= truths / 200 <= 0.80
+
+
+def test_roll_daily_rumors_can_include_event_hint():
+    fiefs = [_snap(fief_id=1, name="А")]
+    hints = [rumors.UpcomingEventHint(kind="catastrophe", key="bandit_night")]
+    # Force event line: line_chance=1 for event via high seeds search
+    found = False
+    for seed in range(80):
+        lines = rumors.roll_daily_rumors(
+            fiefs,
+            Random(seed),
+            event_hints=hints,
+        )
+        if any("Ночь бандитов" in ln or "близится беда" in ln for ln in lines):
+            found = True
+            break
+    assert found
 
 
 def test_format_digest_omits_rumors_when_empty():

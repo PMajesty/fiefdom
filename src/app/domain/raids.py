@@ -130,10 +130,12 @@ def resolve_raid(
 
     ug, ud = unprotected_stash(victim_grain, victim_goods, barn_level)
     g, d = loot_amounts(r, ug, ud, victim_daily_grain, victim_daily_goods)
+    might_lost = max(1, int(round(attack_might * B.RAID_SUCCESS_MIGHT_LOSS_FRAC)))
+    might_lost = min(attack_might, might_lost)
     return RaidResult(
         success=True,
         ratio=r,
-        might_lost=attack_might // 2,
+        might_lost=might_lost,
         grain_stolen=g,
         goods_stolen=d,
         defense_used=int(defense),

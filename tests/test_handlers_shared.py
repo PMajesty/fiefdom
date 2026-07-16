@@ -276,7 +276,7 @@ def test_main_menu_kb_drought_button():
     fief = {"actions": 1, "onboard_step": 4, "goods": 20, "might": 0}
     kb = main_menu_kb(5, fief=fief, tile_count=4, drought_mitigate=True)
     assert kb.inline_keyboard[1][0].callback_data == "drt:5"
-    assert kb.inline_keyboard[1][0].text == "Полив (10 товаров)"
+    assert kb.inline_keyboard[1][0].text == "Полив (15 товаров)"
 
 
 def test_more_menu_kb_drought_row():
@@ -284,7 +284,7 @@ def test_more_menu_kb_drought_row():
 
     kb = more_menu_kb(9, drought_mitigate=True)
     assert kb.inline_keyboard[0][0].callback_data == "drt:9"
-    assert kb.inline_keyboard[0][0].text == "Полив (10 товаров)"
+    assert kb.inline_keyboard[0][0].text == "Полив (15 товаров)"
 
 
 def test_main_menu_kb_uses_fief_snapshot():
@@ -320,6 +320,8 @@ def test_more_menu_kb_prefixes():
     assert "mkt:9" in data
     assert "clm:9" in data
     assert "bld:9" in data
+    assert "gth:9" in data
+    assert "dml:9" in data
     assert "pat:9" in data
     assert "rad:9" in data
     assert "trd:9" in data
@@ -337,7 +339,7 @@ def test_bandit_threshold_math():
 
     players = 4
     threshold = int(math.ceil(B.BANDIT_NIGHT_MIGHT_PER_PLAYER * players))
-    assert threshold == 10
+    assert threshold == int(math.ceil(3.0 * 4))
 
 
 def test_format_claim_button_field_and_wilds():

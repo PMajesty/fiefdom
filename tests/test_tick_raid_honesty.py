@@ -53,7 +53,7 @@ def _base_fief(**overrides):
 
 
 def test_tick_applies_harvest_mult_same_day():
-    """Новый harvest крутится до производства - farm_mult тика = 1.25."""
+    """Новый harvest крутится до производства - farm_mult тика из minor_effect."""
     db = MagicMock()
     realm = _base_realm()
     fief = _base_fief()
@@ -212,10 +212,12 @@ def test_tick_always_rerolls_minor_even_if_key_active():
 
     with patch("app.engine.roll_minor_event", return_value="fog") as roll:
         engine.run_realm_tick(1)
-        roll.assert_called_once()
+        # Тик: ролл текущего минора (если pending пуст) + преролл следующего для слухов.
+        assert roll.call_count == 2
 
     db.update_event.assert_called_once_with(44, status="resolved")
     assert realm["active_minor_key"] == "fog"
+    assert realm.get("pending_minor_key") == "fog"
 
 
 def test_raid_action_result_includes_victim_and_dm_texts():
