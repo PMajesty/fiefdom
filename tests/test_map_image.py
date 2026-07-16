@@ -202,10 +202,27 @@ def test_build_map_caption_splits_when_over_limit():
     caption, extra = build_map_caption(title="Долина", day_number=2, footer=footer, limit=1024)
     assert len(caption) <= 1024
     assert extra == footer
-    short, none = build_map_caption(title="Долина", day_number=2, footer="Рамки:\n  синяя - ваши")
+    assert "следующим сообщением" in caption
+    short, none = build_map_caption(title="Долина", day_number=2, footer="Рамки: синяя - ваши")
     assert none is None
     assert "Долина" in short
     assert "Рамки:" in short
+
+    glance_footer = (
+        "вы = К\n\n"
+        "Рамки: синяя - ваши · жёлтая - можно занять\n\n"
+        "Местность:\n• колосья · Поле - бонус ферме\n\n"
+        "Кто:\nМ = Сосед\n"
+        + ("y" * 900)
+    )
+    glance_cap, glance_extra = build_map_caption(
+        title="Долина", day_number=2, footer=glance_footer, limit=1024
+    )
+    assert glance_extra == glance_footer
+    assert "вы = К" in glance_cap
+    assert "Рамки:" in glance_cap
+    assert "Местность:" not in glance_cap
+    assert "следующим сообщением" in glance_cap
 
 
 def test_engine_map_photo_uses_cache_across_requests():
@@ -234,10 +251,11 @@ def test_engine_map_photo_uses_cache_across_requests():
     assert first.png_bytes[:8] == b"\x89PNG\r\n\x1a\n"
     assert "Долина" in first.caption
     assert "Рамки:" in first.caption
-    assert "Владельцы:" in first.caption
+    assert "вы = К" in first.caption
     assert "Местность" in first.caption
-    assert "колосья - поле" in first.caption
-    assert "деревья - лес" in first.caption
+    assert "колосья · Поле - бонус ферме" in first.caption
+    assert "деревья · Лес - бонус мастерской" in first.caption
+    assert "Кто:" not in first.caption
 
     engine.remember_map_file_id(first.fingerprint, "AgADBAAD")
     third = engine.map_photo(1, highlight_fief_id=1)

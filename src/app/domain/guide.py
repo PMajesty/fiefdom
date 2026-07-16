@@ -9,7 +9,7 @@ TILE_ICON_CUES_RU = {
     B.TILE_FOREST: "деревья",
     B.TILE_HILLS: "гора",
     B.TILE_RIVER: "волны",
-    B.TILE_ROAD: "полоса дороги",
+    B.TILE_ROAD: "полоса",
     B.TILE_RUINS: "памятник",
     B.TILE_WILDS: "куст",
 }
@@ -24,34 +24,49 @@ _TILE_ORDER = (
     B.TILE_WILDS,
 )
 
+_TILE_EFFECT_RU = {
+    B.TILE_FIELD: "бонус ферме",
+    B.TILE_FOREST: "бонус мастерской",
+    B.TILE_HILLS: "бонус сторожке",
+    B.TILE_RIVER: f"+{B.RIVER_PASSIVE_GRAIN} зерна/день",
+    B.TILE_ROAD: f"+{B.ROAD_PASSIVE_GOODS} товаров/день",
+    B.TILE_RUINS: f"разово {B.RUINS_LOOT_MIN}-{B.RUINS_LOOT_MAX} товаров",
+    B.TILE_WILDS: f"занятие ×{B.WILDS_CLAIM_MULT} → поле/лес/холмы",
+}
+
+
+def map_frames_line() -> str:
+    return "Рамки: синяя - ваши · жёлтая - можно занять · штриховка - заросло"
+
 
 def _terrain_legend_lines() -> list[str]:
-    items = [
-        f"{TILE_ICON_CUES_RU[t]} - {B.TILE_NAMES_RU[t].lower()}" for t in _TILE_ORDER
-    ]
-    mid = 4
-    return [
-        "Местность (рисунок на клетке):",
-        "  " + " · ".join(items[:mid]),
-        "  " + " · ".join(items[mid:]),
-    ]
+    lines = ["Местность:"]
+    for tile_type in _TILE_ORDER:
+        cue = TILE_ICON_CUES_RU[tile_type]
+        name = B.TILE_NAMES_RU[tile_type]
+        effect = _TILE_EFFECT_RU[tile_type]
+        lines.append(f"• {cue} · {name} - {effect}")
+    return lines
 
 
-TILE_LEGEND_LINES = [
-    *_terrain_legend_lines(),
-    "Рамки:",
-    "  синяя - ваши клетки",
-    "  жёлтая - можно занять",
-    "  штриховка - заросло",
-    "Буква на клетке - владелец",
-    "Угол (только свои постройки):",
-    "  Д двор · Ф ферма · Р мастерская · С сторожка · А амбар",
-    "  цифра рядом - уровень",
-]
+def map_buildings_legend_line() -> str:
+    return (
+        "Угол (свои): Д двор · Ф ферма · Р мастерская · "
+        "С сторожка · А амбар · цифра = ур."
+    )
 
 
 def map_tile_legend() -> str:
-    return "\n".join(TILE_LEGEND_LINES)
+    """Рамки, местность (зачем клетка) и постройки - подпись к карте."""
+    return "\n".join(
+        [
+            map_frames_line(),
+            "",
+            *_terrain_legend_lines(),
+            "",
+            map_buildings_legend_line(),
+        ]
+    )
 
 
 def short_help() -> str:

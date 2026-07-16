@@ -644,8 +644,8 @@ class Engine:
                 _stash_status_line(barn),
                 "",
                 (
-                    f"В день: +{prod.grain:.0f} зерна, +{prod.goods:.0f} товаров, "
-                    f"+{prod.might:.0f} силы"
+                    f"+{prod.grain:.0f} зерна/день, +{prod.goods:.0f} товаров/день, "
+                    f"+{prod.might:.0f} силы/день"
                 ),
                 f"Корм: земля {land}, дружина {militia}",
                 "",

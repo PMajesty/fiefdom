@@ -361,12 +361,36 @@ def build_map_caption(
     footer: str,
     limit: int = 1024,
 ) -> tuple[str, str | None]:
-    """Подпись к фото; хвост легенды отдельно, если не влезает в лимит Telegram."""
+    """Подпись к фото; при переполнении оставляет взгляд (вы/рамки), остальное следом."""
     header = f"🗺️ {title} (день {day_number})"
     if not footer:
         return header[:limit], None
     full = f"{header}\n\n{footer}"
     if len(full) <= limit:
         return full, None
-    short = f"{header}\n\nЛегенда и владельцы - следующим сообщением."
+
+    # Стараемся оставить под фото первые блоки footer (вы = …, рамки).
+    glance_chunks: list[str] = []
+    for chunk in footer.split("\n\n"):
+        piece = chunk.strip()
+        if not piece:
+            continue
+        if piece.startswith("Местность") or piece.startswith("Угол") or piece.startswith(
+            "Кто:"
+        ):
+            break
+        candidate_parts = [header, *glance_chunks, piece]
+        candidate = "\n\n".join(candidate_parts)
+        stub = "\n\nМестность и кто на карте - следующим сообщением."
+        if len(candidate) + len(stub) > limit:
+            break
+        glance_chunks.append(piece)
+
+    if glance_chunks:
+        short = (
+            "\n\n".join([header, *glance_chunks])
+            + "\n\nМестность и кто на карте - следующим сообщением."
+        )
+    else:
+        short = f"{header}\n\nМестность и кто на карте - следующим сообщением."
     return short[:limit], footer

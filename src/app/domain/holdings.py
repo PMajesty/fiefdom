@@ -8,7 +8,7 @@ from app.domain.map_gen import coord_label
 _LEVEL_ROMAN = {1: "I", 2: "II", 3: "III"}
 
 _BUILDING_HELP_LINES = (
-    f"Двор - +{B.MANOR_GRAIN} зерна, +{B.MANOR_GOODS} товаров, "
+    f"Двор - +{B.MANOR_GRAIN} зерна/день, +{B.MANOR_GOODS} товаров/день, "
     f"+{B.MANOR_MIGHT} силы/день (сила - пока дружина ниже "
     f"{B.MILITIA_FREE})",
     "Ферма - зерно; на поле урожай ×"
@@ -34,11 +34,11 @@ def manor_might_applied(nominal: float, current_might: int) -> float:
 def _format_prod_parts(prod: Production) -> list[str]:
     parts: list[str] = []
     if prod.grain:
-        parts.append(f"+{prod.grain:.0f} зерна")
+        parts.append(f"+{prod.grain:.0f} зерна/день")
     if prod.goods:
-        parts.append(f"+{prod.goods:.0f} товаров")
+        parts.append(f"+{prod.goods:.0f} товаров/день")
     if prod.might:
-        parts.append(f"+{prod.might:.0f} силы")
+        parts.append(f"+{prod.might:.0f} силы/день")
     if prod.defense:
         parts.append(f"+{prod.defense:.0f} защиты")
     return parts
@@ -84,7 +84,7 @@ def tile_effect_text(
             passive = passive.scale(B.HUNGER_PRODUCTION_MULT)
         extra = _format_prod_parts(passive)
         if extra:
-            return f"{barn_line} · {', '.join(extra)}/день"
+            return f"{barn_line} · {', '.join(extra)}"
         return barn_line
 
     built = building_production(building, level, tile_type)
@@ -111,13 +111,13 @@ def tile_effect_text(
             Production(grain=total.grain, goods=total.goods, defense=total.defense)
         )
         if other:
-            return f"{', '.join(other)}/день · {manor_note}"
+            return f"{', '.join(other)} · {manor_note}"
         return manor_note
 
     if not parts:
         return "без дохода"
 
-    line = ", ".join(parts) + "/день"
+    line = ", ".join(parts)
     if manor_note:
         line += f" ({manor_note})"
     elif building == B.BLD_MANOR and built.might and current_might is None:
@@ -180,13 +180,8 @@ def format_holdings(
     if daily is not None:
         lines.append("")
         lines.append(
-            f"Итого в день: +{daily.grain:.0f} зерна, +{daily.goods:.0f} товаров, "
-            f"+{daily.might:.0f} силы · защита {daily.defense:.0f}"
+            f"Итого: +{daily.grain:.0f} зерна/день, +{daily.goods:.0f} товаров/день, "
+            f"+{daily.might:.0f} силы/день · защита {daily.defense:.0f}"
         )
-        if B.FIEF_BASE_GOODS:
-            lines.append(
-                f"(в сумму товаров уже входят +{B.FIEF_BASE_GOODS} "
-                "базы усадьбы - даются даже без мастерской)"
-            )
 
     return "\n".join(lines).rstrip() + "\n"

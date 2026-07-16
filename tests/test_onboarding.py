@@ -621,7 +621,7 @@ def test_status_card_groups_blocks_for_glance():
     assert f"⚡ Действия: 0/{B.ACTIONS_BANK_MAX} · Клетки: 2/{B.TILE_HARD_CAP}" in text
     assert "🌾 39 · 📦 31 · ⚔️ 5" in text
     assert f"Склад до {B.DEFAULT_STASH_CAP} · без амбара" in text
-    assert "В день: +5 зерна, +13 товаров, +3 силы" in text
+    assert "+5 зерна/день, +13 товаров/день, +3 силы/день" in text
     assert "Корм: земля " in text
     assert "Следующий тик: 16.07 19:00" in text
     assert text.endswith("Голоса: 3/6")

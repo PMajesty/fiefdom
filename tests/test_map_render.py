@@ -68,12 +68,18 @@ def test_render_map_aligned_columns_with_owners():
     assert row2[3:].startswith(MAP_EMPTY_MARK)
     assert "М" in row2
     assert "[" not in body
-    assert "К = Усадьба А (это вы)" in body
+    assert "вы = К" in body
+    assert "М = Усадьба Б" in body
+    assert "это вы" not in body
     assert "можно занять" in body
     assert "Рамки:" in body
-    assert "только свои постройки" in body
+    assert "Угол (свои)" in body
     assert "Местность" in body
-    assert "колосья - поле" in body
+    assert "колосья · Поле - бонус ферме" in body
+    # взгляд: вы и рамки раньше местности и списка "Кто"
+    assert body.index("вы = К") < body.index("Местность")
+    assert body.index("Рамки:") < body.index("Местность")
+    assert body.index("Местность") < body.index("Кто:")
 
 
 def test_render_map_parts_separates_grid_and_footer():
@@ -82,36 +88,71 @@ def test_render_map_parts_separates_grid_and_footer():
     assert "<" not in grid
     assert grid.startswith("   А  ")
     assert "\n 1 " in grid
-    assert "Владельцы:" in footer
+    assert "вы = К" in footer
     assert "можно занять" in footer
-    assert "К = Усадьба А (это вы)" in footer
-    assert "Владельцы:" not in grid
+    assert "Кто:" not in footer  # один владелец - вы, отдельный список не нужен
+    assert "вы =" not in grid
 
 
 def test_map_tile_legend_reads_naturally():
     from app.domain.guide import map_tile_legend
 
     text = map_tile_legend()
-    assert "Местность (рисунок на клетке):" in text
-    assert "колосья - поле" in text
-    assert "деревья - лес" in text
-    assert "гора - холмы" in text
-    assert "волны - река" in text
-    assert "полоса дороги - дорога" in text
-    assert "памятник - руины" in text
-    assert "куст - глушь" in text
-    assert "туман" not in text
-    assert "🌾" not in text
-    assert "Рамки:" in text
+    assert text.startswith("Рамки:")
     assert "синяя - ваши" in text
     assert "жёлтая - можно занять" in text
-    assert "Буква на клетке" in text
+    assert "Местность:" in text
+    assert "колосья · Поле - бонус ферме" in text
+    assert "деревья · Лес - бонус мастерской" in text
+    assert "гора · Холмы - бонус сторожке" in text
+    assert f"волны · Река - +{B.RIVER_PASSIVE_GRAIN} зерна/день" in text
+    assert f"полоса · Дорога - +{B.ROAD_PASSIVE_GOODS} товаров/день" in text
+    assert (
+        f"памятник · Руины - разово {B.RUINS_LOOT_MIN}-{B.RUINS_LOOT_MAX} товаров"
+        in text
+    )
+    assert f"куст · Глушь - занятие ×{B.WILDS_CLAIM_MULT} → поле/лес/холмы" in text
+    assert "туман" not in text
+    assert "🌾" not in text
+    assert "Буква на клетке" not in text
     assert "Д двор" in text
     assert "Ф ферма" in text
     assert "· свободно" not in text
     assert "+ можно" not in text
     assert "← вы" not in text
     assert "ферма ×" not in text
+    assert text.index("Рамки:") < text.index("Местность:")
+    assert text.index("Местность:") < text.index("Угол (свои)")
+
+
+def test_format_map_owners_pins_you_and_truncates():
+    from app.domain.economy import format_map_owners, format_map_you_pin
+
+    marks = {1: "К", 2: "М", 3: "Н", 4: "О", 5: "П", 6: "Р", 7: "С"}
+    legend = {
+        1: "Я",
+        2: "Два",
+        3: "Три",
+        4: "Четыре",
+        5: "Пять",
+        6: "Шесть",
+        7: "Семь",
+    }
+    assert format_map_you_pin(marks, highlight_fief_id=1) == "вы = К"
+    owners = format_map_owners(legend, marks, highlight_fief_id=1, max_others=3)
+    assert owners is not None
+    assert owners.startswith("Кто:")
+    assert "К = Я" not in owners
+    assert "М = Два" in owners
+    assert "ещё 3" in owners
+    long = format_map_owners(
+        {2: "Очень длинное имя усадьбы для подписи"},
+        {2: "М"},
+        highlight_fief_id=1,
+    )
+    assert long is not None
+    assert "…" in long
+    assert len(long.split("\n", 1)[1]) <= 22 + len("М = ")
 
 
 def test_stash_status_line_copy():
@@ -143,11 +184,13 @@ def test_map_text_wraps_only_grid_in_pre():
 
     text = engine.map_text(1, highlight_fief_id=1)
     assert text.startswith("🗺️ Долина (день 3)\n<pre>")
-    assert "</pre>\n\nВладельцы:" in text
+    assert "</pre>\n\nвы = К" in text
     assert "Рамки:" in text
     assert "Местность" in text
+    assert "бонус ферме" in text
     pre = text.split("<pre>", 1)[1].split("</pre>", 1)[0]
-    assert "Владельцы:" not in pre
+    assert "вы =" not in pre
+    assert "Кто:" not in pre
     assert "Рамки:" not in pre
     assert "Местность" not in pre
 

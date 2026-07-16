@@ -157,25 +157,64 @@ def map_owner_marks(tiles: list[TileView]) -> dict[int, str]:
     return {fid: owner_mark(i) for i, fid in enumerate(fief_ids)}
 
 
+# В подписи к фото: вы всегда сверху; остальных не больше этого числа.
+MAP_OWNER_CAPTION_MAX_OTHERS = 5
+MAP_OWNER_NAME_MAX_CHARS = 22
+
+
+def _truncate_owner_name(name: str, limit: int = MAP_OWNER_NAME_MAX_CHARS) -> str:
+    text = str(name).strip()
+    if len(text) <= limit:
+        return text
+    if limit <= 1:
+        return "…"
+    return text[: limit - 1] + "…"
+
+
+def format_map_you_pin(
+    marks: dict[int, str],
+    *,
+    highlight_fief_id: int | None = None,
+) -> str | None:
+    """Короткая метка зрителя: 'вы = К'."""
+    if highlight_fief_id is None:
+        return None
+    mark = marks.get(highlight_fief_id)
+    if mark is None:
+        return None
+    return f"вы = {mark}"
+
+
 def format_map_owners(
     legend: dict[int, str],
     marks: dict[int, str],
     *,
     highlight_fief_id: int | None = None,
-) -> str:
-    """Полный список владельцев для кнопки под картой."""
-    owner_lines = []
+    max_others: int = MAP_OWNER_CAPTION_MAX_OTHERS,
+) -> str | None:
+    """Список владельцев под легендой; себя не дублирует (есть вы = …)."""
+    if not marks:
+        return "Кто:\nна карте пока никого"
+
+    others: list[str] = []
     for fid in sorted(marks):
-        name = legend.get(fid, f"#{fid}")
-        suffix = (
-            " (это вы)"
-            if highlight_fief_id is not None and fid == highlight_fief_id
-            else ""
-        )
-        owner_lines.append(f"{marks[fid]} = {name}{suffix}")
-    if not owner_lines:
-        return "Владельцы:\nна карте пока никого"
-    return "Владельцы:\n" + "\n".join(owner_lines)
+        if highlight_fief_id is not None and fid == highlight_fief_id:
+            continue
+        name = _truncate_owner_name(legend.get(fid, f"#{fid}"))
+        others.append(f"{marks[fid]} = {name}")
+
+    if not others:
+        # Только вы на карте - блока "Кто" не нужно.
+        if highlight_fief_id is not None and highlight_fief_id in marks:
+            return None
+        return "Кто:\nна карте пока никого"
+
+    shown = others[: max(0, max_others)]
+    hidden = len(others) - len(shown)
+    lines = ["Кто:", *shown]
+    if hidden > 0:
+        lines.append(f"ещё {hidden}")
+    return "\n".join(lines)
 
 
 def render_map_parts(
@@ -187,7 +226,7 @@ def render_map_parts(
     highlight_fief_id: int | None = None,
     claimable: set[tuple[int, int]] | None = None,
 ) -> tuple[str, str]:
-    """Сетка (для <pre>) и полный footer (текст-карта / запасной путь)."""
+    """Сетка (для <pre>) и footer: вы → рамки/местность → кто."""
     by_pos = {(t.x, t.y): t for t in tiles}
     marks = map_owner_marks(tiles)
 
@@ -205,10 +244,16 @@ def render_map_parts(
 
     from app.domain.guide import map_tile_legend
 
-    footer_parts = [
-        format_map_owners(legend, marks, highlight_fief_id=highlight_fief_id),
-        map_tile_legend(),
-    ]
+    footer_parts: list[str] = []
+    you_pin = format_map_you_pin(marks, highlight_fief_id=highlight_fief_id)
+    if you_pin:
+        footer_parts.append(you_pin)
+    footer_parts.append(map_tile_legend())
+    owners = format_map_owners(
+        legend, marks, highlight_fief_id=highlight_fief_id
+    )
+    if owners:
+        footer_parts.append(owners)
     return "\n".join(lines), "\n\n".join(footer_parts)
 
 
