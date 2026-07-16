@@ -2275,14 +2275,15 @@ class Engine:
         return event_line
 
     def _realm_farm_mult(self, realm: dict) -> float:
+        mult = 1.0
         key = realm.get("active_minor_key")
         if key == "harvest":
-            return float(minor_effect("harvest").get("farm_mult") or 1.15)
-        if key == "drought":
-            return float(minor_effect("drought").get("farm_mult") or 0.55)
+            mult *= float(minor_effect("harvest").get("farm_mult") or 1.15)
+        elif key == "drought":
+            mult *= float(minor_effect("drought").get("farm_mult") or 0.4375)
         if self._active_cattle_plague(int(realm["id"])) is not None:
-            return float(catastrophe_effect("cattle_plague").get("farm_mult") or 0.50)
-        return 1.0
+            mult *= float(catastrophe_effect("cattle_plague").get("farm_mult") or 0.375)
+        return mult
 
     def _active_cattle_plague(self, realm_id: int) -> dict | None:
         for ev in self.db.get_active_events(realm_id, kind="catastrophe"):
@@ -2298,7 +2299,7 @@ class Engine:
         eff = minor_effect(key)
         if key == "rats":
             threshold = int(eff.get("unprot_grain_threshold") or 80)
-            loss_frac = float(eff.get("loss_frac") or 0.20)
+            loss_frac = float(eff.get("loss_frac") or 0.25)
             for fief in self.db.list_fiefs(realm_id):
                 barn = self.barn_level(fief["id"])
                 unprot = int(fief["grain"] * (1.0 - B.barn_protect_frac(barn)))
@@ -2307,26 +2308,26 @@ class Engine:
                     self.db.update_fief(fief["id"], grain=max(0, fief["grain"] - loss))
             return
         if key == "blight":
-            frac = float(eff.get("goods_loss_frac") or 0.18)
+            frac = float(eff.get("goods_loss_frac") or 0.225)
             for fief in self.db.list_fiefs(realm_id):
                 loss = max(1, int(int(fief["goods"]) * frac)) if int(fief["goods"]) > 0 else 0
                 if loss:
                     self.db.update_fief(fief["id"], goods=max(0, int(fief["goods"]) - loss))
             return
         if key == "spoilage":
-            frac = float(eff.get("grain_loss_frac") or 0.15)
+            frac = float(eff.get("grain_loss_frac") or 0.1875)
             for fief in self.db.list_fiefs(realm_id):
                 loss = max(1, int(int(fief["grain"]) * frac)) if int(fief["grain"]) > 0 else 0
                 if loss:
                     self.db.update_fief(fief["id"], grain=max(0, int(fief["grain"]) - loss))
             return
         if key == "toll":
-            flat = int(eff.get("goods_flat_loss") or 12)
+            flat = int(eff.get("goods_flat_loss") or 15)
             for fief in self.db.list_fiefs(realm_id):
                 self.db.update_fief(fief["id"], goods=max(0, int(fief["goods"]) - flat))
             return
         if key == "press_gang":
-            loss = int(eff.get("might_loss") or 3)
+            loss = int(eff.get("might_loss") or 4)
             for fief in self.db.list_fiefs(realm_id):
                 self.db.update_fief(fief["id"], might=max(0, int(fief["might"]) - loss))
             return

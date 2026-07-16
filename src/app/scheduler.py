@@ -129,7 +129,7 @@ async def _post_catastrophe_message(
             f"Вклад: кнопка ниже (−5 силы за нажатие)."
         )
     elif key == "cattle_plague":
-        extra = "\nПоля без тягла дают половину, пока мор не отступит."
+        extra = "\nПоля без тягла отдают едва ли треть, пока мор не отступит."
     text = (
         f"⚠️ <b>{meta['name_ru']}</b>\n"
         f"{narrative}{extra}\n"

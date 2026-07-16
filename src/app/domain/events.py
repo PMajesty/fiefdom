@@ -56,7 +56,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
             "Утром считают дыры - и проклятия."
         ),
         "button_labels": None,
-        "mechanics": "unprot_grain>80:-20%",
+        "mechanics": "unprot_grain>80:-25%",
         "tone": "bad",
     },
     "fair": {
@@ -94,7 +94,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
             "Нива отдаст едва ли половину - переждать и молиться на облака."
         ),
         "button_labels": None,
-        "mechanics": "farm_mult-45%/1t",
+        "mechanics": "farm_mult-56%/1t",
         "tone": "bad",
     },
     "wedding": {
@@ -133,7 +133,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
             "К вечеру считают убытки и ругаются тише обычного."
         ),
         "button_labels": None,
-        "mechanics": "goods:-18%",
+        "mechanics": "goods:-22.5%",
         "tone": "bad",
     },
     "press_gang": {
@@ -146,7 +146,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
             "а в головах - злее."
         ),
         "button_labels": None,
-        "mechanics": "might:-3",
+        "mechanics": "might:-4",
         "tone": "bad",
     },
     "fire": {
@@ -172,7 +172,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
             "Спорить с алебардой - плохая арифметика."
         ),
         "button_labels": None,
-        "mechanics": "goods:-12_flat",
+        "mechanics": "goods:-15_flat",
         "tone": "bad",
     },
     "spoilage": {
@@ -185,7 +185,7 @@ MINOR_EVENTS: dict[str, dict[str, Any]] = {
             "Утром мешки легче - и совесть тоже."
         ),
         "button_labels": None,
-        "mechanics": "grain:-15%",
+        "mechanics": "grain:-19%",
         "tone": "bad",
     },
 }
@@ -217,10 +217,10 @@ CATASTROPHES: dict[str, dict[str, Any]] = {
         "name_ru": "Мор скота",
         "canned_narrative": (
             "На выгонах падают коровы, а воздух пахнет сладкой гнилью. "
-            "Поля без тягла дают половину, пока мор сам не отступит."
+            "Поля без тягла отдают едва ли треть, пока мор сам не отступит."
         ),
         "button_labels": None,
-        "mechanics": "farm_mult-50%/window",
+        "mechanics": "farm_mult-62%/window",
     },
     "rat_king": {
         "id": "rat_king",
@@ -303,20 +303,20 @@ _MINOR_EFFECTS: dict[str, dict[str, Any]] = {
     "harvest": {"farm_mult": 1.15, "duration_ticks": 1},
     "fog": {"raids_ignore_patrol": True, "duration_ticks": 1},
     "trader": {"dm_deals": 2, "duration_ticks": 1},
-    "rats": {"unprot_grain_threshold": 80, "loss_frac": 0.20},
+    "rats": {"unprot_grain_threshold": 80, "loss_frac": 0.25},
     "fair": {"trade_bonus_frac": 0.05, "duration_ticks": 1},
     "good_stone": {"upgrade_cost_mult": 0.75, "duration_ticks": 1},
     "drought": {
-        "farm_mult": 0.55,
+        "farm_mult": 0.4375,
         "duration_ticks": 1,
     },
     "wedding": {"trade_gift_grain": 5, "duration_ticks": 1},
     "omen": {"foreshadow": True},
-    "blight": {"goods_loss_frac": 0.18},
-    "press_gang": {"might_loss": 3},
+    "blight": {"goods_loss_frac": 0.225},
+    "press_gang": {"might_loss": 4},
     "fire": {"damage_random_building": True},
-    "toll": {"goods_flat_loss": 12},
-    "spoilage": {"grain_loss_frac": 0.15},
+    "toll": {"goods_flat_loss": 15},
+    "spoilage": {"grain_loss_frac": 0.1875},
 }
 
 _CATASTROPHE_EFFECTS: dict[str, dict[str, Any]] = {
@@ -332,7 +332,7 @@ _CATASTROPHE_EFFECTS: dict[str, dict[str, Any]] = {
         "building_delta": -1,
     },
     "cattle_plague": {
-        "farm_mult": 0.50,
+        "farm_mult": 0.375,
     },
     "rat_king": {
         "loot_bonus_frac": 0.30,
@@ -374,7 +374,10 @@ def _shipped_catastrophe_pool() -> list[str]:
 
 
 def roll_minor_event(rng: Random) -> str | None:
-    """С вероятностью MINOR_EVENT_CHANCE возвращает ключ отгруженного события, иначе тихий день."""
+    """С вероятностью MINOR_EVENT_CHANCE возвращает ключ отгруженного события, иначе тихий день.
+
+    При MINOR_EVENT_CHANCE=1.0 каждый тик получает событие (включая omen без механики).
+    """
     if rng.random() >= B.MINOR_EVENT_CHANCE:
         return None
     pool = _shipped_minor_pool()

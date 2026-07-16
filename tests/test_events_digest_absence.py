@@ -180,31 +180,33 @@ def test_gated_content_remains_in_tables():
     assert "cattle_plague" in events.SHIPPED_CATASTROPHE_KEYS
 
 
-def test_roll_minor_event_quiet_and_hit():
-    quiet = events.roll_minor_event(Random(0))
-    # seed 0: first random() is below chance on CPython - verify distribution instead
-    hits = 0
-    none_count = 0
+def test_roll_minor_event_every_tick():
+    assert B.MINOR_EVENT_CHANCE == 1.0
     for seed in range(200):
         result = events.roll_minor_event(Random(seed))
-        if result is None:
-            none_count += 1
-        else:
-            hits += 1
-            assert result in events.SHIPPED_MINOR_KEYS
-            assert result in events.MINOR_EVENTS
-    assert hits > 0 and none_count > 0
-    assert abs(hits / 200 - B.MINOR_EVENT_CHANCE) < 0.15
-    assert quiet is None or quiet in events.SHIPPED_MINOR_KEYS
+        assert result is not None
+        assert result in events.SHIPPED_MINOR_KEYS
+        assert result in events.MINOR_EVENTS
+
+
+def test_bad_event_effects_are_harsher():
+    assert events.minor_effect("rats")["loss_frac"] == 0.25
+    assert events.minor_effect("blight")["goods_loss_frac"] == 0.225
+    assert events.minor_effect("spoilage")["grain_loss_frac"] == 0.1875
+    assert events.minor_effect("drought")["farm_mult"] == 0.4375
+    assert events.minor_effect("toll")["goods_flat_loss"] == 15
+    assert events.minor_effect("press_gang")["might_loss"] == 4
+    assert events.catastrophe_effect("cattle_plague")["farm_mult"] == 0.375
+    assert B.BANDIT_NIGHT_FAIL_GRAIN_FRAC == 0.3125
 
 
 def test_roll_minor_event_never_returns_gated_keys():
     gated = set(events.MINOR_EVENTS) - events.SHIPPED_MINOR_KEYS
     for seed in range(500):
         result = events.roll_minor_event(Random(seed))
-        if result is not None:
-            assert result not in gated
-            assert result in events.SHIPPED_MINOR_KEYS
+        assert result is not None
+        assert result not in gated
+        assert result in events.SHIPPED_MINOR_KEYS
 
 
 def test_pick_catastrophe_only_shipped():
