@@ -73,7 +73,7 @@ def test_render_map_aligned_columns_with_owners():
     assert "Рамки:" in body
     assert "только свои постройки" in body
     assert "Местность" in body
-    assert f"{B.TILE_EMOJI[B.TILE_FIELD]} поле" in body
+    assert "колосья - поле" in body
 
 
 def test_render_map_parts_separates_grid_and_footer():
@@ -92,14 +92,15 @@ def test_map_tile_legend_reads_naturally():
     from app.domain.guide import map_tile_legend
 
     text = map_tile_legend()
-    assert "Местность (иконка на клетке):" in text
-    assert f"{B.TILE_EMOJI[B.TILE_FIELD]} поле" in text
-    assert f"{B.TILE_EMOJI[B.TILE_FOREST]} лес" in text
-    assert f"{B.TILE_EMOJI[B.TILE_HILLS]} холмы" in text
-    assert f"{B.TILE_EMOJI[B.TILE_RIVER]} река" in text
-    assert f"{B.TILE_EMOJI[B.TILE_ROAD]} дорога" in text
-    assert f"{B.TILE_EMOJI[B.TILE_RUINS]} руины" in text
-    assert f"{B.TILE_EMOJI[B.TILE_WILDS]} глушь" in text
+    assert "Местность (рисунок на клетке):" in text
+    assert "колосья - поле" in text
+    assert "деревья - лес" in text
+    assert "гора - холмы" in text
+    assert "волны - река" in text
+    assert "полоса дороги - дорога" in text
+    assert "памятник - руины" in text
+    assert "туман - глушь" in text
+    assert "🌾" not in text
     assert "Рамки:" in text
     assert "синяя - ваши" in text
     assert "жёлтая - можно занять" in text

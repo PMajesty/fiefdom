@@ -236,7 +236,8 @@ def test_engine_map_photo_uses_cache_across_requests():
     assert "Рамки:" in first.caption
     assert "Владельцы:" in first.caption
     assert "Местность" in first.caption
-    assert f"{B.TILE_EMOJI[B.TILE_FIELD]} поле" in first.caption
+    assert "колосья - поле" in first.caption
+    assert "деревья - лес" in first.caption
 
     engine.remember_map_file_id(first.fingerprint, "AgADBAAD")
     third = engine.map_photo(1, highlight_fief_id=1)

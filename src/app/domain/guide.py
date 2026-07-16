@@ -3,7 +3,17 @@ from __future__ import annotations
 
 from app import balance as B
 
-# Подпись к карте: местность по иконке, рамки, буквы, постройки.
+# Как отличить тип клетки на PNG (Lucide: wheat/trees/mountain/waves/road/landmark/fog).
+TILE_ICON_CUES_RU = {
+    B.TILE_FIELD: "колосья",
+    B.TILE_FOREST: "деревья",
+    B.TILE_HILLS: "гора",
+    B.TILE_RIVER: "волны",
+    B.TILE_ROAD: "полоса дороги",
+    B.TILE_RUINS: "памятник",
+    B.TILE_WILDS: "туман",
+}
+
 _TILE_ORDER = (
     B.TILE_FIELD,
     B.TILE_FOREST,
@@ -16,13 +26,12 @@ _TILE_ORDER = (
 
 
 def _terrain_legend_lines() -> list[str]:
-    """Эмодзи совпадают с текст-картой; на PNG - рисунок того же смысла."""
     items = [
-        f"{B.TILE_EMOJI[t]} {B.TILE_NAMES_RU[t].lower()}" for t in _TILE_ORDER
+        f"{TILE_ICON_CUES_RU[t]} - {B.TILE_NAMES_RU[t].lower()}" for t in _TILE_ORDER
     ]
     mid = 4
     return [
-        "Местность (иконка на клетке):",
+        "Местность (рисунок на клетке):",
         "  " + " · ".join(items[:mid]),
         "  " + " · ".join(items[mid:]),
     ]
