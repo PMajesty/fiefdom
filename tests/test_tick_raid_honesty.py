@@ -63,7 +63,6 @@ def _attach_world(db, realm, fiefs: list[dict], realms: list[dict] | None = None
     db.get_or_create_world.return_value = world
     db.get_world.return_value = world
     db.list_realms_by_chain.return_value = chain
-    db.clear_world_force_tick_votes = MagicMock(return_value=0)
 
     def sync(_wid):
         for r in chain:

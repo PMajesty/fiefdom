@@ -240,19 +240,6 @@ ONBOARD_DAY3_GOODS = 15
 # Набег/Пакт в UI: после квестов (onboard_step >= 4) и с этого дня долины.
 RAID_PACT_UNLOCK_DAY = 3
 
-# --- Досрочный тик (голосование) ---
-# Континент: все незамороженные усадьбы; минимум FORCE_TICK_MIN_PLAYERS.
-FORCE_TICK_MIN_PLAYERS = 2
-
-
-def force_tick_votes_needed(player_count: int) -> int:
-    """Сколько голосов нужно, чтобы форсировать тик континента."""
-    n = max(0, int(player_count))
-    if n < FORCE_TICK_MIN_PLAYERS:
-        return FORCE_TICK_MIN_PLAYERS
-    return n
-
-
 # Feature flags по умолчанию
 DEFAULT_FEATURE_FLAGS = {
     "relics": False,

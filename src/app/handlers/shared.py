@@ -417,48 +417,29 @@ def home_kb(
     fief_id: int,
     primary_label: str,
     primary_callback: str,
-    *,
-    force_tick_progress: tuple[int, int] | None = None,
 ) -> InlineKeyboardMarkup:
-    """Дом: primary CTA + два хаба (Усадьба / Долина) + карта и устав.
-
-    force_tick_progress: (голоса, нужно) - полная ширина, только пока голос открыт.
-    """
+    """Дом: primary CTA + два хаба (Усадьба / Долина) + карта и устав."""
     fid = int(fief_id)
     rows: list[list[InlineKeyboardButton]] = [
         [InlineKeyboardButton(text=primary_label, callback_data=primary_callback)],
-    ]
-    if force_tick_progress is not None:
-        votes, needed = force_tick_progress
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"Тик сейчас ({int(votes)}/{int(needed)})",
-                    callback_data=f"ftv:{fid}",
-                )
-            ]
-        )
-    rows.extend(
         [
-            [
-                InlineKeyboardButton(
-                    text="Усадьба (дела)",
-                    callback_data=f"hub:e:{fid}",
-                ),
-                InlineKeyboardButton(
-                    text="Долина (связи)",
-                    callback_data=f"hub:v:{fid}",
-                ),
-            ],
-            [
-                InlineKeyboardButton(text="Карта (мир)", callback_data=f"map:{fid}"),
-                InlineKeyboardButton(
-                    text="Устав (правила)",
-                    callback_data=f"gd:{fid}",
-                ),
-            ],
-        ]
-    )
+            InlineKeyboardButton(
+                text="Усадьба (дела)",
+                callback_data=f"hub:e:{fid}",
+            ),
+            InlineKeyboardButton(
+                text="Долина (связи)",
+                callback_data=f"hub:v:{fid}",
+            ),
+        ],
+        [
+            InlineKeyboardButton(text="Карта (мир)", callback_data=f"map:{fid}"),
+            InlineKeyboardButton(
+                text="Устав (правила)",
+                callback_data=f"gd:{fid}",
+            ),
+        ],
+    ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -574,14 +555,12 @@ def more_menu_kb(
     *,
     raid_pact_open: bool = True,
     lock_hint: str | None = None,
-    force_tick_progress: tuple[int, int] | None = None,
 ) -> InlineKeyboardMarkup:
     """Совместимость: старый flat \"Ещё\" свёрнут в выбор хаба.
 
-    Живой callback more: обновляет дом целиком (см. cb_more). Сигнатура
-    force_tick_progress сохранена для старых вызовов; тик живёт на home_kb.
+    Живой callback more: обновляет дом целиком (см. cb_more).
     """
-    _ = (raid_pact_open, lock_hint, force_tick_progress)
+    _ = (raid_pact_open, lock_hint)
     fid = int(fief_id)
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -608,17 +587,11 @@ def main_menu_kb(
     day_number: int = B.RAID_PACT_UNLOCK_DAY,
     min_build_cost: int | None = None,
     next_claim_cost: int | None = None,
-    force_tick_progress: tuple[int, int] | None = None,
 ) -> InlineKeyboardMarkup:
     """Домашняя клавиатура усадьбы (status-first). Без снимка fief - безопасный CTA."""
     fid = int(fief_id)
     if fief is None:
-        return home_kb(
-            fid,
-            "Обновить статус",
-            f"st:{fid}",
-            force_tick_progress=force_tick_progress,
-        )
+        return home_kb(fid, "Обновить статус", f"st:{fid}")
     label, cb = choose_primary_cta(
         fid,
         actions=int(fief.get("actions") or 0),
@@ -630,7 +603,7 @@ def main_menu_kb(
         min_build_cost=min_build_cost,
         next_claim_cost=next_claim_cost,
     )
-    return home_kb(fid, label, cb, force_tick_progress=force_tick_progress)
+    return home_kb(fid, label, cb)
 
 
 def fief_home_kb(engine: Engine, fief_id: int) -> InlineKeyboardMarkup:
@@ -651,10 +624,6 @@ def fief_home_kb(engine: Engine, fief_id: int) -> InlineKeyboardMarkup:
             next_claim = B.claim_cost(n + 1)
         except ValueError:
             next_claim = None
-    force_prog = None
-    progress = engine.force_tick_progress(int(fief["realm_id"]))
-    if progress.get("available"):
-        force_prog = (progress["votes"], progress["needed"])
     return main_menu_kb(
         fief_id,
         fief=fief,
@@ -662,7 +631,6 @@ def fief_home_kb(engine: Engine, fief_id: int) -> InlineKeyboardMarkup:
         day_number=day_number,
         min_build_cost=min_build,
         next_claim_cost=next_claim,
-        force_tick_progress=force_prog,
     )
 
 

@@ -360,7 +360,6 @@ def test_run_world_tick_installs_and_clears_rumor_cache():
     db.list_realms_by_chain.return_value = chain
     db.transaction.return_value = nullcontext()
     db.sync_realms_clock_from_world = MagicMock()
-    db.clear_world_force_tick_votes = MagicMock(return_value=0)
     db.update_world = MagicMock(side_effect=lambda _wid, **fields: world.update(fields))
     db.update_realm = MagicMock(
         side_effect=lambda rid, **fields: next(
@@ -377,7 +376,7 @@ def test_run_world_tick_installs_and_clears_rumor_cache():
 
     seen_during_economy: list[dict | None] = []
 
-    def realm_tick(rid, tick_slot=None, *, forced=False, advance_clock=False):
+    def realm_tick(rid, tick_slot=None, *, advance_clock=False):
         cache = engine._rumor_snapshot_cache
         assert cache is not None
         assert set(cache) == {1, 2}

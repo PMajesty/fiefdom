@@ -665,9 +665,6 @@ class Engine:
             slots=tick_slots(),
         )
         lines.append(format_next_tick_line(next_at, local_now=local_now))
-        vote_line = self.force_tick_status_line(int(fief["realm_id"]))
-        if vote_line:
-            lines.append(vote_line)
         if notes:
             lines.append("· " + " · ".join(notes))
         return "\n".join(lines)
@@ -1761,109 +1758,12 @@ class Engine:
                 if t["id"] not in core_ids and not t.get("is_overgrown"):
                     self.db.update_tile(t["id"], is_overgrown=True)
 
-    # ---------- force tick vote (continent) ----------
-    def force_tick_eligible_fiefs(self, realm_id: int) -> list[dict]:
-        """Совместимость: усадьбы долины. Для прогресса используйте world-пул."""
-        return [f for f in self.db.list_fiefs(realm_id) if not f.get("frozen")]
-
     def _world_id_for_realm(self, realm_id: int) -> int:
         realm = self.db.get_realm(realm_id) or {}
         wid = realm.get("world_id")
         if wid is not None:
             return int(wid)
         return int(self.db.get_or_create_world()["id"])
-
-    def force_tick_eligible_fiefs_world(self, world_id: int) -> list[dict]:
-        out: list[dict] = []
-        for realm in self.db.list_realms_by_chain(world_id):
-            out.extend(
-                f for f in self.db.list_fiefs(int(realm["id"])) if not f.get("frozen")
-            )
-        return out
-
-    def force_tick_progress(self, realm_id: int) -> dict[str, Any]:
-        world_id = self._world_id_for_realm(realm_id)
-        eligible = self.force_tick_eligible_fiefs_world(world_id)
-        eligible_ids = {int(f["id"]) for f in eligible}
-        n = len(eligible)
-        vote_ids = {
-            int(v["fief_id"])
-            for v in self.db.list_world_force_tick_votes(world_id)
-            if int(v["fief_id"]) in eligible_ids
-        }
-        needed = B.force_tick_votes_needed(n)
-        return {
-            "eligible": n,
-            "votes": len(vote_ids),
-            "needed": needed,
-            "available": n >= B.FORCE_TICK_MIN_PLAYERS,
-            "vote_fief_ids": vote_ids,
-            "world_id": world_id,
-        }
-
-    def force_tick_status_line(self, realm_id: int) -> str | None:
-        progress = self.force_tick_progress(realm_id)
-        if not progress["available"]:
-            return None
-        return f"Голоса: {progress['votes']}/{progress['needed']}"
-
-    def _forced_tick_mandate_open(self, world_id: int) -> bool:
-        """Есть ли ещё кворум голосов за досрочный тик на континенте."""
-        eligible = self.force_tick_eligible_fiefs_world(world_id)
-        n = len(eligible)
-        if n < B.FORCE_TICK_MIN_PLAYERS:
-            return False
-        eligible_ids = {int(f["id"]) for f in eligible}
-        votes = sum(
-            1
-            for v in self.db.list_world_force_tick_votes(world_id)
-            if int(v["fief_id"]) in eligible_ids
-        )
-        return votes >= B.force_tick_votes_needed(n)
-
-    def cast_force_tick_vote(self, fief_id: int) -> dict[str, Any]:
-        """Голос за досрочный тик континента. При пороге - run_world_tick(forced).
-
-        Голоса не сбрасываем здесь: сброс только после успешного сдвига часов
-        в run_world_tick(forced=True), иначе падение до тика теряет мандат.
-        """
-        fief = self.require_active_fief(fief_id)
-        if fief.get("frozen"):
-            raise ValueError("Усадьба заморожена")
-        realm_id = int(fief["realm_id"])
-        world_id = self._world_id_for_realm(realm_id)
-
-        with self.db.transaction():
-            added = self.db.add_force_tick_vote(realm_id, fief_id)
-            progress = self.force_tick_progress(realm_id)
-            if not progress["available"]:
-                return {
-                    "status": "too_few",
-                    "progress": progress,
-                    "fief": fief,
-                }
-            if progress["votes"] < progress["needed"]:
-                return {
-                    "status": "voted" if added else "already",
-                    "progress": progress,
-                    "fief": fief,
-                }
-
-        tick_result = self.run_world_tick(world_id, forced=True)
-        # Incomplete/resume или нет мандата: дня не форсировали - не врём "forced".
-        # Голоса остаются до реального сдвига часов после догона.
-        if tick_result.get("forced_skipped") or tick_result.get("resumed"):
-            return {
-                "status": "voted" if added else "already",
-                "progress": self.force_tick_progress(realm_id),
-                "fief": fief,
-            }
-        return {
-            "status": "forced",
-            "progress": self.force_tick_progress(realm_id),
-            "fief": fief,
-            "tick": tick_result,
-        }
 
     # ---------- daily tick ----------
     def world_tick_incomplete(self, world_id: int | None = None) -> bool:
@@ -1901,8 +1801,6 @@ class Engine:
         self,
         world_id: int | None = None,
         tick_slot: int | None = None,
-        *,
-        forced: bool = False,
     ) -> dict:
         """Один тик континента: общие часы/события, локальные сводки и слухи.
 
@@ -1951,35 +1849,18 @@ class Engine:
                 "active_minor_until": None,
                 "pending_minor_key": None,
             }
-            # Плановые слоты двигает только scheduler (tick_slot без forced).
-            # Досрочный/ручной тик часы мира двигает, плановые слоты - нет.
-            if tick_slot is not None and not forced:
+            # Плановые слоты двигает только scheduler (когда передан tick_slot).
+            # Админский тик без слота часы мира двигает, плановые слоты - нет.
+            if tick_slot is not None:
                 slots = tick_slots()
                 tick_slot = max(0, min(int(tick_slot), max(0, len(slots) - 1)))
                 world_fields["last_tick_local_date"] = local_date
                 world_fields["last_tick_slot"] = tick_slot
-            if forced:
-                world_fields["forced_tick_count"] = (
-                    int(world.get("forced_tick_count") or 0) + 1
-                )
-            # Часы мира + зеркала долин + сброс голосов - один COMMIT.
+            # Часы мира + зеркала долин - один COMMIT.
             # Иначе crash между update_world и sync оставляет economy на stale realm clock.
-            # Голоса сбрасываем при любом сдвиге часов (scheduled и forced), чтобы
-            # кворум до advance не дал лишний forced-день после resume-догона.
             with self.db.transaction():
-                if forced and not self._forced_tick_mandate_open(wid):
-                    return {
-                        "world_id": wid,
-                        "realms": [],
-                        "digest": None,
-                        "chat_id": None,
-                        "resumed": False,
-                        "incomplete": self.world_tick_incomplete(wid),
-                        "forced_skipped": True,
-                    }
                 self.db.update_world(wid, **world_fields)
                 self.db.sync_realms_clock_from_world(wid)
-                self.db.clear_world_force_tick_votes(wid)
 
         realm_results = []
         # Единый снимок на этот вызов тика (при догоне после сбоя - best-effort
@@ -2007,7 +1888,6 @@ class Engine:
                         result = self.run_realm_tick(
                             rid,
                             tick_slot=tick_slot,
-                            forced=forced,
                             advance_clock=False,
                         )
                         self.db.update_realm(rid, last_economy_tick=new_tick)
@@ -2035,11 +1915,6 @@ class Engine:
             if world.get("pending_minor_key") is None:
                 next_minor = roll_minor_event(random.Random())
                 self.db.update_world(wid, pending_minor_key=next_minor or "")
-            # Страховка: сброс после успешного сдвига в этом вызове.
-            # На resume не трогаем - голоса, набранные во время incomplete,
-            # остаются мандатом на следующий force после догона.
-            if not resuming:
-                self.db.clear_world_force_tick_votes(wid)
             self.db.sync_realms_clock_from_world(wid)
 
         posted = [x for x in realm_results if not x.get("skipped")]
@@ -2058,16 +1933,13 @@ class Engine:
         realm_id: int,
         tick_slot: int | None = None,
         *,
-        forced: bool = False,
         advance_clock: bool = True,
     ) -> dict:
         """Тик одной долины. При advance_clock=False часы уже выставлены миром."""
         if advance_clock:
             # Одиночный вызов (админ/тесты) гоняет весь континент.
             world_id = self._world_id_for_realm(realm_id)
-            world_result = self.run_world_tick(
-                world_id, tick_slot=tick_slot, forced=forced
-            )
+            world_result = self.run_world_tick(world_id, tick_slot=tick_slot)
             for item in world_result.get("realms") or []:
                 if int(item.get("realm_id") or 0) == int(realm_id):
                     return item

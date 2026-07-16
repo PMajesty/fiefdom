@@ -285,14 +285,6 @@ class Database:
                 );
                 """,
                 """
-                CREATE TABLE IF NOT EXISTS tick_force_votes (
-                    realm_id BIGINT NOT NULL REFERENCES realms(id) ON DELETE CASCADE,
-                    fief_id BIGINT NOT NULL REFERENCES fiefs(id) ON DELETE CASCADE,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    PRIMARY KEY (realm_id, fief_id)
-                );
-                """,
-                """
                 CREATE INDEX IF NOT EXISTS idx_fiefs_realm ON fiefs(realm_id);
                 CREATE INDEX IF NOT EXISTS idx_tiles_realm ON map_tiles(realm_id);
                 CREATE INDEX IF NOT EXISTS idx_tiles_owner ON map_tiles(owner_fief_id);
@@ -300,8 +292,6 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_trade_realm ON trade_offers(realm_id, status);
                 CREATE INDEX IF NOT EXISTS idx_pact_invites_target
                     ON pact_invites(target_fief_id, status);
-                CREATE INDEX IF NOT EXISTS idx_tick_force_votes_realm
-                    ON tick_force_votes(realm_id);
                 """,
             ]
             for s in stmts:
@@ -568,10 +558,7 @@ class Database:
         self.cursor.execute(
             "ALTER TABLE realms ADD COLUMN IF NOT EXISTS chain_index INT;"
         )
-        self.cursor.execute(
-            "ALTER TABLE tick_force_votes ADD COLUMN IF NOT EXISTS world_id BIGINT "
-            "REFERENCES worlds(id) ON DELETE CASCADE;"
-        )
+        self.cursor.execute("DROP TABLE IF EXISTS tick_force_votes;")
         self.cursor.execute(
             "ALTER TABLE raids_log ADD COLUMN IF NOT EXISTS victim_realm_id BIGINT;"
         )
@@ -730,14 +717,6 @@ class Database:
             """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_realms_world_chain
             ON realms(world_id, chain_index);
-            """
-        )
-        self.cursor.execute(
-            """
-            UPDATE tick_force_votes v
-            SET world_id = r.world_id
-            FROM realms r
-            WHERE v.realm_id = r.id AND v.world_id IS NULL;
             """
         )
         self.cursor.execute(
@@ -1520,58 +1499,6 @@ class Database:
             "SELECT * FROM event_actions WHERE event_id=%s;",
             (event_id,),
         )
-
-    def add_force_tick_vote(self, realm_id: int, fief_id: int) -> bool:
-        """True если голос записан впервые. Голос континентальный (world_id)."""
-        realm = self.get_realm(realm_id)
-        world_id = int(realm["world_id"]) if realm and realm.get("world_id") else None
-        with self.lock:
-            self.cursor.execute(
-                """
-                INSERT INTO tick_force_votes (realm_id, fief_id, world_id)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (realm_id, fief_id) DO NOTHING
-                RETURNING fief_id;
-                """,
-                (int(realm_id), int(fief_id), world_id),
-            )
-            row = self.cursor.fetchone()
-            self.commit()
-            return row is not None
-
-    def list_force_tick_votes(self, realm_id: int) -> list[dict]:
-        """Совместимость: голоса долины. Для континента используйте list_world_force_tick_votes."""
-        return self._fetchall(
-            "SELECT * FROM tick_force_votes WHERE realm_id=%s;",
-            (int(realm_id),),
-        )
-
-    def list_world_force_tick_votes(self, world_id: int) -> list[dict]:
-        return self._fetchall(
-            "SELECT * FROM tick_force_votes WHERE world_id=%s;",
-            (int(world_id),),
-        )
-
-    def clear_force_tick_votes(self, realm_id: int) -> int:
-        """Стирает голоса долины. Возвращает число удалённых строк."""
-        with self.lock:
-            self.cursor.execute(
-                "DELETE FROM tick_force_votes WHERE realm_id=%s RETURNING fief_id;",
-                (int(realm_id),),
-            )
-            rows = self.cursor.fetchall()
-            self.commit()
-            return len(rows)
-
-    def clear_world_force_tick_votes(self, world_id: int) -> int:
-        with self.lock:
-            self.cursor.execute(
-                "DELETE FROM tick_force_votes WHERE world_id=%s RETURNING fief_id;",
-                (int(world_id),),
-            )
-            rows = self.cursor.fetchall()
-            self.commit()
-            return len(rows)
 
     def next_decree_number(self, realm_id: int | None) -> int:
         with self.lock:

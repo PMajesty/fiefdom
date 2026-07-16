@@ -573,7 +573,6 @@ def test_status_card_groups_blocks_for_glance():
         return_value=SimpleNamespace(grain=5.0, goods=13.0, might=3.0)
     )
     engine.barn_level = MagicMock(return_value=0)  # type: ignore[method-assign]
-    engine.force_tick_status_line = MagicMock(return_value="Голоса: 3/6")  # type: ignore[method-assign]
     db.get_fief.return_value = {
         "id": 1,
         "name": "Усадьба @Artyom_dio",
@@ -624,7 +623,7 @@ def test_status_card_groups_blocks_for_glance():
     assert "+5 зерна/день, +13 товаров/день, +3 силы/день" in text
     assert "Корм: земля " in text
     assert "Следующий тик: 16.07 16:00" in text
-    assert text.endswith("Голоса: 3/6")
+    assert "Голоса:" not in text
 
 
 def test_guide_mentions_raid_pact_unlock_day():

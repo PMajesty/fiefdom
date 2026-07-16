@@ -292,15 +292,6 @@ def test_home_kb_has_primary_hubs_map_guide():
     assert [btn.callback_data for btn in rows[2]] == ["map:9", "gd:9"]
 
 
-def test_home_kb_force_tick_row():
-    from app.handlers.shared import home_kb
-
-    kb = home_kb(9, "Рынок", "mkt:9", force_tick_progress=(1, 2))
-    assert kb.inline_keyboard[1][0].text == "Тик сейчас (1/2)"
-    assert kb.inline_keyboard[1][0].callback_data == "ftv:9"
-    assert len(kb.inline_keyboard) == 4
-
-
 def test_main_menu_kb_compact_without_fief():
     from app.handlers.shared import main_menu_kb
 
@@ -340,6 +331,7 @@ def test_estate_and_valley_hub_prefixes():
     estate = estate_hub_kb(9)
     estate_data = [btn.callback_data for row in estate.inline_keyboard for btn in row]
     assert estate_data == [
+        "hld:9",
         "clm:9",
         "bld:9",
         "gth:9",

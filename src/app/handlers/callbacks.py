@@ -21,7 +21,6 @@ from app.handlers.shared import (
     get_engine,
     map_realms_kb,
     map_view_kb,
-    post_digest,
     post_realm_public,
     realm_upgrade_cost_mult,
     reply_game,
@@ -355,57 +354,13 @@ async def cb_holdings(callback: CallbackQuery) -> None:
 
 
 @router.callback_query(F.data.startswith("ftv:"))
-async def cb_force_tick_vote(callback: CallbackQuery) -> None:
-    """Голос за досрочный тик континента (без спама в чат)."""
+async def cb_force_tick_vote_removed(callback: CallbackQuery) -> None:
+    """Старые кнопки \"Тик сейчас\": сообщить об отмене и обновить дом."""
     engine = get_engine()
     try:
         fief_id = int(callback.data.split(":")[1])
-        _ensure_owner_active(engine, fief_id, callback.from_user.id)
-        result = engine.cast_force_tick_vote(fief_id)
-        status = result["status"]
-        progress = result["progress"]
-
-        if status == "too_few":
-            await callback.answer(
-                f"Нужно минимум {B.FORCE_TICK_MIN_PLAYERS} игрока на континенте",
-                show_alert=True,
-            )
-            return
-        if status == "already":
-            await callback.answer(
-                f"Вы уже голосуете ({progress['votes']}/{progress['needed']})",
-                show_alert=True,
-            )
-            return
-        if status == "voted":
-            await callback.answer(
-                f"Голос учтён: {progress['votes']}/{progress['needed']}",
-                show_alert=True,
-            )
-            await reply_game(
-                callback.message,
-                engine.status_card(fief_id),
-                reply_markup=fief_home_kb(engine, fief_id),
-            )
-            return
-        if status != "forced":
-            await callback.answer(
-                f"Голос учтён: {progress['votes']}/{progress['needed']}",
-                show_alert=True,
-            )
-            return
-
-        tick = result.get("tick") or {}
-        await callback.answer(
-            "Досрочный тик континента! Сводки в чатах долин.",
-            show_alert=True,
-        )
-        for item in tick.get("realms") or []:
-            digest = item.get("digest")
-            chat_id = item.get("chat_id")
-            realm_id = item.get("realm_id")
-            if digest and chat_id and realm_id:
-                await post_digest(callback.bot, chat_id, int(realm_id), digest)
+        _ensure_owner(engine, fief_id, callback.from_user.id)
+        await callback.answer("Досрочный тик отменён. Ждите плановый ход.", show_alert=True)
         await reply_game(
             callback.message,
             engine.status_card(fief_id),
@@ -414,7 +369,7 @@ async def cb_force_tick_vote(callback: CallbackQuery) -> None:
     except ValueError as exc:
         await callback.answer(str(exc), show_alert=True)
     except Exception:
-        logger.exception("cb_force_tick_vote")
+        logger.exception("cb_force_tick_vote_removed")
         await callback.answer("Ошибка", show_alert=True)
 
 

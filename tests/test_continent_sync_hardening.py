@@ -165,7 +165,6 @@ def test_world_clock_advance_and_realm_sync_are_atomic():
     db.get_world.return_value = world
     db.get_or_create_world.return_value = world
     db.list_realms_by_chain.return_value = chain
-    db.clear_world_force_tick_votes = MagicMock(return_value=0)
 
     def update_world(_wid, **fields):
         world.update(fields)
@@ -195,8 +194,8 @@ def test_world_clock_advance_and_realm_sync_are_atomic():
     engine.run_realm_tick.assert_not_called()
 
 
-def _assert_clock_advance_clears_votes_in_same_tx(*, forced: bool):
-    """update_world, sync и clear_votes в одной transaction() при любом advance."""
+def test_clock_advance_updates_world_and_sync_inside_same_transaction():
+    """update_world и sync в одной transaction() при сдвиге часов."""
     db = MagicMock()
     world = _world(tick_index=0, pending_minor_key="", forced_tick_count=0)
     r1 = _realm(1, last_economy_tick=0)
@@ -228,10 +227,6 @@ def _assert_clock_advance_clears_votes_in_same_tx(*, forced: bool):
             r["day_number"] = world["day_number"]
             r["forced_tick_count"] = world.get("forced_tick_count")
 
-    def clear_votes(_wid):
-        ops.append(("clear_votes", depth["n"]))
-        return 0
-
     def update_realm(rid, **fields):
         for r in chain:
             if int(r["id"]) == int(rid):
@@ -239,41 +234,21 @@ def _assert_clock_advance_clears_votes_in_same_tx(*, forced: bool):
 
     db.update_world.side_effect = update_world
     db.sync_realms_clock_from_world.side_effect = sync
-    db.clear_world_force_tick_votes.side_effect = clear_votes
     db.update_realm.side_effect = update_realm
-    db.list_world_force_tick_votes.return_value = [
-        {"fief_id": 10},
-        {"fief_id": 11},
-    ]
 
     engine = Engine(db)
-    engine.force_tick_eligible_fiefs_world = MagicMock(
-        return_value=[{"id": 10}, {"id": 11}]
-    )
     engine.run_realm_tick = MagicMock(
         return_value={"realm_id": 1, "digest": "d", "chat_id": -1}
     )
 
     with patch("app.engine.roll_minor_event", return_value=None):
-        if forced:
-            engine.run_world_tick(1, forced=True)
-        else:
-            engine.run_world_tick(1, tick_slot=0)
+        engine.run_world_tick(1, tick_slot=0)
 
-    advance = [o for o in ops if o[0] in ("update_world", "sync", "clear_votes")]
-    assert advance[:3] == [
+    advance = [o for o in ops if o[0] in ("update_world", "sync")]
+    assert advance[:2] == [
         ("update_world", 1),
         ("sync", 1),
-        ("clear_votes", 1),
     ]
-
-
-def test_forced_clock_advance_clears_votes_inside_same_transaction():
-    _assert_clock_advance_clears_votes_in_same_tx(forced=True)
-
-
-def test_scheduled_clock_advance_clears_votes_inside_same_transaction():
-    _assert_clock_advance_clears_votes_in_same_tx(forced=False)
 
 
 def test_world_tick_equal_clock_and_resume_after_partial_failure():
@@ -287,7 +262,6 @@ def test_world_tick_equal_clock_and_resume_after_partial_failure():
     db.get_world.return_value = world
     db.get_or_create_world.return_value = world
     db.list_realms_by_chain.return_value = chain
-    db.clear_world_force_tick_votes = MagicMock(return_value=0)
 
     def sync(_wid):
         for r in chain:
@@ -312,7 +286,7 @@ def test_world_tick_equal_clock_and_resume_after_partial_failure():
     engine = Engine(db)
     calls: list[int] = []
 
-    def fake_realm_tick(rid, tick_slot=None, forced=False, advance_clock=True):
+    def fake_realm_tick(rid, tick_slot=None, *, advance_clock=True):
         calls.append(int(rid))
         if int(rid) == 2 and len([c for c in calls if c == 2]) == 1:
             raise RuntimeError("boom")
@@ -1083,37 +1057,6 @@ def test_incomplete_world_allows_open_market_post_trade():
     # Без эскроу зерно остаётся на усадьбе до сделки.
     assert fiefs[1]["grain"] == 50
     db.create_trade.assert_called_once()
-
-
-def test_incomplete_world_allows_cast_force_tick_vote():
-    db, B, r1, r2 = _incomplete_world_db(caught_up=False)
-    fief = {
-        "id": 1,
-        "realm_id": 1,
-        "user_id": 100,
-        "frozen": False,
-        "name": "A",
-    }
-    db.get_fief.return_value = fief
-    db.add_force_tick_vote.return_value = True
-
-    engine = Engine(db)
-    engine.require_active_fief = MagicMock(return_value=fief)
-    engine.force_tick_progress = MagicMock(
-        return_value={
-            "eligible": 2,
-            "votes": 1,
-            "needed": 2,
-            "available": True,
-            "vote_fief_ids": {1},
-        }
-    )
-    engine.run_world_tick = MagicMock()
-
-    result = engine.cast_force_tick_vote(1)
-    assert result["status"] == "voted"
-    db.add_force_tick_vote.assert_called_once_with(1, 1)
-    engine.run_world_tick.assert_not_called()
 
 
 def test_incomplete_leave_pact_blocks_cross_valley_dissolve():
