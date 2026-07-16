@@ -173,7 +173,8 @@ RAID_LOOT_MAX_DAYS_PROD = 3
 # Доля потерянной силы при удачном набеге (провал - вся выделенная сила).
 RAID_SUCCESS_MIGHT_LOSS_FRAC = 0.75
 # Длительности в тиках долины (4 тика/день: 10:00, 13:00, 16:00 и 19:00).
-RAID_VICTIM_SHIELD_TICKS = 3
+# Глобальный щит жертвы: после удачного набега никто не бьёт её N тик(ов).
+RAID_VICTIM_SHIELD_TICKS = 1
 RAID_SAME_VICTIM_TICKS = 6
 RAID_ATTACKER_COOLDOWN_TICKS = 2
 

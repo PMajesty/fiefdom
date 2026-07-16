@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from app.domain.events import minor_effect
-from app.domain.raids import RaidActionResult
+from app.domain.raids import RaidActionResult, RaidResult
 from app.domain.tick import FiefTickState
 from app.engine import Engine
 
@@ -631,6 +631,44 @@ def test_raid_shield_blocks_outgoing():
     try:
         engine.raid(1, 2, might=10)
         raise AssertionError("expected shield block")
+    except ValueError as e:
+        assert "щит" in str(e).lower()
+    assert fiefs[1]["might"] == 20
+
+
+def test_successful_raid_grants_one_tick_global_shield():
+    engine, fiefs, B = _raid_stateful_engine(
+        vic_extra={"pending_grain": 0.0, "pending_goods": 0.0, "pending_might": 0.0},
+    )
+    with patch("app.engine.resolve_raid") as resolve:
+        resolve.return_value = RaidResult(
+            success=True,
+            ratio=1.0,
+            might_lost=5,
+            grain_stolen=1,
+            goods_stolen=0,
+            defense_used=1,
+            intercept_applied=False,
+            public_line="ok",
+        )
+        engine.raid(1, 2, might=10)
+    assert fiefs[2]["shield_until_tick"] == 10 + B.RAID_VICTIM_SHIELD_TICKS
+    assert B.RAID_VICTIM_SHIELD_TICKS == 1
+
+
+def test_victim_shield_blocks_any_attacker():
+    """Щит общий: второй нападающий тоже не проходит, не только автор удара."""
+    engine, fiefs, B = _raid_stateful_engine(
+        vic_extra={
+            "shield_until_tick": 11,
+            "pending_grain": 0.0,
+            "pending_goods": 0.0,
+            "pending_might": 0.0,
+        },
+    )
+    try:
+        engine.raid(1, 2, might=10)
+        raise AssertionError("expected global shield block")
     except ValueError as e:
         assert "щит" in str(e).lower()
     assert fiefs[1]["might"] == 20

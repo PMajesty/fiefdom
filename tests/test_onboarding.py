@@ -660,7 +660,8 @@ def test_guide_explains_core_systems():
     assert "Ферма" in text and "Мастерская" in text
     assert "Сторожка" in text and "Амбар" in text
     assert "щит" in text
-    assert f"{B.RAID_VICTIM_SHIELD_TICKS} тик(а)" in text
+    assert f"{B.RAID_VICTIM_SHIELD_TICKS} тик" in text
+    assert "никто" in text or "общий" in text
     assert "перехват" in text
     assert "зарастают" in text or "зарос" in text.lower()
     assert "/вч_я" in text
