@@ -323,6 +323,7 @@ def test_more_menu_kb_prefixes():
     assert "pat:9" in data
     assert "rad:9" in data
     assert "trd:9" in data
+    assert "snd:9" in data
     assert "pct:9" in data
     assert "gd:9" in data
     assert "home:9" in data

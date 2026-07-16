@@ -9,7 +9,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app import balance as B
-from app.config import TICK_HOUR, TICK_MINUTE, TIMEZONE
+from app.config import TICK_HOUR, TICK_MINUTE, TIMEZONE, tick_slots
 from app.database import Database
 from app.domain import absence as absence_mod
 from app.domain.digest import format_decree, format_digest, format_lots_count
@@ -34,6 +34,7 @@ from app.domain.map_gen import GenTile, append_strip, coord_label, generate_map
 from app.domain.raids import RaidActionResult, resolve_raid
 from app.domain.rumors import FiefRumorSnapshot, format_rumors_pull, roll_daily_rumors
 from app.domain.tick import FiefTickState, apply_fief_tick, collect_pending
+from app.domain.tick_schedule import format_tick_slots, record_slot_after_manual_tick
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +195,12 @@ class Engine:
         from zoneinfo import ZoneInfo
 
         local_today = datetime.now(ZoneInfo(tz)).date()
-        self.db.update_realm(realm["id"], last_tick_local_date=local_today)
+        slots = tick_slots()
+        self.db.update_realm(
+            realm["id"],
+            last_tick_local_date=local_today,
+            last_tick_slot=max(0, len(slots) - 1),
+        )
         realm = self.db.get_realm(realm["id"])
         self.db.insert_tiles(
             realm["id"],
@@ -210,7 +216,8 @@ class Engine:
         )
         msg = (
             f"🏰 Вотчина основана: <b>{realm['title']}</b>\n"
-            f"Карта {width}×{height}. Тик каждый день в {TICK_HOUR:02d}:{TICK_MINUTE:02d} ({tz}).\n"
+            f"Карта {width}×{height}. Тики каждый день в "
+            f"{format_tick_slots(slots)} ({tz}).\n"
             f"Напишите боту в личку или нажмите \"Моё владение\", чтобы получить усадьбу."
         )
         return realm, msg
@@ -937,6 +944,63 @@ class Engine:
         self._refund_trade(trade)
         return f"Лот #{trade_id} отменён, ресурс возвращён."
 
+    def send_resources(
+        self,
+        from_fief_id: int,
+        to_fief_id: int,
+        res: str,
+        amt: int,
+    ) -> str:
+        """Односторонняя передача зерна/товаров (на доверии, без эскроу)."""
+        if res not in B.TRADEABLE:
+            raise ValueError("Можно передать только зерно или товары")
+        if amt <= 0:
+            raise ValueError("Количество должно быть > 0")
+        if from_fief_id == to_fief_id:
+            raise ValueError("Нельзя передать себе")
+
+        sender = self.db.get_fief(from_fief_id)
+        receiver = self.db.get_fief(to_fief_id)
+        if not sender or not receiver:
+            raise ValueError("Усадьба не найдена")
+        if sender["realm_id"] != receiver["realm_id"]:
+            raise ValueError("Другая долина")
+        if sender.get("frozen") or receiver.get("frozen"):
+            raise ValueError("Усадьба недоступна")
+
+        self.collect_for_fief(from_fief_id)
+        self.collect_for_fief(to_fief_id)
+
+        with self.db.transaction():
+            sender = self.db.get_fief(from_fief_id)
+            receiver = self.db.get_fief(to_fief_id)
+            if not sender or not receiver:
+                raise ValueError("Усадьба не найдена")
+            have = sender["grain"] if res == B.RES_GRAIN else sender["goods"]
+            if have < amt:
+                raise ValueError("Недостаточно ресурса")
+
+            cap = B.stash_cap(self.barn_level(to_fief_id))
+            held = receiver["grain"] if res == B.RES_GRAIN else receiver["goods"]
+            free = max(0, cap - held)
+            if free < amt:
+                raise ValueError(
+                    f"У получателя не хватает места на складе "
+                    f"(свободно {free}, нужно {amt})"
+                )
+
+            if res == B.RES_GRAIN:
+                self.db.update_fief(from_fief_id, grain=sender["grain"] - amt)
+                self.db.update_fief(to_fief_id, grain=receiver["grain"] + amt)
+            else:
+                self.db.update_fief(from_fief_id, goods=sender["goods"] - amt)
+                self.db.update_fief(to_fief_id, goods=receiver["goods"] + amt)
+
+        res_name = B.RES_NAMES_RU[res]
+        return (
+            f"Передано {amt} {res_name} усадьбе {self.fief_label(receiver)}."
+        )
+
     def _refund_trade(self, trade: dict) -> None:
         if trade["status"] != "open":
             return
@@ -1060,7 +1124,7 @@ class Engine:
                     self.db.update_tile(t["id"], is_overgrown=True)
 
     # ---------- daily tick ----------
-    def run_realm_tick(self, realm_id: int) -> dict:
+    def run_realm_tick(self, realm_id: int, tick_slot: int | None = None) -> dict:
         realm = self.db.get_realm(realm_id)
         self.apply_absence(realm_id)
         # expire trades
@@ -1148,12 +1212,20 @@ class Engine:
 
         day = realm["day_number"] + 1
         tz = ZoneInfo(realm.get("timezone") or TIMEZONE)
-        local_date = datetime.now(tz).date()
+        local_now = datetime.now(tz)
+        local_date = local_now.date()
+        slots = tick_slots()
+        if tick_slot is None:
+            tick_slot = record_slot_after_manual_tick(
+                local_now=local_now, slots=slots
+            )
+        tick_slot = max(0, min(int(tick_slot), max(0, len(slots) - 1)))
         self.db.update_realm(
             realm_id,
             day_number=day,
             last_tick_at=_utcnow(),
             last_tick_local_date=local_date,
+            last_tick_slot=tick_slot,
         )
 
         sunday_extra = None

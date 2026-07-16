@@ -528,6 +528,35 @@ async def cb_raid(callback: CallbackQuery) -> None:
         await callback.answer("Ошибка", show_alert=True)
 
 
+@router.callback_query(F.data.startswith("snd:"))
+async def cb_send(callback: CallbackQuery) -> None:
+    engine = get_engine()
+    try:
+        fief_id = int(callback.data.split(":")[1])
+        fief = _ensure_owner(engine, fief_id, callback.from_user.id)
+        dm_mod.set_pending(
+            callback.from_user.id,
+            {
+                "kind": "send_target",
+                "fief_id": fief_id,
+                "realm_id": fief["realm_id"],
+            },
+        )
+        await _ok(callback)
+        await reply_game(
+            callback.message,
+            "Кому передать зерно или товары?\n"
+            "Напишите id усадьбы, имя или @username.\n"
+            "Силу передать нельзя. Или напишите \"отмена\".",
+            reply_markup=dm_mod.pending_cancel_kb(fief_id),
+        )
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+    except Exception:
+        logger.exception("cb_send")
+        await callback.answer("Ошибка", show_alert=True)
+
+
 @router.callback_query(F.data.startswith("trd:"))
 async def cb_trade(callback: CallbackQuery) -> None:
     engine = get_engine()

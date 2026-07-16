@@ -20,6 +20,7 @@ from app.handlers.shared import (
     format_pact_create_announce,
     format_pact_join_announce,
     format_raid_announce,
+    format_send_announce,
     format_trade_post_announce,
     get_engine,
     parse_start_payload,
@@ -58,6 +59,11 @@ _MENU_WORDS = {
     "raid": "raid",
     "сделка": "trade",
     "trade": "trade",
+    "передать": "send",
+    "отдать": "send",
+    "дар": "send",
+    "send": "send",
+    "gift": "send",
     "пакт": "pact",
     "pact": "pact",
     "устав": "guide",
@@ -554,7 +560,7 @@ async def dm_text(message: Message) -> None:
         await answer_html(
             message,
             "Команды: статус, карта, рынок, земля, строить, дозор, набег, "
-            "сделка, пакт, слухи, устав, меню.",
+            "сделка, передать, пакт, слухи, устав, меню.",
         )
         return
 
@@ -624,6 +630,8 @@ async def dm_text(message: Message) -> None:
                 engine.market_text(fief["realm_id"], fid),
                 reply_markup=market_kb(fid, offers),
             )
+        elif key == "send":
+            await _offer_send(message, engine, fief)
         elif key == "pact":
             await _offer_pact(message, engine, fief)
     except ValueError as exc:
@@ -631,6 +639,24 @@ async def dm_text(message: Message) -> None:
     except Exception:
         logger.exception("dm_text menu")
         await answer_html(message, "Ошибка команды.")
+
+
+async def _offer_send(message: Message, engine, fief: dict) -> None:
+    set_pending(
+        message.from_user.id,
+        {
+            "kind": "send_target",
+            "fief_id": fief["id"],
+            "realm_id": fief["realm_id"],
+        },
+    )
+    await reply_game(
+        message,
+        "Кому передать зерно или товары?\n"
+        "Напишите id усадьбы, имя или @username.\n"
+        "Силу передать нельзя. Или напишите \"отмена\".",
+        reply_markup=pending_cancel_kb(fief["id"]),
+    )
 
 
 async def _offer_claim(message: Message, engine, fief: dict) -> None:
@@ -794,6 +820,91 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
             )
         return True
 
+    if kind == "send_target":
+        target = _resolve_fief_ref(engine, pending["realm_id"], text)
+        if not target:
+            await answer_html(
+                message,
+                "Усадьба не найдена. Id, имя или @username.\n"
+                "Или напишите \"отмена\".",
+                reply_markup=pending_cancel_kb(pending["fief_id"]),
+            )
+            return True
+        if int(target["id"]) == int(pending["fief_id"]):
+            await answer_html(
+                message,
+                "Нельзя передать себе. Укажите другую усадьбу.\n"
+                "Или напишите \"отмена\".",
+                reply_markup=pending_cancel_kb(pending["fief_id"]),
+            )
+            return True
+        set_pending(
+            user_id,
+            {
+                "kind": "send_amount",
+                "fief_id": pending["fief_id"],
+                "realm_id": pending["realm_id"],
+                "target_fief_id": target["id"],
+            },
+        )
+        await reply_game(
+            message,
+            f"Получатель: <b>{engine.fief_label(target)}</b>\n"
+            "Сколько отправить? Формат: <code>зерно 10</code> или "
+            "<code>товары 5</code>.\n"
+            "Силу передать нельзя. Или напишите \"отмена\".",
+            reply_markup=pending_cancel_kb(pending["fief_id"]),
+        )
+        return True
+
+    if kind == "send_amount":
+        parsed = _parse_send_line(text)
+        if not parsed:
+            await reply_game(
+                message,
+                "Формат: <code>зерно 10</code> или <code>товары 5</code>.\n"
+                "Или напишите \"отмена\".",
+                reply_markup=pending_cancel_kb(pending["fief_id"]),
+            )
+            return True
+        res, amt = parsed
+        sender = engine.db.get_fief(pending["fief_id"])
+        receiver = engine.db.get_fief(pending["target_fief_id"])
+        msg = engine.send_resources(
+            pending["fief_id"], pending["target_fief_id"], res, amt
+        )
+        clear_pending(user_id)
+        await reply_game(
+            message, msg, reply_markup=fief_home_kb(engine, pending["fief_id"])
+        )
+        if sender and receiver:
+            engine.ensure_user(message.from_user)
+            await announce_realm(
+                message.bot,
+                sender["realm_id"],
+                format_send_announce(
+                    engine.fief_label(sender),
+                    engine.fief_label(receiver),
+                    amt,
+                    res,
+                ),
+            )
+            try:
+                await message.bot.send_message(
+                    int(receiver["user_id"]),
+                    format_send_announce(
+                        engine.fief_label(sender),
+                        engine.fief_label(receiver),
+                        amt,
+                        res,
+                    ),
+                )
+            except Exception:
+                logger.warning(
+                    "send DM to receiver %s failed", receiver.get("user_id")
+                )
+        return True
+
     if kind == "pact_name":
         fief = engine.db.get_fief(pending["fief_id"])
         pact_name = text.strip()[:40]
@@ -863,6 +974,19 @@ def _parse_trade_line(text: str) -> tuple[str, int, str, int] | None:
     give_res = _RES_MAP[m.group(1).lower()]
     want_res = _RES_MAP[m.group(3).lower()]
     return give_res, int(m.group(2)), want_res, int(m.group(4))
+
+
+_SEND_RE = re.compile(
+    r"^(зерно|grain|товары|goods)\s+(\d+)$",
+    re.IGNORECASE,
+)
+
+
+def _parse_send_line(text: str) -> tuple[str, int] | None:
+    m = _SEND_RE.match(text.strip())
+    if not m:
+        return None
+    return _RES_MAP[m.group(1).lower()], int(m.group(2))
 
 
 def _resolve_fief_ref(engine, realm_id: int, text: str) -> dict | None:

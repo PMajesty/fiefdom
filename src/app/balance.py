@@ -173,7 +173,7 @@ RUMOR_TRUTH_FULL = 0.50
 RUMOR_TRUTH_FUZZY = 0.35
 # остаток (~0.15) - ложный слух
 RUMOR_WEALTH_BANDS = (40, 120, 300)  # границы: тощая / сытая / тугая / ломится
-RUMOR_MIGHT_BANDS = (8, 20)  # thrонь / крепкая / много копий
+RUMOR_MIGHT_BANDS = (8, 20)  # тонка / крепкая / много копий
 
 # --- Торговля ---
 TRADE_EXPIRE_HOURS = 48

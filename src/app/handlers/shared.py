@@ -187,6 +187,19 @@ def format_trade_accept_announce(
     )
 
 
+def format_send_announce(
+    sender_name: str,
+    receiver_name: str,
+    amt: int,
+    res: str,
+) -> str:
+    res_name = B.RES_NAMES_RU.get(res, res)
+    return (
+        f"📦 {escape_html(sender_name)} передала "
+        f"{int(amt)} {res_name} усадьбе {escape_html(receiver_name)}"
+    )
+
+
 def format_pact_create_announce(fief_name: str, pact_name: str) -> str:
     return (
         f"🤝 Новый пакт \"{escape_html(pact_name)}\" "
@@ -357,6 +370,9 @@ def more_menu_kb(
             ],
             [
                 InlineKeyboardButton(text="Сделка", callback_data=f"trd:{fid}"),
+                InlineKeyboardButton(text="Передать", callback_data=f"snd:{fid}"),
+            ],
+            [
                 pact_btn,
             ],
             [

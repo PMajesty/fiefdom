@@ -8,6 +8,8 @@ from aiogram.enums import ChatType
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+from app.config import tick_slots
+from app.domain.tick_schedule import format_tick_slots
 from app.handlers.shared import (
     deep_link_url,
     get_engine,
@@ -99,16 +101,14 @@ async def cmd_digest(message: Message, bot: Bot) -> None:
         if not realm:
             await answer_html(message, "Долина ещё не основана. /вотчина")
             return
-        hour = int(realm.get("tick_hour") or 13)
-        minute = int(realm.get("tick_minute") or 0)
         tz = realm.get("timezone") or "Europe/Moscow"
         last = (realm.get("last_digest_text") or "").strip()
         if last:
             text = last
         else:
             text = (
-                f"Сводка публикуется автоматически после дневного тика "
-                f"в {hour:02d}:{minute:02d} ({tz}).\n"
+                f"Сводка публикуется автоматически после тиков "
+                f"в {format_tick_slots(tick_slots())} ({tz}).\n"
                 "Откройте усадьбу в личке - там задания, рынок и новости дня."
             )
         if is_admin(message.from_user.id if message.from_user else None):

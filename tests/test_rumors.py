@@ -80,7 +80,7 @@ def test_roll_daily_rumors_empty_realm():
 
 
 def test_format_rumor_section_has_disclaimer():
-    section = rumors.format_rumor_section(["У Ивана, говорят, дружина thrонь."])
+    section = rumors.format_rumor_section(["У Ивана, говорят, дружина тонка."])
     assert section is not None
     assert "не факты" in section
     assert "базар может врать" in section

@@ -11,13 +11,14 @@ from zoneinfo import ZoneInfo
 from aiogram import Bot
 
 from app import balance as B
-from app.config import TIMEZONE
+from app.config import TIMEZONE, tick_slots
 from app.domain.events import (
     CATASTROPHES,
     MINOR_EVENTS,
     next_catastrophe_delay_days,
     pick_catastrophe,
 )
+from app.domain.tick_schedule import due_tick_slot
 from app.handlers.shared import get_engine, post_digest, send_game
 
 logger = logging.getLogger(__name__)
@@ -78,16 +79,16 @@ async def _process_realm(bot: Bot, engine, realm: dict) -> None:
         tz = ZoneInfo(TIMEZONE)
 
     local_now = datetime.now(tz)
-    local_date = local_now.date()
-    tick_h = int(realm.get("tick_hour") if realm.get("tick_hour") is not None else 13)
-    tick_m = int(realm.get("tick_minute") if realm.get("tick_minute") is not None else 0)
-
     last_tick_date = _as_date(realm.get("last_tick_local_date"))
-    due_tick = (last_tick_date is None or local_date > last_tick_date) and (
-        local_now.hour > tick_h or (local_now.hour == tick_h and local_now.minute >= tick_m)
+    last_slot = realm.get("last_tick_slot")
+    slot_index = due_tick_slot(
+        local_now=local_now,
+        last_tick_local_date=last_tick_date,
+        last_tick_slot=int(last_slot) if last_slot is not None else None,
+        slots=tick_slots(),
     )
-    if due_tick:
-        result = engine.run_realm_tick(realm_id)
+    if slot_index is not None:
+        result = engine.run_realm_tick(realm_id, tick_slot=slot_index)
         digest = result.get("digest")
         chat_id = result.get("chat_id") or realm.get("chat_id")
         if digest and chat_id:
@@ -95,7 +96,9 @@ async def _process_realm(bot: Bot, engine, realm: dict) -> None:
         deserter_event = result.get("deserter_event")
         if deserter_event and chat_id:
             await _post_deserter_race(bot, chat_id, deserter_event)
-        logger.info("Tick ran for realm %s day digest posted", realm_id)
+        logger.info(
+            "Tick ran for realm %s slot %s digest posted", realm_id, slot_index
+        )
         realm = engine.db.get_realm(realm_id) or realm
 
     await _maybe_post_catastrophe(bot, engine, realm, local_now)

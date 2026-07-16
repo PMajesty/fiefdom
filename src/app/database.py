@@ -266,6 +266,10 @@ class Database:
                 "ALTER TABLE realms ADD COLUMN IF NOT EXISTS last_rumor_lines "
                 "JSONB NOT NULL DEFAULT '[]';"
             )
+            self.cursor.execute(
+                "ALTER TABLE realms ADD COLUMN IF NOT EXISTS last_tick_slot "
+                "INT NOT NULL DEFAULT 0;"
+            )
 
     # --- users ---
     def upsert_user(self, telegram_id: int, username: str | None, display_name: str) -> None:

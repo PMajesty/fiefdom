@@ -7,7 +7,7 @@ Russian UI. Design: `valley_game_design.md`.
 ## Stack
 
 - aiogram 3 + PostgreSQL (pg8000)
-- Daily tick 13:00 Europe/Moscow
+- Two daily ticks 13:00 and 19:00 Europe/Moscow
 - Poe LLM for event narrative (canned fallback)
 - No whitelist - anyone can play; admin toolkit for `ADMIN_USER_ID`
 

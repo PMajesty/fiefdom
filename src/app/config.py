@@ -26,6 +26,16 @@ DB_CONFIG = {
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Moscow")
 TICK_HOUR = int(os.getenv("TICK_HOUR", "13"))
 TICK_MINUTE = int(os.getenv("TICK_MINUTE", "0"))
+TICK_HOUR_2 = int(os.getenv("TICK_HOUR_2", "19"))
+TICK_MINUTE_2 = int(os.getenv("TICK_MINUTE_2", "0"))
+
+
+def tick_slots() -> list[tuple[int, int]]:
+    """Слоты дневного тика в локальном времени долины."""
+    return [
+        (TICK_HOUR, TICK_MINUTE),
+        (TICK_HOUR_2, TICK_MINUTE_2),
+    ]
 
 _raw_admin = os.getenv("ADMIN_USER_ID", "").strip()
 ADMIN_USER_ID = int(_raw_admin) if _raw_admin else None

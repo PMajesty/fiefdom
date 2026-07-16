@@ -50,7 +50,7 @@ def wealth_band(total: int) -> int:
 
 
 def might_band(might: int) -> int:
-    """0 thrонь … 2 много копий."""
+    """0 тонка … 2 много копий."""
     thresholds = B.RUMOR_MIGHT_BANDS
     for i, edge in enumerate(thresholds):
         if might < edge:
@@ -83,7 +83,7 @@ def _wealth_phrase(band: int, *, fuzzy: bool) -> str:
 
 def _might_phrase(band: int, *, fuzzy: bool) -> str:
     phrases = (
-        ("дружина thrонь", "силы мало, если верить шепотку"),
+        ("дружина тонка", "силы мало, если верить шепотку"),
         ("дружина крепкая", "вроде не слабая дружина"),
         ("много копий во дворе", "шепчут про толпу копий"),
     )
