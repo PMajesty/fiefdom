@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -10,6 +11,8 @@ from typing import Any, Iterator
 import pg8000
 
 from app.config import DB_CONFIG
+
+logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> datetime:
@@ -52,6 +55,15 @@ class Database:
 
     def rollback(self) -> None:
         self.connection.rollback()
+
+    def _rollback_outside_tx(self) -> None:
+        """Сброс aborted-транзакции, чтобы один сбой не травил всё соединение."""
+        if self._tx_depth > 0 or self.connection is None:
+            return
+        try:
+            self.connection.rollback()
+        except Exception:
+            logger.exception("db rollback after error failed")
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
@@ -1428,27 +1440,45 @@ class Database:
             vals.append(v)
         vals.append(row_id)
         with self.lock:
-            self.cursor.execute(
-                f"UPDATE {table} SET {', '.join(cols)} WHERE id=%s;",
-                tuple(vals),
-            )
-            self.commit()
+            try:
+                self.cursor.execute(
+                    f"UPDATE {table} SET {', '.join(cols)} WHERE id=%s;",
+                    tuple(vals),
+                )
+                self.commit()
+            except Exception:
+                self._rollback_outside_tx()
+                raise
 
     def _fetchone(self, sql: str, args: tuple = ()) -> dict | None:
         with self.lock:
-            self.cursor.execute(sql, args)
-            row = self.cursor.fetchone()
-            if not row:
-                return None
-            cols = [d[0] for d in self.cursor.description]
-            return self._normalize(dict(zip(cols, row)))
+            try:
+                self.cursor.execute(sql, args)
+                row = self.cursor.fetchone()
+                if not row:
+                    # Закрываем неявную read-транзакцию вне transaction().
+                    self.commit()
+                    return None
+                cols = [d[0] for d in self.cursor.description]
+                result = self._normalize(dict(zip(cols, row)))
+                self.commit()
+                return result
+            except Exception:
+                self._rollback_outside_tx()
+                raise
 
     def _fetchall(self, sql: str, args: tuple = ()) -> list[dict]:
         with self.lock:
-            self.cursor.execute(sql, args)
-            rows = self.cursor.fetchall()
-            cols = [d[0] for d in self.cursor.description]
-            return [self._normalize(dict(zip(cols, r))) for r in rows]
+            try:
+                self.cursor.execute(sql, args)
+                rows = self.cursor.fetchall()
+                cols = [d[0] for d in self.cursor.description]
+                result = [self._normalize(dict(zip(cols, r))) for r in rows]
+                self.commit()
+                return result
+            except Exception:
+                self._rollback_outside_tx()
+                raise
 
     def _normalize(self, row: dict) -> dict:
         for k, v in list(row.items()):
