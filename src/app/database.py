@@ -10,7 +10,8 @@ from typing import Any, Iterator
 
 import pg8000
 
-from app.config import DB_CONFIG
+from app.config import DB_CONFIG, tick_slots
+from app.domain.tick_schedule import LEGACY_TWO_TICK_SLOTS, remap_last_tick_slot
 
 logger = logging.getLogger(__name__)
 
@@ -386,6 +387,7 @@ class Database:
             )
             self._ensure_world_schema()
             self._apply_patch_annul_open_trades()
+            self._apply_patch_remap_tick_slots_2_to_4()
 
     def _apply_patch_annul_open_trades(self) -> None:
         """Разовые возвраты эскроу при смене правил рынка."""
@@ -452,6 +454,79 @@ class Database:
             "INSERT INTO applied_patches (name) VALUES (%s);",
             (patch_name,),
         )
+
+    def _apply_patch_remap_tick_slots_2_to_4(self) -> None:
+        """Индексы last_tick_slot: старые 0/1 (13:00/19:00) -> 1/3 при 4 слотах."""
+        self.cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS applied_patches (
+                name TEXT PRIMARY KEY,
+                applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+        patch_name = "remap_tick_slots_2_to_4_v1"
+        self.cursor.execute(
+            "SELECT 1 FROM applied_patches WHERE name=%s;",
+            (patch_name,),
+        )
+        if self.cursor.fetchone() is not None:
+            return
+        try:
+            slots = tick_slots()
+        except ValueError:
+            logger.warning(
+                "skip %s: текущие tick_slots невалидны (поправьте .env)",
+                patch_name,
+            )
+            return
+        if slots != [(10, 0), (13, 0), (16, 0), (19, 0)]:
+            logger.info(
+                "skip %s: tick_slots=%s не целевой 4-слотовый layout",
+                patch_name,
+                slots,
+            )
+            self.cursor.execute(
+                "INSERT INTO applied_patches (name) VALUES (%s);",
+                (patch_name,),
+            )
+            return
+
+        self.cursor.execute(
+            "SELECT id, last_tick_slot FROM worlds WHERE last_tick_slot IS NOT NULL;"
+        )
+        for world_id, last_slot in self.cursor.fetchall() or []:
+            new_slot = remap_last_tick_slot(
+                last_slot,
+                from_slots=LEGACY_TWO_TICK_SLOTS,
+                to_slots=slots,
+            )
+            if new_slot == last_slot:
+                continue
+            self.cursor.execute(
+                "UPDATE worlds SET last_tick_slot=%s WHERE id=%s;",
+                (new_slot, int(world_id)),
+            )
+        self.cursor.execute(
+            "SELECT id, last_tick_slot FROM realms WHERE last_tick_slot IS NOT NULL;"
+        )
+        for realm_id, last_slot in self.cursor.fetchall() or []:
+            new_slot = remap_last_tick_slot(
+                last_slot,
+                from_slots=LEGACY_TWO_TICK_SLOTS,
+                to_slots=slots,
+            )
+            if new_slot == last_slot:
+                continue
+            self.cursor.execute(
+                "UPDATE realms SET last_tick_slot=%s WHERE id=%s;",
+                (new_slot, int(realm_id)),
+            )
+        self.cursor.execute(
+            "INSERT INTO applied_patches (name) VALUES (%s);",
+            (patch_name,),
+        )
+        logger.info("applied patch %s", patch_name)
 
     def _ensure_world_schema(self) -> None:
         """Континент: один world, линейный chain_index, зеркало часов на realms."""

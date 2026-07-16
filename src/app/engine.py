@@ -236,7 +236,7 @@ class Engine:
             delay = next_catastrophe_delay_ticks(rng)
             first_cat = pick_catastrophe(rng, None)
             local_now = datetime.now(ZoneInfo(tz))
-            # Только уже прошедшие слоты; 13:00/19:00 впереди не сжигаем.
+            # Только уже прошедшие слоты; будущие слоты дня не сжигаем.
             anchor_date, anchor_slot = schedule_anchor_at(
                 local_now=local_now, slots=slots
             )
@@ -1958,7 +1958,7 @@ class Engine:
                 "pending_minor_key": None,
             }
             # Плановые слоты двигает только scheduler (tick_slot без forced).
-            # Досрочный/ручной тик часы мира двигает, расписание 13:00/19:00 - нет.
+            # Досрочный/ручной тик часы мира двигает, плановые слоты - нет.
             if tick_slot is not None and not forced:
                 slots = tick_slots()
                 tick_slot = max(0, min(int(tick_slot), max(0, len(slots) - 1)))

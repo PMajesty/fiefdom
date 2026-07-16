@@ -547,10 +547,10 @@ def test_status_card_shows_next_tick():
         "day_number": 5,
         "timezone": "Europe/Moscow",
         "last_tick_local_date": date(2026, 7, 16),
-        "last_tick_slot": 0,
+        "last_tick_slot": 1,
     }
     db.fief_tiles.return_value = [{"is_overgrown": False}]
-    fixed_now = datetime(2026, 7, 16, 15, 0, tzinfo=ZoneInfo("Europe/Moscow"))
+    fixed_now = datetime(2026, 7, 16, 14, 0, tzinfo=ZoneInfo("Europe/Moscow"))
 
     class _FrozenDateTime(datetime):
         @classmethod
@@ -562,7 +562,7 @@ def test_status_card_shows_next_tick():
     with patch("app.engine.datetime", _FrozenDateTime):
         text = engine.status_card(1)
 
-    assert "Следующий тик: 16.07 19:00" in text
+    assert "Следующий тик: 16.07 16:00" in text
 
 
 def test_status_card_groups_blocks_for_glance():
@@ -595,13 +595,13 @@ def test_status_card_groups_blocks_for_glance():
         "tick_index": 10,
         "timezone": "Europe/Moscow",
         "last_tick_local_date": date(2026, 7, 16),
-        "last_tick_slot": 0,
+        "last_tick_slot": 1,
     }
     db.fief_tiles.return_value = [
         {"is_overgrown": False},
         {"is_overgrown": False},
     ]
-    fixed_now = datetime(2026, 7, 16, 15, 0, tzinfo=ZoneInfo("Europe/Moscow"))
+    fixed_now = datetime(2026, 7, 16, 14, 0, tzinfo=ZoneInfo("Europe/Moscow"))
 
     class _FrozenDateTime(datetime):
         @classmethod
@@ -623,7 +623,7 @@ def test_status_card_groups_blocks_for_glance():
     assert f"Склад до {B.DEFAULT_STASH_CAP} · без амбара" in text
     assert "+5 зерна/день, +13 товаров/день, +3 силы/день" in text
     assert "Корм: земля " in text
-    assert "Следующий тик: 16.07 19:00" in text
+    assert "Следующий тик: 16.07 16:00" in text
     assert text.endswith("Голоса: 3/6")
 
 

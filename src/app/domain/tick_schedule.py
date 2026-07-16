@@ -3,15 +3,69 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
+# Прежний layout (до 4 тиков/день): индексы 0/1 = 13:00/19:00.
+LEGACY_TWO_TICK_SLOTS: list[tuple[int, int]] = [(13, 0), (19, 0)]
+
+
+def validate_tick_slots(slots: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Слоты должны быть непустыми, уникальными и строго по возрастанию времени."""
+    if not slots:
+        raise ValueError("tick_slots: список слотов пуст")
+    prev: tuple[int, int] | None = None
+    seen: set[tuple[int, int]] = set()
+    for hour, minute in slots:
+        h, m = int(hour), int(minute)
+        if not (0 <= h <= 23 and 0 <= m <= 59):
+            raise ValueError(f"tick_slots: недопустимое время {h:02d}:{m:02d}")
+        key = (h, m)
+        if key in seen:
+            raise ValueError(f"tick_slots: дубликат слота {h:02d}:{m:02d}")
+        if prev is not None and key <= prev:
+            raise ValueError(
+                "tick_slots: слоты должны идти строго по возрастанию времени"
+            )
+        seen.add(key)
+        prev = key
+    return [(int(h), int(m)) for h, m in slots]
+
+
+def remap_last_tick_slot(
+    last_slot: int | None,
+    *,
+    from_slots: list[tuple[int, int]],
+    to_slots: list[tuple[int, int]],
+) -> int | None:
+    """Перенос last_tick_slot при смене layout: по wall-clock времени слота."""
+    if last_slot is None:
+        return None
+    if not from_slots or not to_slots:
+        return int(last_slot)
+    idx = int(last_slot)
+    if idx < 0:
+        return None
+    if idx >= len(from_slots):
+        return min(idx, len(to_slots) - 1)
+    hour, minute = from_slots[idx]
+    for new_idx, (h, m) in enumerate(to_slots):
+        if h == hour and m == minute:
+            return new_idx
+    best = -1
+    for new_idx, (h, m) in enumerate(to_slots):
+        if (h, m) <= (hour, minute):
+            best = new_idx
+    return best if best >= 0 else None
+
 
 def format_tick_slots(slots: list[tuple[int, int]]) -> str:
-    """Человекочитаемые слоты: '13:00 и 19:00'."""
+    """Человекочитаемые слоты: '13:00 и 19:00' или '10:00, 13:00, 16:00 и 19:00'."""
     parts = [f"{h:02d}:{m:02d}" for h, m in slots]
     if not parts:
         return "-"
     if len(parts) == 1:
         return parts[0]
-    return " и ".join(parts)
+    if len(parts) == 2:
+        return f"{parts[0]} и {parts[1]}"
+    return ", ".join(parts[:-1]) + f" и {parts[-1]}"
 
 
 def slot_time_reached(local_now: datetime, hour: int, minute: int) -> bool:

@@ -5,6 +5,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from app.domain.tick_schedule import validate_tick_slots
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
 
@@ -24,18 +26,26 @@ DB_CONFIG = {
 }
 
 TIMEZONE = os.getenv("TIMEZONE", "Europe/Moscow")
-TICK_HOUR = int(os.getenv("TICK_HOUR", "13"))
+TICK_HOUR = int(os.getenv("TICK_HOUR", "10"))
 TICK_MINUTE = int(os.getenv("TICK_MINUTE", "0"))
-TICK_HOUR_2 = int(os.getenv("TICK_HOUR_2", "19"))
+TICK_HOUR_2 = int(os.getenv("TICK_HOUR_2", "13"))
 TICK_MINUTE_2 = int(os.getenv("TICK_MINUTE_2", "0"))
+TICK_HOUR_3 = int(os.getenv("TICK_HOUR_3", "16"))
+TICK_MINUTE_3 = int(os.getenv("TICK_MINUTE_3", "0"))
+TICK_HOUR_4 = int(os.getenv("TICK_HOUR_4", "19"))
+TICK_MINUTE_4 = int(os.getenv("TICK_MINUTE_4", "0"))
 
 
 def tick_slots() -> list[tuple[int, int]]:
     """Слоты дневного тика в локальном времени долины."""
-    return [
-        (TICK_HOUR, TICK_MINUTE),
-        (TICK_HOUR_2, TICK_MINUTE_2),
-    ]
+    return validate_tick_slots(
+        [
+            (TICK_HOUR, TICK_MINUTE),
+            (TICK_HOUR_2, TICK_MINUTE_2),
+            (TICK_HOUR_3, TICK_MINUTE_3),
+            (TICK_HOUR_4, TICK_MINUTE_4),
+        ]
+    )
 
 _raw_admin = os.getenv("ADMIN_USER_ID", "").strip()
 ADMIN_USER_ID = int(_raw_admin) if _raw_admin else None

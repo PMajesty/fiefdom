@@ -32,6 +32,19 @@ SKIP_EXT = {".pyc", ".pyo"}
 SSH_RETRIES = 4
 SSH_RETRY_DELAY = 5
 
+# Плановые слоты: quick_deploy обязан синхронизировать .env, иначе старые
+# TICK_HOUR/TICK_HOUR_2 смешаются с дефолтами _3/_4.
+TICK_ENV = {
+    "TICK_HOUR": "10",
+    "TICK_MINUTE": "0",
+    "TICK_HOUR_2": "13",
+    "TICK_MINUTE_2": "0",
+    "TICK_HOUR_3": "16",
+    "TICK_MINUTE_3": "0",
+    "TICK_HOUR_4": "19",
+    "TICK_MINUTE_4": "0",
+}
+
 
 def _filter(tarinfo: tarfile.TarInfo):
     parts = tarinfo.name.replace("\\", "/").split("/")
@@ -74,6 +87,43 @@ def run(client: paramiko.SSHClient, cmd: str) -> str:
     if code != 0:
         raise RuntimeError(f"command failed ({code}): {cmd}")
     return out
+
+
+def sync_remote_tick_env(sftp: paramiko.SFTPClient, remote_dir: str) -> None:
+    """Обновляет TICK_* в remote .env (upsert), чтобы слоты не смешались со старыми."""
+    env_path = f"{remote_dir}/.env"
+    try:
+        with sftp.open(env_path, "r") as f:
+            raw = f.read().decode("utf-8", errors="replace")
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"remote .env not found: {env_path}") from exc
+
+    lines = raw.splitlines()
+    seen: set[str] = set()
+    out: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            out.append(line)
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if key in TICK_ENV:
+            out.append(f"{key}={TICK_ENV[key]}")
+            seen.add(key)
+        else:
+            out.append(line)
+    for key, value in TICK_ENV.items():
+        if key not in seen:
+            out.append(f"{key}={value}")
+    text = "\n".join(out)
+    if not text.endswith("\n"):
+        text += "\n"
+    with sftp.open(env_path, "w") as f:
+        f.write(text.encode("utf-8"))
+    print(
+        "    tick env synced: "
+        + ", ".join(f"{k}={v}" for k, v in TICK_ENV.items() if k.startswith("TICK_HOUR"))
+    )
 
 
 def ssh_connect(client: paramiko.SSHClient) -> None:
@@ -126,6 +176,10 @@ def main() -> None:
         f"{REMOTE_DIR}/tests {REMOTE_DIR}/pytest.ini {REMOTE_DIR}/logs 2>/dev/null; true",
     )
     run(client, f"{REMOTE_DIR}/venv/bin/pip install -r {REMOTE_DIR}/requirements.txt -q")
+    print(">>> Syncing tick schedule in .env…")
+    sftp = client.open_sftp()
+    sync_remote_tick_env(sftp, REMOTE_DIR)
+    sftp.close()
     print(">>> Restarting…")
     run(client, f"systemctl restart {SERVICE}")
     print(">>> Status:")

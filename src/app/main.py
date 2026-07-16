@@ -11,7 +11,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from app.config import LOG_DIRECTORY, TELEGRAM_BOT_TOKEN
+from app.config import LOG_DIRECTORY, TELEGRAM_BOT_TOKEN, tick_slots
 from app.database import init_db
 from app.handlers import admin, callbacks, dm, group
 from app.scheduler import scheduler_loop
@@ -61,6 +61,8 @@ async def main() -> None:
 
     init_db()
     logger.info("Database initialized")
+    slots = tick_slots()
+    logger.info("Tick slots: %s", ", ".join(f"{h:02d}:{m:02d}" for h, m in slots))
 
     bot = Bot(
         token=TELEGRAM_BOT_TOKEN,
