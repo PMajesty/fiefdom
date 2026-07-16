@@ -1343,11 +1343,15 @@ class Engine:
         return f"Сделка #{trade_id} закрыта."
 
     def cancel_trade(self, fief_id: int, trade_id: int) -> str:
-        """Снятие лота игроком отключено."""
-        del fief_id, trade_id
-        raise ValueError(
-            "Лот нельзя снять - дождитесь сделки или истечения срока."
-        )
+        """Снять свой лот. Ресурс не возвращаем - при выставлении его не снимали."""
+        trade = self.db.get_trade(trade_id)
+        if not trade or trade["offerer_fief_id"] != fief_id or trade["status"] != "open":
+            raise ValueError("Нельзя отменить")
+        with self.db.transaction():
+            claimed = self.db.claim_cancel_open_trade(int(trade_id))
+            if not claimed:
+                raise ValueError("Лот уже закрыт или недоступен")
+        return f"Лот #{trade_id} снят с рынка."
 
     def send_resources(
         self,

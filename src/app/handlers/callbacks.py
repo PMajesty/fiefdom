@@ -811,22 +811,19 @@ async def cb_trade(callback: CallbackQuery) -> None:
             )
             return
 
-        if action == "c":
-            await callback.answer(
-                "Лот нельзя снять - дождитесь сделки или истечения срока.",
-                show_alert=True,
-            )
-            return
-
         trade_id = int(parts[3])
-        trade = engine.db.get_trade(trade_id)
-        seller = (
-            engine.db.get_fief(trade["offerer_fief_id"]) if trade else None
-        )
-        msg = engine.accept_trade(fief_id, trade_id)
+        seller = None
+        trade = None
+        if action == "a":
+            trade = engine.db.get_trade(trade_id)
+            if trade:
+                seller = engine.db.get_fief(trade["offerer_fief_id"])
+            msg = engine.accept_trade(fief_id, trade_id)
+        else:
+            msg = engine.cancel_trade(fief_id, trade_id)
         await _ok(callback)
         await reply_game(callback.message, msg, reply_markup=fief_home_kb(engine, fief_id))
-        if seller and trade and msg.startswith("Сделка"):
+        if action == "a" and seller and trade and msg.startswith("Сделка"):
             engine.ensure_user(callback.from_user)
             await announce_continent(
                 callback.bot,

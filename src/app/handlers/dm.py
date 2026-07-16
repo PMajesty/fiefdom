@@ -459,7 +459,14 @@ def market_kb(
     ]
     for o in offers[:12]:
         if int(o["offerer_fief_id"]) == int(fief_id):
-            # Свои лоты только в тексте рынка - снять нельзя.
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"Отменить #{o['id']}",
+                        callback_data=f"trd:c:{fief_id}:{o['id']}",
+                    )
+                ]
+            )
             continue
         seller_bit = ""
         if engine is not None:

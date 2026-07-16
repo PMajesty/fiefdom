@@ -1,4 +1,4 @@
-"""Рынок: нельзя снимать лот; возврат эскроу без гонок и без бонусов."""
+"""Рынок без эскроу: лоты не прячут ресурс; снятие и сделки без гонок."""
 from __future__ import annotations
 
 import os
@@ -15,10 +15,34 @@ from app.engine import Engine
 from app.handlers.dm import market_kb
 
 
-def test_cancel_trade_rejected():
-    engine = Engine(MagicMock())
-    with pytest.raises(ValueError, match="нельзя снять"):
-        engine.cancel_trade(1, 99)
+def test_cancel_trade_claims_without_crediting():
+    trade = {
+        "id": 99,
+        "status": "open",
+        "offerer_fief_id": 1,
+        "give_res": B.RES_GRAIN,
+        "give_amt": 4,
+    }
+    db = MagicMock()
+    db.transaction = lambda: nullcontext()
+    db.get_trade.return_value = trade
+    db.claim_cancel_open_trade.return_value = {**trade, "status": "cancelled"}
+
+    msg = Engine(db).cancel_trade(1, 99)
+    assert "снят" in msg.lower()
+    db.claim_cancel_open_trade.assert_called_once_with(99)
+    db.update_fief.assert_not_called()
+
+
+def test_cancel_trade_rejects_foreign_or_closed():
+    db = MagicMock()
+    db.get_trade.return_value = {
+        "id": 99,
+        "status": "open",
+        "offerer_fief_id": 2,
+    }
+    with pytest.raises(ValueError, match="Нельзя отменить"):
+        Engine(db).cancel_trade(1, 99)
 
 
 def test_refund_trade_only_cancels_without_crediting():
@@ -121,7 +145,7 @@ def test_claim_cancel_open_trade_sql_guards_open_status():
     assert cursor.execute.call_args[0][1] == (7,)
 
 
-def test_market_kb_hides_own_lots_and_shows_seller():
+def test_market_kb_own_cancel_and_seller_on_accept():
     offers = [
         {
             "id": 1,
@@ -151,9 +175,8 @@ def test_market_kb_hides_own_lots_and_shows_seller():
     kb = market_kb(10, offers, engine)
     labels = [btn.text for row in kb.inline_keyboard for btn in row]
     assert "Создать лот" in labels
+    assert "Отменить #1" in labels
     assert any("Принять #2" in t and "@seller" in t for t in labels)
-    assert not any("Отменить" in t for t in labels)
-    assert not any("#1" in t and "Принять" in t for t in labels)
 
 
 def test_annul_patch_runs_v1_and_v2_when_fresh():
