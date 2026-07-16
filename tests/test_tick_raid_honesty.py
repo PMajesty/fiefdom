@@ -398,3 +398,127 @@ def test_scheduled_tick_writes_slot_markers():
     assert realm["day_number"] == 4
     assert realm.get("last_tick_slot") == 0
     assert realm.get("last_tick_local_date") is not None
+
+
+def _raid_stateful_engine(*, atk_extra=None, vic_extra=None, reverse_pair_at=None):
+    from app import balance as B
+
+    atk = {
+        "id": 1,
+        "realm_id": 1,
+        "user_id": 101,
+        "name": "Атакующий",
+        "grain": 10,
+        "goods": 10,
+        "might": 20,
+        "hungry": False,
+        "last_raid_at": None,
+        "actions": 2,
+        "pending_grain": 0.0,
+        "pending_goods": 0.0,
+        "pending_might": 0.0,
+        "pact_id": None,
+        "shield_until": None,
+        "patrol_until": None,
+        "last_active_at": _utcnow(),
+    }
+    if atk_extra:
+        atk.update(atk_extra)
+    vic = {
+        "id": 2,
+        "realm_id": 1,
+        "user_id": 202,
+        "name": "Жертва",
+        "grain": 40,
+        "goods": 20,
+        "might": 10,
+        "hungry": False,
+        "shield_until": None,
+        "patrol_until": None,
+        "pact_id": None,
+        "pending_grain": 30.0,
+        "pending_goods": 12.0,
+        "pending_might": 8.0,
+        "actions": 1,
+        "last_active_at": _utcnow(),
+    }
+    if vic_extra:
+        vic.update(vic_extra)
+    fiefs = {1: atk, 2: vic}
+    realm = _base_realm(id=1, active_minor_key=None, active_minor_until=None)
+    pair_log: dict[tuple[int, int], datetime] = {}
+    if reverse_pair_at is not None:
+        pair_log[(2, 1)] = reverse_pair_at
+
+    db = MagicMock()
+    db.transaction = lambda: nullcontext()
+
+    def get_fief(fid):
+        row = fiefs.get(fid)
+        return dict(row) if row else None
+
+    def update_fief(fid, **fields):
+        fiefs[fid].update(fields)
+
+    def last_pair(a, v):
+        return pair_log.get((a, v))
+
+    def log_raid(**kwargs):
+        pair_log[(kwargs["attacker_fief_id"], kwargs["victim_fief_id"])] = _utcnow()
+
+    db.get_fief.side_effect = get_fief
+    db.update_fief.side_effect = update_fief
+    db.get_realm.return_value = realm
+    db.update_realm = MagicMock()
+    db.last_raid_attacker_victim.side_effect = last_pair
+    db.log_raid.side_effect = log_raid
+    db.pact_members.return_value = []
+    db.fief_tiles.return_value = []
+
+    engine = Engine(db)
+    engine.barn_level = MagicMock(return_value=0)
+    engine._spend_action = MagicMock()
+    prod = MagicMock()
+    prod.defense = 1.0
+    prod.grain = 5.0
+    prod.goods = 2.0
+    engine.fief_prod = MagicMock(return_value=prod)
+    return engine, fiefs, B
+
+
+def test_raid_does_not_bank_victim_pending_might():
+    engine, fiefs, _B = _raid_stateful_engine()
+    result = engine.raid(1, 2, might=10)
+    assert fiefs[2]["might"] == 10
+    assert fiefs[2]["pending_might"] == 8.0
+    assert fiefs[2]["pending_grain"] == 0.0
+    assert fiefs[2]["pending_goods"] == 0.0
+    # pending зерно/товары вошли в stash, затем могла уйти добыча
+    assert fiefs[2]["grain"] == 70 - result.grain_stolen
+    assert fiefs[2]["goods"] == 32 - result.goods_stolen
+
+
+def test_raid_bidirectional_pair_cooldown_blocks_revenge():
+    engine, fiefs, B = _raid_stateful_engine(
+        reverse_pair_at=_utcnow() - timedelta(hours=1),
+        vic_extra={"pending_grain": 0.0, "pending_goods": 0.0, "pending_might": 0.0},
+    )
+    try:
+        engine.raid(1, 2, might=10)
+        raise AssertionError("expected pair cooldown")
+    except ValueError as e:
+        assert "пару" in str(e).lower() or "кулдаун" in str(e).lower()
+    assert fiefs[1]["might"] == 20
+
+
+def test_raid_shield_blocks_outgoing():
+    engine, fiefs, B = _raid_stateful_engine(
+        atk_extra={"shield_until": _utcnow() + timedelta(hours=12)},
+        vic_extra={"pending_grain": 0.0, "pending_goods": 0.0, "pending_might": 0.0},
+    )
+    try:
+        engine.raid(1, 2, might=10)
+        raise AssertionError("expected shield block")
+    except ValueError as e:
+        assert "щит" in str(e).lower()
+    assert fiefs[1]["might"] == 20

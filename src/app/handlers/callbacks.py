@@ -16,10 +16,12 @@ from app.handlers.shared import (
     fief_home_kb,
     fief_raid_pact_state,
     format_join_announce,
+    format_pact_join_announce,
     format_pact_leave_announce,
     format_trade_accept_announce,
     get_engine,
     more_menu_kb,
+    post_digest,
     realm_upgrade_cost_mult,
     reply_game,
 )
@@ -204,6 +206,10 @@ async def cb_more(callback: CallbackQuery) -> None:
         fief_id = int(callback.data.split(":")[1])
         fief = _ensure_owner(engine, fief_id, callback.from_user.id)
         open_, hint = fief_raid_pact_state(engine, fief)
+        progress = engine.force_tick_progress(int(fief["realm_id"]))
+        force_prog = None
+        if progress["available"]:
+            force_prog = (progress["votes"], progress["needed"])
         await _ok(callback)
         await answer_html(
             callback.message,
@@ -213,12 +219,85 @@ async def cb_more(callback: CallbackQuery) -> None:
                 drought_mitigate=engine.fief_can_mitigate_drought(fief_id),
                 raid_pact_open=open_,
                 lock_hint=hint,
+                force_tick_progress=force_prog,
             ),
         )
     except ValueError as exc:
         await callback.answer(str(exc), show_alert=True)
     except Exception:
         logger.exception("cb_more")
+        await callback.answer("Ошибка", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("ftv:"))
+async def cb_force_tick_vote(callback: CallbackQuery) -> None:
+    """Голос за досрочный тик долины."""
+    engine = get_engine()
+    try:
+        fief_id = int(callback.data.split(":")[1])
+        fief = _ensure_owner(engine, fief_id, callback.from_user.id)
+        result = engine.cast_force_tick_vote(fief_id)
+        status = result["status"]
+        progress = result["progress"]
+        label = engine.fief_label(result["fief"])
+        realm_id = int(fief["realm_id"])
+
+        if status == "too_few":
+            await callback.answer(
+                f"Нужно минимум {B.FORCE_TICK_MIN_PLAYERS} игрока в долине",
+                show_alert=True,
+            )
+            return
+        if status == "already":
+            await callback.answer(
+                f"Вы уже голосуете ({progress['votes']}/{progress['needed']})",
+                show_alert=True,
+            )
+            return
+        if status == "voted":
+            await callback.answer(
+                f"Голос учтён: {progress['votes']}/{progress['needed']}",
+                show_alert=True,
+            )
+            await announce_realm(
+                callback.bot,
+                realm_id,
+                f"⏳ {label} голосует за тик сейчас "
+                f"({progress['votes']}/{progress['needed']})",
+            )
+            await reply_game(
+                callback.message,
+                engine.status_card(fief_id),
+                reply_markup=fief_home_kb(engine, fief_id),
+            )
+            return
+
+        # status == "forced"
+        tick = result.get("tick") or {}
+        digest = tick.get("digest")
+        chat_id = tick.get("chat_id")
+        await callback.answer("Досрочный тик! Сводка в чате долины.", show_alert=True)
+        await announce_realm(
+            callback.bot,
+            realm_id,
+            f"⚡ Долина проголосовала за тик сейчас - ход делает {label}.",
+        )
+        if digest and chat_id:
+            await post_digest(callback.bot, chat_id, realm_id, digest)
+        deserter_event = tick.get("deserter_event")
+        if deserter_event and chat_id:
+            from app.scheduler import post_deserter_race
+
+            await post_deserter_race(callback.bot, chat_id, deserter_event)
+        await reply_game(
+            callback.message,
+            engine.status_card(fief_id),
+            reply_markup=fief_home_kb(engine, fief_id),
+        )
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+    except Exception:
+        logger.exception("cb_force_tick_vote")
         await callback.answer("Ошибка", show_alert=True)
 
 
@@ -634,7 +713,7 @@ async def cb_pact(callback: CallbackQuery) -> None:
     engine = get_engine()
     try:
         parts = callback.data.split(":")
-        if parts[1] in ("new", "inv", "leave", "cov"):
+        if parts[1] in ("new", "inv", "leave", "cov", "acc", "dec"):
             action = parts[1]
             fief_id = int(parts[2])
         else:
@@ -642,6 +721,31 @@ async def cb_pact(callback: CallbackQuery) -> None:
             fief_id = int(parts[1])
 
         fief = _ensure_owner(engine, fief_id, callback.from_user.id)
+
+        if action in ("acc", "dec"):
+            invite_id = int(parts[3])
+            if action == "acc":
+                invite = engine.db.get_pact_invite(invite_id)
+                pact = engine.db.get_pact(invite["pact_id"]) if invite else None
+                msg = engine.accept_pact_invite(fief_id, invite_id)
+                await _ok(callback)
+                await reply_game(
+                    callback.message, msg, reply_markup=fief_home_kb(engine, fief_id)
+                )
+                if pact:
+                    await announce_realm(
+                        callback.bot,
+                        fief["realm_id"],
+                        format_pact_join_announce(engine.fief_label(fief), pact["name"]),
+                    )
+            else:
+                msg = engine.decline_pact_invite(fief_id, invite_id)
+                await _ok(callback)
+                await reply_game(
+                    callback.message, msg, reply_markup=fief_home_kb(engine, fief_id)
+                )
+            return
+
         open_, _hint = fief_raid_pact_state(engine, fief)
         if not open_:
             realm = engine.db.get_realm(fief["realm_id"])

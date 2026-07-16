@@ -98,7 +98,7 @@ def onboard_quest_html(onboard_step: int) -> str | None:
     if step == 3:
         return (
             f"<b>Квест: постройте или улучшите здание "
-            f"(+{B.ONBOARD_DAY3_GRAIN} зерна).</b>"
+            f"(+{B.ONBOARD_DAY3_GOODS} товаров).</b>"
         )
     return None
 
@@ -149,12 +149,12 @@ def try_complete_onboard_claim(fief: dict) -> dict | None:
 
 
 def try_complete_onboard_build(fief: dict) -> dict | None:
-    """Шаг 3: строительство → шаг 4 и награда зерном. Идемпотентно."""
+    """Шаг 3: строительство → шаг 4 и награда товарами. Идемпотентно."""
     if int(fief["onboard_step"]) != 3:
         return None
     return {
         "onboard_step": 4,
-        "grain": int(fief["grain"]) + B.ONBOARD_DAY3_GRAIN,
+        "goods": int(fief["goods"]) + B.ONBOARD_DAY3_GOODS,
     }
 
 
@@ -410,7 +410,7 @@ class Engine:
         ]
         return fief_daily_production(views, hungry=bool(fief["hungry"]), farm_mult=farm_mult)
 
-    def collect_for_fief(self, fief_id: int) -> list[str]:
+    def collect_for_fief(self, fief_id: int, *, include_might: bool = True) -> list[str]:
         fief = self.db.get_fief(fief_id)
         if not fief:
             return []
@@ -423,6 +423,7 @@ class Engine:
             fief["pending_goods"],
             fief["pending_might"],
             barn,
+            include_might=include_might,
         )
         self.db.update_fief(
             fief_id,
@@ -511,6 +512,9 @@ class Engine:
             slots=tick_slots(),
         )
         lines.append(format_next_tick_line(next_at, local_now=local_now))
+        vote_line = self.force_tick_status_line(int(fief["realm_id"]))
+        if vote_line:
+            lines.append(vote_line)
         if notes:
             lines.append("· " + " · ".join(notes))
         return "\n".join(lines)
@@ -752,16 +756,26 @@ class Engine:
         if atk["might"] < might:
             raise ValueError("Недостаточно силы")
         now = _utcnow()
+        if atk.get("shield_until") and atk["shield_until"] > now:
+            raise ValueError("Пока действует щит, набеги недоступны")
         if vic.get("shield_until") and vic["shield_until"] > now:
             raise ValueError("У жертвы щит после набега")
         if atk.get("last_raid_at") and atk["last_raid_at"] + timedelta(hours=B.RAID_ATTACKER_COOLDOWN_HOURS) > now:
             raise ValueError("Ещё рано для нового набега")
         last_pair = self.db.last_raid_attacker_victim(attacker_id, victim_id)
-        if last_pair and last_pair + timedelta(hours=B.RAID_SAME_VICTIM_HOURS) > now:
-            raise ValueError("Кулдаун на эту жертву")
+        last_reverse = self.db.last_raid_attacker_victim(victim_id, attacker_id)
+        pair_until = None
+        for ts in (last_pair, last_reverse):
+            if ts is None:
+                continue
+            until = ts + timedelta(hours=B.RAID_SAME_VICTIM_HOURS)
+            if pair_until is None or until > pair_until:
+                pair_until = until
+        if pair_until and pair_until > now:
+            raise ValueError("Кулдаун на эту пару усадеб")
 
         self.collect_for_fief(attacker_id)
-        self.collect_for_fief(victim_id)
+        self.collect_for_fief(victim_id, include_might=False)
         atk = self.db.get_fief(attacker_id)
         vic = self.db.get_fief(victim_id)
 
@@ -1088,13 +1102,16 @@ class Engine:
         pact = self.db.create_pact(fief["realm_id"], name, fief_id)
         return f"Пакт \"{pact['name']}\" создан. Приглашайте союзников."
 
-    def invite_to_pact(self, founder_fief_id: int, target_fief_id: int) -> str:
+    def invite_to_pact(self, founder_fief_id: int, target_fief_id: int) -> dict:
+        """Создаёт открытое приглашение. Не меняет pact_id цели."""
         founder = self.db.get_fief(founder_fief_id)
         target = self.db.get_fief(target_fief_id)
+        if not founder or not target:
+            raise ValueError("Усадьба не найдена")
         if not founder.get("pact_id"):
             raise ValueError("Сначала создайте пакт")
         pact = self.db.get_pact(founder["pact_id"])
-        if pact["founder_fief_id"] != founder_fief_id:
+        if not pact or pact["founder_fief_id"] != founder_fief_id:
             raise ValueError("Приглашает только основатель")
         members = self.db.pact_members(pact["id"])
         if len(members) >= B.PACT_SIZE_MAX:
@@ -1103,8 +1120,70 @@ class Engine:
             raise ValueError("Цель уже в пакте")
         if target["realm_id"] != founder["realm_id"]:
             raise ValueError("Другая долина")
-        self.db.update_fief(target_fief_id, pact_id=pact["id"])
-        return f"{self.fief_label(target)} в пакте \"{pact['name']}\"."
+        if founder_fief_id == target_fief_id:
+            raise ValueError("Нельзя пригласить себя")
+        if self.db.get_open_pact_invite(pact["id"], target_fief_id):
+            raise ValueError("Приглашение уже отправлено")
+        invite = self.db.create_pact_invite(
+            realm_id=founder["realm_id"],
+            pact_id=pact["id"],
+            inviter_fief_id=founder_fief_id,
+            target_fief_id=target_fief_id,
+            expires_at=_utcnow() + timedelta(hours=B.PACT_INVITE_EXPIRE_HOURS),
+        )
+        return invite
+
+    def accept_pact_invite(self, target_fief_id: int, invite_id: int) -> str:
+        invite = self.db.get_pact_invite(invite_id)
+        if not invite or invite["status"] != "open":
+            raise ValueError("Приглашение недоступно")
+        if invite["expires_at"] and invite["expires_at"] < _utcnow():
+            self.db.update_pact_invite(invite_id, status="expired")
+            raise ValueError("Приглашение истекло")
+        if int(invite["target_fief_id"]) != int(target_fief_id):
+            raise ValueError("Это приглашение не вам")
+        target = self.db.get_fief(target_fief_id)
+        if not target:
+            raise ValueError("Усадьба не найдена")
+        if target.get("pact_id"):
+            raise ValueError("Вы уже в пакте")
+        pact = self.db.get_pact(invite["pact_id"])
+        if not pact:
+            raise ValueError("Пакт распущен")
+        if target["realm_id"] != pact["realm_id"]:
+            raise ValueError("Другая долина")
+        members = self.db.pact_members(pact["id"])
+        if len(members) >= B.PACT_SIZE_MAX:
+            raise ValueError("Пакт полон")
+        with self.db.transaction():
+            claimed = self.db.claim_open_pact_invite(invite_id, "accepted")
+            if not claimed:
+                raise ValueError("Приглашение недоступно")
+            members = self.db.pact_members(pact["id"])
+            if len(members) >= B.PACT_SIZE_MAX:
+                raise ValueError("Пакт полон")
+            target = self.db.get_fief(target_fief_id)
+            if target.get("pact_id"):
+                raise ValueError("Вы уже в пакте")
+            self.db.update_fief(target_fief_id, pact_id=pact["id"], cover_allies=False)
+        return f"Вы в пакте \"{pact['name']}\"."
+
+    def decline_pact_invite(self, actor_fief_id: int, invite_id: int) -> str:
+        invite = self.db.get_pact_invite(invite_id)
+        if not invite or invite["status"] != "open":
+            raise ValueError("Приглашение недоступно")
+        actor = self.db.get_fief(actor_fief_id)
+        if not actor:
+            raise ValueError("Усадьба не найдена")
+        is_target = int(invite["target_fief_id"]) == int(actor_fief_id)
+        is_inviter = int(invite["inviter_fief_id"]) == int(actor_fief_id)
+        if not is_target and not is_inviter:
+            raise ValueError("Нельзя отклонить чужое приглашение")
+        status = "cancelled" if is_inviter and not is_target else "declined"
+        claimed = self.db.claim_open_pact_invite(invite_id, status)
+        if not claimed:
+            raise ValueError("Приглашение недоступно")
+        return "Приглашение отклонено." if status == "declined" else "Приглашение отменено."
 
     def leave_pact(self, fief_id: int) -> str:
         fief = self.db.get_fief(fief_id)
@@ -1174,8 +1253,85 @@ class Engine:
                 if t["id"] not in core_ids and not t.get("is_overgrown"):
                     self.db.update_tile(t["id"], is_overgrown=True)
 
+    # ---------- force tick vote ----------
+    def force_tick_eligible_fiefs(self, realm_id: int) -> list[dict]:
+        return [f for f in self.db.list_fiefs(realm_id) if not f.get("frozen")]
+
+    def force_tick_progress(self, realm_id: int) -> dict[str, Any]:
+        eligible = self.force_tick_eligible_fiefs(realm_id)
+        eligible_ids = {int(f["id"]) for f in eligible}
+        n = len(eligible)
+        vote_ids = {
+            int(v["fief_id"])
+            for v in self.db.list_force_tick_votes(realm_id)
+            if int(v["fief_id"]) in eligible_ids
+        }
+        needed = B.force_tick_votes_needed(n)
+        return {
+            "eligible": n,
+            "votes": len(vote_ids),
+            "needed": needed,
+            "available": n >= B.FORCE_TICK_MIN_PLAYERS,
+            "vote_fief_ids": vote_ids,
+        }
+
+    def force_tick_status_line(self, realm_id: int) -> str | None:
+        progress = self.force_tick_progress(realm_id)
+        if not progress["available"]:
+            return None
+        return (
+            f"Голоса за тик сейчас: {progress['votes']}/{progress['needed']}"
+        )
+
+    def cast_force_tick_vote(self, fief_id: int) -> dict[str, Any]:
+        """Голос за досрочный тик. При пороге - свободный тик (слот не сдвигается)."""
+        fief = self.db.get_fief(fief_id)
+        if not fief:
+            raise ValueError("Усадьба не найдена")
+        if fief.get("frozen"):
+            raise ValueError("Усадьба заморожена")
+        realm_id = int(fief["realm_id"])
+
+        with self.db.transaction():
+            added = self.db.add_force_tick_vote(realm_id, fief_id)
+            progress = self.force_tick_progress(realm_id)
+            if not progress["available"]:
+                return {
+                    "status": "too_few",
+                    "progress": progress,
+                    "fief": fief,
+                }
+            if progress["votes"] < progress["needed"]:
+                return {
+                    "status": "voted" if added else "already",
+                    "progress": progress,
+                    "fief": fief,
+                }
+            cleared = self.db.clear_force_tick_votes(realm_id)
+            if cleared < progress["needed"]:
+                return {
+                    "status": "voted" if added else "already",
+                    "progress": self.force_tick_progress(realm_id),
+                    "fief": fief,
+                }
+
+        # Вне транзакции: тик сам коммитит много шагов; слот не передаём = бесплатный цикл.
+        tick_result = self.run_realm_tick(realm_id, forced=True)
+        return {
+            "status": "forced",
+            "progress": self.force_tick_progress(realm_id),
+            "fief": fief,
+            "tick": tick_result,
+        }
+
     # ---------- daily tick ----------
-    def run_realm_tick(self, realm_id: int, tick_slot: int | None = None) -> dict:
+    def run_realm_tick(
+        self,
+        realm_id: int,
+        tick_slot: int | None = None,
+        *,
+        forced: bool = False,
+    ) -> dict:
         realm = self.db.get_realm(realm_id)
         self.apply_absence(realm_id)
         # expire trades
@@ -1265,7 +1421,7 @@ class Engine:
         tz = ZoneInfo(realm.get("timezone") or TIMEZONE)
         local_now = datetime.now(tz)
         local_date = local_now.date()
-        # Ручной тик (tick_slot is None) не двигает расписание слотов.
+        # Ручной/форс-тик (tick_slot is None) не двигает расписание слотов.
         realm_fields: dict[str, Any] = {
             "day_number": day,
             "last_tick_at": _utcnow(),
@@ -1275,7 +1431,10 @@ class Engine:
             tick_slot = max(0, min(int(tick_slot), max(0, len(slots) - 1)))
             realm_fields["last_tick_local_date"] = local_date
             realm_fields["last_tick_slot"] = tick_slot
+        if forced:
+            realm_fields["forced_tick_count"] = int(realm.get("forced_tick_count") or 0) + 1
         self.db.update_realm(realm_id, **realm_fields)
+        self.db.clear_force_tick_votes(realm_id)
 
         sunday_extra = None
         if local_date.weekday() == 6:

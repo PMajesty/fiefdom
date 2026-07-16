@@ -95,7 +95,7 @@ async def _process_realm(bot: Bot, engine, realm: dict) -> None:
             await post_digest(bot, chat_id, realm_id, digest)
         deserter_event = result.get("deserter_event")
         if deserter_event and chat_id:
-            await _post_deserter_race(bot, chat_id, deserter_event)
+            await post_deserter_race(bot, chat_id, deserter_event)
         logger.info(
             "Tick ran for realm %s slot %s digest posted", realm_id, slot_index
         )
@@ -105,7 +105,7 @@ async def _process_realm(bot: Bot, engine, realm: dict) -> None:
     await _resolve_expired_catastrophes(bot, engine, realm)
 
 
-async def _post_deserter_race(bot: Bot, chat_id: int, event: dict) -> None:
+async def post_deserter_race(bot: Bot, chat_id: int, event: dict) -> None:
     meta = MINOR_EVENTS["deserter"]
     label = (meta.get("button_labels") or ["Взять в дружину"])[0]
     narrative = event.get("narrative") or meta["canned_narrative"]

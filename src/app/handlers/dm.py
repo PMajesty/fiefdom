@@ -437,6 +437,23 @@ def pact_kb(fief_id: int, in_pact: bool, is_founder: bool) -> InlineKeyboardMark
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def pact_invite_kb(target_fief_id: int, invite_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Принять",
+                    callback_data=f"pct:acc:{target_fief_id}:{invite_id}",
+                ),
+                InlineKeyboardButton(
+                    text="Отклонить",
+                    callback_data=f"pct:dec:{target_fief_id}:{invite_id}",
+                ),
+            ]
+        ]
+    )
+
+
 @router.message(CommandStart())
 async def cmd_start(message: Message, command: CommandObject) -> None:
     engine = get_engine()
@@ -929,17 +946,25 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
             if founder and founder.get("pact_id")
             else None
         )
-        msg = engine.invite_to_pact(pending["fief_id"], target["id"])
+        invite = engine.invite_to_pact(pending["fief_id"], target["id"])
         clear_pending(user_id)
         await reply_game(
-            message, msg, reply_markup=fief_home_kb(engine, pending["fief_id"])
+            message,
+            f"Приглашение отправлено: {engine.fief_label(target)}.",
+            reply_markup=fief_home_kb(engine, pending["fief_id"]),
         )
         if founder and pact:
-            await announce_realm(
-                message.bot,
-                founder["realm_id"],
-                format_pact_join_announce(engine.fief_label(target), pact["name"]),
-            )
+            try:
+                await message.bot.send_message(
+                    int(target["user_id"]),
+                    f"Вас приглашают в пакт \"{pact['name']}\" "
+                    f"(от {engine.fief_label(founder)}).",
+                    reply_markup=pact_invite_kb(int(target["id"]), int(invite["id"])),
+                )
+            except Exception:
+                logger.warning(
+                    "send pact invite DM to %s failed", target.get("user_id")
+                )
         return True
 
     return False

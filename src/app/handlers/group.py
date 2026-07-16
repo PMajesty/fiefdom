@@ -113,7 +113,8 @@ async def cmd_digest(message: Message, bot: Bot) -> None:
             )
         if is_admin(message.from_user.id if message.from_user else None):
             text += (
-                f"\nАдмин: форс-тик - <code>/вч_tick {realm['id']}</code> в личке бота."
+                f"\nДосрочный тик: кнопка \"Тик сейчас\" в личке (голоса долины). "
+                f"Админ: <code>/вч_tick {realm['id']}</code>."
             )
         kb = None
         username = await _bot_username(message, bot)

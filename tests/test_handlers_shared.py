@@ -344,11 +344,11 @@ def test_format_claim_button_field_and_wilds():
     from app.handlers.dm import format_claim_button
     from app import balance as B
 
-    assert format_claim_button(0, 2, B.TILE_FIELD, 2) == "А3 Поле · 30 тов."
-    assert format_claim_button(0, 2, B.TILE_WILDS, 2) == "А3 Глушь · 60 тов."
+    assert format_claim_button(0, 2, B.TILE_FIELD, 2) == "А3 Поле · 20 тов."
+    assert format_claim_button(0, 2, B.TILE_WILDS, 2) == "А3 Глушь · 40 тов."
     assert (
         format_claim_button(0, 2, B.TILE_WILDS, 2, is_overgrown=True)
-        == "А3 Глушь · 30 тов."
+        == "А3 Глушь · 20 тов."
     )
 
 
@@ -489,7 +489,7 @@ def test_claimable_kb_includes_cost_preview():
         tile_meta={(0, 2): (B.TILE_FIELD, False)},
     )
     btn = kb.inline_keyboard[0][0]
-    assert btn.text == "А3 Поле · 30 тов."
+    assert btn.text == "А3 Поле · 20 тов."
     assert btn.callback_data == "clm:3:0:2"
 
 

@@ -158,13 +158,13 @@ def collect_pending(
     pending_goods: float,
     pending_might: float,
     barn_level: int,
+    *,
+    include_might: bool = True,
 ) -> tuple[int, int, int, float, float, float, list[str]]:
     notes: list[str] = []
     cap = B.stash_cap(barn_level)
     g_add = int(pending_grain)
     d_add = int(pending_goods)
-    m_add = int(pending_might)
-    might += m_add
     room_g = max(0, cap - grain)
     room_d = max(0, cap - goods)
     take_g = min(g_add, room_g)
@@ -173,4 +173,7 @@ def collect_pending(
         notes.append("Склад полон - часть урожая не вошла")
     grain += take_g
     goods += take_d
-    return grain, goods, might, 0.0, 0.0, 0.0, notes
+    if include_might:
+        might += int(pending_might)
+        pending_might = 0.0
+    return grain, goods, might, 0.0, 0.0, pending_might, notes

@@ -107,7 +107,8 @@ class Database:
                     last_digest_text TEXT,
                     last_rumor_lines JSONB NOT NULL DEFAULT '[]',
                     wipe_confirm_code TEXT,
-                    wipe_confirm_until TIMESTAMPTZ
+                    wipe_confirm_until TIMESTAMPTZ,
+                    forced_tick_count INT NOT NULL DEFAULT 0
                 );
                 """,
                 """
@@ -161,6 +162,18 @@ class Database:
                     name TEXT NOT NULL,
                     founder_fief_id BIGINT NOT NULL REFERENCES fiefs(id) ON DELETE CASCADE,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS pact_invites (
+                    id BIGSERIAL PRIMARY KEY,
+                    realm_id BIGINT NOT NULL REFERENCES realms(id) ON DELETE CASCADE,
+                    pact_id BIGINT NOT NULL REFERENCES pacts(id) ON DELETE CASCADE,
+                    inviter_fief_id BIGINT NOT NULL REFERENCES fiefs(id) ON DELETE CASCADE,
+                    target_fief_id BIGINT NOT NULL REFERENCES fiefs(id) ON DELETE CASCADE,
+                    status TEXT NOT NULL DEFAULT 'open',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    expires_at TIMESTAMPTZ NOT NULL
                 );
                 """,
                 """
@@ -239,15 +252,34 @@ class Database:
                 );
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS tick_force_votes (
+                    realm_id BIGINT NOT NULL REFERENCES realms(id) ON DELETE CASCADE,
+                    fief_id BIGINT NOT NULL REFERENCES fiefs(id) ON DELETE CASCADE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (realm_id, fief_id)
+                );
+                """,
+                """
                 CREATE INDEX IF NOT EXISTS idx_fiefs_realm ON fiefs(realm_id);
                 CREATE INDEX IF NOT EXISTS idx_tiles_realm ON map_tiles(realm_id);
                 CREATE INDEX IF NOT EXISTS idx_tiles_owner ON map_tiles(owner_fief_id);
                 CREATE INDEX IF NOT EXISTS idx_raids_realm_time ON raids_log(realm_id, created_at);
                 CREATE INDEX IF NOT EXISTS idx_trade_realm ON trade_offers(realm_id, status);
+                CREATE INDEX IF NOT EXISTS idx_pact_invites_target
+                    ON pact_invites(target_fief_id, status);
+                CREATE INDEX IF NOT EXISTS idx_tick_force_votes_realm
+                    ON tick_force_votes(realm_id);
                 """,
             ]
             for s in stmts:
                 self.cursor.execute(s)
+            self.cursor.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_pact_invites_open_unique
+                ON pact_invites (pact_id, target_fief_id)
+                WHERE status = 'open';
+                """
+            )
             # FK pact_id after pacts exists
             self.cursor.execute(
                 """
@@ -275,6 +307,10 @@ class Database:
             )
             self.cursor.execute(
                 "ALTER TABLE realms ALTER COLUMN last_tick_slot DROP DEFAULT;"
+            )
+            self.cursor.execute(
+                "ALTER TABLE realms ADD COLUMN IF NOT EXISTS forced_tick_count "
+                "INT NOT NULL DEFAULT 0;"
             )
 
     # --- users ---
@@ -524,9 +560,69 @@ class Database:
 
     def dissolve_pact(self, pact_id: int) -> None:
         with self.lock:
+            self.cursor.execute(
+                "UPDATE pact_invites SET status='cancelled' "
+                "WHERE pact_id=%s AND status='open';",
+                (pact_id,),
+            )
             self.cursor.execute("UPDATE fiefs SET pact_id=NULL WHERE pact_id=%s;", (pact_id,))
             self.cursor.execute("DELETE FROM pacts WHERE id=%s;", (pact_id,))
             self.commit()
+
+    def create_pact_invite(self, **fields: Any) -> dict:
+        with self.lock:
+            self.cursor.execute(
+                """
+                INSERT INTO pact_invites (
+                    realm_id, pact_id, inviter_fief_id, target_fief_id, expires_at
+                ) VALUES (%s,%s,%s,%s,%s) RETURNING *;
+                """,
+                (
+                    fields["realm_id"],
+                    fields["pact_id"],
+                    fields["inviter_fief_id"],
+                    fields["target_fief_id"],
+                    fields["expires_at"],
+                ),
+            )
+            row = self.cursor.fetchone()
+            cols = [d[0] for d in self.cursor.description]
+            self.commit()
+            return self._normalize(dict(zip(cols, row)))
+
+    def get_pact_invite(self, invite_id: int) -> dict | None:
+        return self._fetchone("SELECT * FROM pact_invites WHERE id=%s;", (invite_id,))
+
+    def get_open_pact_invite(self, pact_id: int, target_fief_id: int) -> dict | None:
+        return self._fetchone(
+            """
+            SELECT * FROM pact_invites
+            WHERE pact_id=%s AND target_fief_id=%s AND status='open'
+              AND expires_at > NOW();
+            """,
+            (pact_id, target_fief_id),
+        )
+
+    def claim_open_pact_invite(self, invite_id: int, new_status: str) -> dict | None:
+        """Атомарно open→new_status. None если приглашение уже не open."""
+        with self.lock:
+            self.cursor.execute(
+                """
+                UPDATE pact_invites SET status=%s
+                WHERE id=%s AND status='open' AND expires_at > NOW()
+                RETURNING *;
+                """,
+                (new_status, invite_id),
+            )
+            row = self.cursor.fetchone()
+            if not row:
+                return None
+            cols = [d[0] for d in self.cursor.description]
+            self.commit()
+            return self._normalize(dict(zip(cols, row)))
+
+    def update_pact_invite(self, invite_id: int, **fields: Any) -> None:
+        self._update("pact_invites", invite_id, fields)
 
     # --- trade ---
     def create_trade(self, **fields: Any) -> dict:
@@ -759,6 +855,39 @@ class Database:
             "SELECT * FROM event_actions WHERE event_id=%s;",
             (event_id,),
         )
+
+    def add_force_tick_vote(self, realm_id: int, fief_id: int) -> bool:
+        """True если голос записан впервые."""
+        with self.lock:
+            self.cursor.execute(
+                """
+                INSERT INTO tick_force_votes (realm_id, fief_id)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING
+                RETURNING fief_id;
+                """,
+                (int(realm_id), int(fief_id)),
+            )
+            row = self.cursor.fetchone()
+            self.commit()
+            return row is not None
+
+    def list_force_tick_votes(self, realm_id: int) -> list[dict]:
+        return self._fetchall(
+            "SELECT * FROM tick_force_votes WHERE realm_id=%s;",
+            (int(realm_id),),
+        )
+
+    def clear_force_tick_votes(self, realm_id: int) -> int:
+        """Стирает голоса долины. Возвращает число удалённых строк."""
+        with self.lock:
+            self.cursor.execute(
+                "DELETE FROM tick_force_votes WHERE realm_id=%s RETURNING fief_id;",
+                (int(realm_id),),
+            )
+            rows = self.cursor.fetchall()
+            self.commit()
+            return len(rows)
 
     def next_decree_number(self, realm_id: int | None) -> int:
         with self.lock:

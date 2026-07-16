@@ -44,7 +44,7 @@ def test_onboard_quest_html_loud_for_steps_2_and_3():
     assert str(B.ONBOARD_DAY2_GOODS) in q2
     assert q3 is not None and q3.startswith("<b>Квест:") and q3.endswith("</b>")
     assert "здани" in q3
-    assert str(B.ONBOARD_DAY3_GRAIN) in q3
+    assert str(B.ONBOARD_DAY3_GOODS) in q3
     assert onboard_quest_html(1) is None
     assert onboard_quest_html(4) is None
 
@@ -57,10 +57,10 @@ def test_try_complete_onboard_claim_advances_with_reward():
 
 
 def test_try_complete_onboard_build_advances_with_reward():
-    patch = try_complete_onboard_build({"onboard_step": 3, "grain": 20})
-    assert patch == {"onboard_step": 4, "grain": 20 + B.ONBOARD_DAY3_GRAIN}
-    assert try_complete_onboard_build({"onboard_step": 4, "grain": 20}) is None
-    assert try_complete_onboard_build({"onboard_step": 2, "grain": 20}) is None
+    patch = try_complete_onboard_build({"onboard_step": 3, "goods": 20})
+    assert patch == {"onboard_step": 4, "goods": 20 + B.ONBOARD_DAY3_GOODS}
+    assert try_complete_onboard_build({"onboard_step": 4, "goods": 20}) is None
+    assert try_complete_onboard_build({"onboard_step": 2, "goods": 20}) is None
 
 
 def test_fief_name_for_user_prefers_username():
@@ -205,16 +205,16 @@ def test_onboard_patience_hint_when_unaffordable():
 
     hint = onboard_patience_hint(
         onboard_step=2,
-        goods=20,
+        goods=10,
         tile_count=1,
         min_build_cost=50,
     )
     assert hint is not None
     assert "рынок" in hint
-    assert "30" in hint
+    assert str(B.CLAIM_COSTS[2]) in hint
     assert (
         onboard_patience_hint(
-            onboard_step=2, goods=30, tile_count=1, min_build_cost=50
+            onboard_step=2, goods=B.CLAIM_COSTS[2], tile_count=1, min_build_cost=50
         )
         is None
     )
@@ -248,15 +248,15 @@ def test_onboard_claim_engine_advances_step_and_goods():
     assert db.fiefs[1]["goods"] == 5 + B.ONBOARD_DAY2_GOODS
 
 
-def test_onboard_build_engine_advances_step_and_grain():
+def test_onboard_build_engine_advances_step_and_goods():
     db = _FakeDB({1: {"id": 1, "onboard_step": 3, "goods": 5, "grain": 12}})
     engine = Engine(db)
     engine._onboard_build(1)
     assert db.fiefs[1]["onboard_step"] == 4
-    assert db.fiefs[1]["grain"] == 12 + B.ONBOARD_DAY3_GRAIN
+    assert db.fiefs[1]["goods"] == 5 + B.ONBOARD_DAY3_GOODS
     engine._onboard_build(1)
     assert db.fiefs[1]["onboard_step"] == 4
-    assert db.fiefs[1]["grain"] == 12 + B.ONBOARD_DAY3_GRAIN
+    assert db.fiefs[1]["goods"] == 5 + B.ONBOARD_DAY3_GOODS
 
 
 def test_post_trade_does_not_advance_onboard():
@@ -368,7 +368,7 @@ def test_status_card_puts_bold_quest_after_title():
         "name": "Усадьба А",
         "realm_id": 3,
         "grain": 30,
-        "goods": 20,
+        "goods": 5,
         "might": 5,
         "actions": 1,
         "hungry": False,
@@ -393,7 +393,7 @@ def test_status_card_puts_bold_quest_after_title():
     assert lines[1] == onboard_quest_html(2)
     assert "<b>Квест:" in lines[1]
     assert "рынок" in lines[2]
-    assert "30" in lines[2]
+    assert str(B.CLAIM_COSTS[2]) in lines[2]
     assert not lines[-1].startswith("<b>Квест:")
 
 

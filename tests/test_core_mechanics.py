@@ -13,9 +13,9 @@ from app.domain.tick import FiefTickState, apply_fief_tick, collect_pending
 
 def test_militia_upkeep():
     assert B.militia_upkeep_grain(5) == 0
-    assert B.militia_upkeep_grain(10) == 0
-    assert B.militia_upkeep_grain(14) == 2
-    assert B.militia_upkeep_grain(30) == 10
+    assert B.militia_upkeep_grain(6) == 1
+    assert B.militia_upkeep_grain(14) == 5
+    assert B.militia_upkeep_grain(30) == 13
 
 
 def test_land_upkeep():
@@ -25,8 +25,8 @@ def test_land_upkeep():
 
 
 def test_claim_costs():
-    assert B.claim_cost(2) == 30
-    assert B.claim_cost(2, is_wilds=True) == 60
+    assert B.claim_cost(2) == 20
+    assert B.claim_cost(2, is_wilds=True) == 40
 
 
 def test_map_gen_has_road_and_river():
@@ -123,10 +123,22 @@ def test_raid_loot_caps():
 
 
 def test_collect_respects_cap():
-    g, d, m, *_rest = collect_pending(140, 140, 0, 50, 50, 10, 0)
+    g, d, m, pg, pd, pm, _notes = collect_pending(140, 140, 0, 50, 50, 10, 0)
     assert g == B.DEFAULT_STASH_CAP
     assert d == B.DEFAULT_STASH_CAP
     assert m == 10
+    assert pg == 0.0 and pd == 0.0 and pm == 0.0
+
+
+def test_collect_pending_can_skip_might():
+    g, d, m, pg, pd, pm, _notes = collect_pending(
+        10, 10, 7, 20, 15, 8, 0, include_might=False
+    )
+    assert g == 30
+    assert d == 25
+    assert m == 7
+    assert pg == 0.0 and pd == 0.0
+    assert pm == 8
 
 
 def test_best_rectangle_min():

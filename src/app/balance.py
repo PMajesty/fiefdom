@@ -52,7 +52,7 @@ TILE_CLUSTER_BONUS = 0.15
 RIVER_PASSIVE_GRAIN = 3
 ROAD_PASSIVE_GOODS = 3
 # Базовый доход усадьбы (не от зданий): соло-старт без рынка не зависает.
-FIEF_BASE_GOODS = 3
+FIEF_BASE_GOODS = 5
 RUINS_LOOT_MIN = 30
 RUINS_LOOT_MAX = 80
 # Стартовая усадьба не на руинах и не рядом (тор Манхэттен < этого порога).
@@ -63,7 +63,7 @@ WILDS_CLEAR_TO = (TILE_FIELD, TILE_FOREST, TILE_HILLS)
 # --- Усадьба / клетки ---
 TILE_HARD_CAP = 9
 CLAIM_COSTS = {
-    2: 30,
+    2: 20,
     3: 60,
     4: 120,
     5: 250,
@@ -98,7 +98,7 @@ def land_upkeep(tile_count: int) -> int:
     return 4 + 2 * max(0, tile_count - 1)
 
 
-MILITIA_FREE = 10
+MILITIA_FREE = 5
 MILITIA_GRAIN_PER_EXCESS = 0.5  # ceil на тике
 
 HUNGER_PRODUCTION_MULT = 0.5
@@ -167,6 +167,7 @@ FEUD_WINDOW_DAYS = 7
 
 PACT_SIZE_MIN = 2
 PACT_SIZE_MAX = 5
+PACT_INVITE_EXPIRE_HOURS = 48
 
 # --- Слухи (сплетни в утренней сводке; не разведка) ---
 RUMOR_MAX_PER_DAY = 2
@@ -202,10 +203,24 @@ OVERGROWN_COMPENSATION = 0.5
 # --- Онбординг ---
 # шаг 2 (занять землю) → товары; шаг 3 (стройка) → зерно; готово при >= 4
 ONBOARD_DAY2_GOODS = 15
-ONBOARD_DAY3_GRAIN = 10
+ONBOARD_DAY3_GOODS = 15
 
 # Набег/Пакт в UI: после квестов (onboard_step >= 4) и с этого дня долины.
 RAID_PACT_UNLOCK_DAY = 3
+
+# --- Досрочный тик (голосование) ---
+# Нужно ≥ FORCE_TICK_MIN_PLAYERS усадеб; порог - round half-up от 75%:
+# 2/2, 2/3, 3/4, 4/5, 5/6, 5/7, 6/8…
+FORCE_TICK_MIN_PLAYERS = 2
+
+
+def force_tick_votes_needed(player_count: int) -> int:
+    """Сколько голосов нужно, чтобы форсировать тик."""
+    n = max(0, int(player_count))
+    if n < FORCE_TICK_MIN_PLAYERS:
+        return FORCE_TICK_MIN_PLAYERS
+    return (3 * n + 2) // 4
+
 
 # Feature flags по умолчанию
 DEFAULT_FEATURE_FLAGS = {

@@ -325,10 +325,12 @@ def more_menu_kb(
     drought_mitigate: bool = False,
     raid_pact_open: bool = True,
     lock_hint: str | None = None,
+    force_tick_progress: tuple[int, int] | None = None,
 ) -> InlineKeyboardMarkup:
     """Полный набор действий (раскрытие \"Ещё\").
 
     Пока Набег/Пакт закрыты - подписи-замки с callback lock:… (пояснение без трат).
+    force_tick_progress: (голоса, нужно) - кнопка досрочного тика, если доступно.
     """
     fid = int(fief_id)
     rows: list[list[InlineKeyboardButton]] = []
@@ -338,6 +340,16 @@ def more_menu_kb(
                 InlineKeyboardButton(
                     text="Полив (10 товаров)",
                     callback_data=f"drt:{fid}",
+                )
+            ]
+        )
+    if force_tick_progress is not None:
+        votes, needed = force_tick_progress
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"Тик сейчас ({int(votes)}/{int(needed)})",
+                    callback_data=f"ftv:{fid}",
                 )
             ]
         )
