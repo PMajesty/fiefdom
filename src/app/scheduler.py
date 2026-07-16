@@ -18,7 +18,7 @@ from app.domain.events import (
     pick_catastrophe,
 )
 from app.domain.tick_schedule import due_tick_slot
-from app.handlers.shared import announce_realm, get_engine, post_digest
+from app.handlers.shared import get_engine, post_digest, post_realm_public
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +149,7 @@ async def _post_catastrophe_message(
                 ]
             ]
         )
-    await announce_realm(bot, int(realm["id"]), text, reply_markup=kb)
+    await post_realm_public(bot, int(realm["id"]), text, reply_markup=kb)
 
 
 def _advance_catastrophe_schedule(engine, world: dict, key: str, tick_index: int) -> None:
@@ -373,7 +373,7 @@ async def _resolve_expired_catastrophes(bot: Bot, engine, realm: dict) -> None:
             result_text = f"Катастрофа \"{name}\" завершилась."
 
         if result_text:
-            await announce_realm(bot, int(realm["id"]), result_text)
+            await post_realm_public(bot, int(realm["id"]), result_text)
 
 
 def _resolve_bandit_night(engine, realm: dict, event: dict) -> str:

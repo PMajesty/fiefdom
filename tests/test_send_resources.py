@@ -52,7 +52,7 @@ async def test_send_amount_notifies_receiver_dm_only():
 
     with (
         patch("app.handlers.dm.reply_game", new_callable=AsyncMock) as reply,
-        patch("app.handlers.dm.announce_realm", new_callable=AsyncMock) as announce,
+        patch("app.handlers.dm.post_realm_public", new_callable=AsyncMock) as announce,
         patch("app.handlers.dm.clear_pending") as clear,
         patch("app.handlers.dm.fief_home_kb", return_value=None),
     ):

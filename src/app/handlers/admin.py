@@ -12,7 +12,7 @@ from aiogram.types import Message
 from app.domain.digest import format_decree
 from app.domain.events import MINOR_EVENTS
 from app.handlers.shared import (
-    announce_realm,
+    post_realm_public,
     get_engine,
     is_admin,
     post_digest,
@@ -69,7 +69,7 @@ ADMIN_HELP_TEXT = (
     "<b>Заморозка</b> усадьбы: 1 = заморозить, 0 = снять:\n"
     "<code>/вч_freeze 3 1</code>\n"
     "\n"
-    "<b>Указ</b> владельцам усадеб долины в личку:\n"
+    "<b>Указ</b> в групповой чат долины:\n"
     "<code>/вч_decree 1 Текст указа</code>"
 )
 
@@ -294,8 +294,8 @@ async def cmd_decree(message: Message, bot: Bot) -> None:
         number = engine.db.next_decree_number(realm_id)
         engine.db.add_decree(realm_id, number, body)
         text = format_decree(number, body)
-        await announce_realm(bot, realm_id, text)
-        await answer_html(message, f"Указ №{number} отправлен в личку.")
+        await post_realm_public(bot, realm_id, text)
+        await answer_html(message, f"Указ №{number} отправлен в группу.")
     except ValueError as exc:
         await answer_html(message, str(exc))
     except Exception:

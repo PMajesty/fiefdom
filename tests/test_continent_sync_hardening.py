@@ -377,7 +377,7 @@ async def test_catastrophe_advances_schedule_before_send_and_resumes_missing():
             raise RuntimeError("telegram down")
 
     with (
-        patch("app.scheduler.announce_realm", new=fake_post),
+        patch("app.scheduler.post_realm_public", new=fake_post),
         patch("app.scheduler.pick_catastrophe", return_value="cattle_plague"),
         patch("app.scheduler.next_catastrophe_delay_ticks", return_value=7),
     ):
@@ -404,7 +404,7 @@ async def test_catastrophe_advances_schedule_before_send_and_resumes_missing():
     created.clear()
     engine.db.update_world.reset_mock()
 
-    with patch("app.scheduler.announce_realm", new=AsyncMock()):
+    with patch("app.scheduler.post_realm_public", new=AsyncMock()):
         await _maybe_post_world_catastrophe(bot, engine, world_due)
 
     assert len(created) == 1
@@ -456,7 +456,7 @@ async def test_catastrophe_heals_divergent_active_keys_to_canonical_wave():
 
     bot = MagicMock()
     with (
-        patch("app.scheduler.announce_realm", new=AsyncMock()),
+        patch("app.scheduler.post_realm_public", new=AsyncMock()),
         patch("app.scheduler.pick_catastrophe", return_value="cattle_plague"),
         patch("app.scheduler.next_catastrophe_delay_ticks", return_value=7),
     ):
@@ -510,7 +510,7 @@ async def test_catastrophe_heal_tie_prefers_last_catastrophe_key_when_schedule_a
     engine.db.update_world = MagicMock()
 
     bot = MagicMock()
-    with patch("app.scheduler.announce_realm", new=AsyncMock()):
+    with patch("app.scheduler.post_realm_public", new=AsyncMock()):
         await _maybe_post_world_catastrophe(bot, engine, world)
 
     assert resolved == [(11, {"status": "resolved"})]
@@ -585,7 +585,7 @@ async def test_catastrophe_heal_expired_wave_no_bandit_fail_penalties():
     engine.db.get_fief.return_value = {"id": 1, "goods": 0}
 
     bot = MagicMock()
-    with patch("app.scheduler.announce_realm", new=AsyncMock()):
+    with patch("app.scheduler.post_realm_public", new=AsyncMock()):
         await _maybe_post_world_catastrophe(bot, engine, world)
 
     assert (22, {"status": "resolved"}) in resolved
@@ -598,7 +598,7 @@ async def test_catastrophe_heal_expired_wave_no_bandit_fail_penalties():
     assert fief_updates == []
 
     # Placeholder не попадает в active и не даёт fail при resolve poll.
-    with patch("app.scheduler.announce_realm", new=AsyncMock()) as announce:
+    with patch("app.scheduler.post_realm_public", new=AsyncMock()) as announce:
         await _resolve_expired_catastrophes(bot, engine, r2)
         await _resolve_expired_catastrophes(bot, engine, r3)
     assert fief_updates == []

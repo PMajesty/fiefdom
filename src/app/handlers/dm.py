@@ -15,7 +15,6 @@ from app.domain.economy import adjacent_claimable
 from app.engine import raid_pact_lock_message
 from app.handlers.shared import (
     announce_continent,
-    announce_realm,
     fief_home_kb,
     fief_raid_pact_state,
     format_pact_create_announce,
@@ -26,6 +25,7 @@ from app.handlers.shared import (
     map_realms_kb,
     map_view_kb,
     parse_start_payload,
+    post_realm_public,
     realm_upgrade_cost_mult,
     reply_game,
     reply_guide,
@@ -917,7 +917,7 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
             reply_markup=fief_home_kb(engine, pending["fief_id"]),
         )
         await _notify_raid_parties(message.bot, result)
-        await announce_realm(
+        await post_realm_public(
             message.bot,
             result.attacker_realm_id or 0,
             format_raid_announce(result.attacker_public_line or result.public_line),
@@ -927,7 +927,7 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
             and result.victim_realm_id
             and int(result.victim_realm_id) != int(result.attacker_realm_id or 0)
         ):
-            await announce_realm(
+            await post_realm_public(
                 message.bot,
                 result.victim_realm_id,
                 format_raid_announce(
@@ -1054,7 +1054,7 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
         )
         if fief and pact_name:
             engine.ensure_user(message.from_user)
-            await announce_realm(
+            await post_realm_public(
                 message.bot,
                 fief["realm_id"],
                 format_pact_create_announce(engine.fief_label(fief), pact_name),

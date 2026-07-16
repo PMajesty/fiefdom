@@ -626,6 +626,73 @@ async def test_announce_realm_posts_to_player_dms(monkeypatch):
     assert sent == [(101, "🏡 тест"), (202, "🏡 тест")]
 
 
+async def test_post_realm_public_posts_to_group_chat(monkeypatch):
+    from app.handlers import shared as shared_mod
+
+    sent: list[tuple[int, str, object]] = []
+
+    class _Db:
+        def get_realm(self, realm_id):
+            assert realm_id == 7
+            return {"id": 7, "chat_id": -100500}
+
+    class _Engine:
+        db = _Db()
+
+    async def _fake_send_game(bot, chat_id, text, **kwargs):
+        sent.append((chat_id, text, kwargs.get("reply_markup")))
+
+    monkeypatch.setattr(shared_mod, "get_engine", lambda: _Engine())
+    monkeypatch.setattr(shared_mod, "send_game", _fake_send_game)
+
+    kb = object()
+    await shared_mod.post_realm_public(object(), 7, "⚔️ набег", reply_markup=kb)
+    assert sent == [(-100500, "⚔️ набег", kb)]
+
+
+async def test_post_realm_public_skips_missing_or_zero_realm(monkeypatch):
+    from app.handlers import shared as shared_mod
+
+    called = False
+
+    class _Db:
+        def get_realm(self, realm_id):
+            return None
+
+    class _Engine:
+        db = _Db()
+
+    async def _fake_send_game(*_a, **_k):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(shared_mod, "get_engine", lambda: _Engine())
+    monkeypatch.setattr(shared_mod, "send_game", _fake_send_game)
+
+    await shared_mod.post_realm_public(object(), 0, "текст")
+    await shared_mod.post_realm_public(object(), 9, "текст")
+    assert called is False
+
+
+async def test_post_realm_public_swallows_send_errors(monkeypatch):
+    from app.handlers import shared as shared_mod
+
+    class _Db:
+        def get_realm(self, realm_id):
+            return {"id": 1, "chat_id": -1}
+
+    class _Engine:
+        db = _Db()
+
+    async def _boom(*_a, **_k):
+        raise RuntimeError("telegram down")
+
+    monkeypatch.setattr(shared_mod, "get_engine", lambda: _Engine())
+    monkeypatch.setattr(shared_mod, "send_game", _boom)
+
+    await shared_mod.post_realm_public(object(), 1, "текст")
+
+
 async def test_announce_realm_skips_empty_realm(monkeypatch):
     from app.handlers import shared as shared_mod
 

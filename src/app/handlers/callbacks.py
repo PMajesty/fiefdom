@@ -11,7 +11,6 @@ from app.domain.economy import adjacent_claimable
 from app.handlers import dm as dm_mod
 from app.handlers.shared import (
     announce_continent,
-    announce_realm,
     estate_hub_kb,
     fief_home_kb,
     fief_raid_pact_state,
@@ -23,6 +22,7 @@ from app.handlers.shared import (
     map_realms_kb,
     map_view_kb,
     post_digest,
+    post_realm_public,
     realm_upgrade_cost_mult,
     reply_game,
     reply_guide,
@@ -194,7 +194,7 @@ async def _finish_starter_pick(callback: CallbackQuery) -> None:
         msg,
         reply_markup=fief_home_kb(engine, fief["id"]),
     )
-    await announce_realm(
+    await post_realm_public(
         callback.bot, realm_id, format_join_announce(engine.fief_label(fief))
     )
 
@@ -897,7 +897,7 @@ async def cb_pact(callback: CallbackQuery) -> None:
                     callback.message, msg, reply_markup=fief_home_kb(engine, fief_id)
                 )
                 if pact:
-                    await announce_realm(
+                    await post_realm_public(
                         callback.bot,
                         fief["realm_id"],
                         format_pact_join_announce(engine.fief_label(fief), pact["name"]),
@@ -978,7 +978,7 @@ async def cb_pact(callback: CallbackQuery) -> None:
             await reply_game(
                 callback.message, msg, reply_markup=fief_home_kb(engine, fief_id)
             )
-            await announce_realm(
+            await post_realm_public(
                 callback.bot,
                 fief["realm_id"],
                 format_pact_leave_announce(

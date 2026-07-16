@@ -234,6 +234,27 @@ def format_pact_leave_announce(
     )
 
 
+async def post_realm_public(
+    bot, realm_id: int, text: str, *, reply_markup=None
+) -> None:
+    """Короткое объявление в групповой чат долины. Ошибки не роняют хендлер."""
+    if not text or not realm_id:
+        return
+    try:
+        engine = get_engine()
+        realm = engine.db.get_realm(int(realm_id))
+        if not realm:
+            return
+        chat_id = realm.get("chat_id")
+        if chat_id is None:
+            return
+        await send_game(bot, int(chat_id), text, reply_markup=reply_markup)
+    except Exception:
+        logger.warning(
+            "post_realm_public failed realm_id=%s", realm_id, exc_info=True
+        )
+
+
 async def announce_realm(
     bot, realm_id: int, text: str, *, reply_markup=None
 ) -> None:
