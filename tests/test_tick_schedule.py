@@ -6,7 +6,9 @@ from zoneinfo import ZoneInfo
 
 from app.domain.tick_schedule import (
     due_tick_slot,
+    format_next_tick_line,
     format_tick_slots,
+    next_tick_datetime,
     record_slot_after_manual_tick,
 )
 
@@ -134,3 +136,57 @@ def test_record_slot_after_manual_tick():
     assert record_slot_after_manual_tick(
         local_now=_msk(2026, 7, 16, 19, 30), slots=SLOTS
     ) == 1
+
+
+def test_next_tick_before_morning():
+    now = _msk(2026, 7, 16, 12, 0)
+    assert next_tick_datetime(
+        local_now=now,
+        last_tick_local_date=date(2026, 7, 15),
+        last_tick_slot=1,
+        slots=SLOTS,
+    ) == _msk(2026, 7, 16, 13, 0)
+
+
+def test_next_tick_between_slots_after_morning():
+    now = _msk(2026, 7, 16, 15, 0)
+    assert next_tick_datetime(
+        local_now=now,
+        last_tick_local_date=date(2026, 7, 16),
+        last_tick_slot=0,
+        slots=SLOTS,
+    ) == _msk(2026, 7, 16, 19, 0)
+
+
+def test_next_tick_after_both_is_tomorrow_morning():
+    now = _msk(2026, 7, 16, 20, 0)
+    assert next_tick_datetime(
+        local_now=now,
+        last_tick_local_date=date(2026, 7, 16),
+        last_tick_slot=1,
+        slots=SLOTS,
+    ) == _msk(2026, 7, 17, 13, 0)
+
+
+def test_next_tick_due_returns_overdue_slot():
+    """Просроченный утренний слот - следующий тик уже "сейчас"."""
+    now = _msk(2026, 7, 16, 20, 0)
+    assert next_tick_datetime(
+        local_now=now,
+        last_tick_local_date=date(2026, 7, 15),
+        last_tick_slot=1,
+        slots=SLOTS,
+    ) == _msk(2026, 7, 16, 13, 0)
+
+
+def test_format_next_tick_line():
+    now = _msk(2026, 7, 16, 15, 0)
+    assert (
+        format_next_tick_line(_msk(2026, 7, 16, 19, 0), local_now=now)
+        == "Следующий тик: 16.07 19:00"
+    )
+    assert (
+        format_next_tick_line(_msk(2026, 7, 16, 13, 0), local_now=now)
+        == "Следующий тик: сейчас"
+    )
+    assert format_next_tick_line(None, local_now=now) == "Следующий тик: -"

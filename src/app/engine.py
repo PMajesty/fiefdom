@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import random
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -35,13 +35,30 @@ from app.domain.map_gen import GenTile, append_strip, coord_label, generate_map
 from app.domain.raids import RaidActionResult, resolve_raid
 from app.domain.rumors import FiefRumorSnapshot, format_rumors_pull, roll_daily_rumors
 from app.domain.tick import FiefTickState, apply_fief_tick, collect_pending
-from app.domain.tick_schedule import format_tick_slots, record_slot_after_manual_tick
+from app.domain.tick_schedule import (
+    format_next_tick_line,
+    format_tick_slots,
+    next_tick_datetime,
+    record_slot_after_manual_tick,
+)
 
 logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _as_date(value) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        return date.fromisoformat(value[:10])
+    return None
 
 
 def fief_name_for_user(user) -> str:
@@ -481,6 +498,20 @@ class Engine:
                 f"Статусы: {flag_s}",
             ]
         )
+        tz_name = realm.get("timezone") or TIMEZONE
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            tz = ZoneInfo(TIMEZONE)
+        local_now = datetime.now(tz)
+        last_slot = realm.get("last_tick_slot")
+        next_at = next_tick_datetime(
+            local_now=local_now,
+            last_tick_local_date=_as_date(realm.get("last_tick_local_date")),
+            last_tick_slot=int(last_slot) if last_slot is not None else None,
+            slots=tick_slots(),
+        )
+        lines.append(format_next_tick_line(next_at, local_now=local_now))
         if notes:
             lines.append("· " + " · ".join(notes))
         return "\n".join(lines)

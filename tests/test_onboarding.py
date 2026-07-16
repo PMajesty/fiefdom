@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import os
 from contextlib import nullcontext
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -508,6 +509,51 @@ def test_status_card_mentions_raid_pact_unlock_after_quests():
     text = engine.status_card(1)
     assert f"Набег и пакт - с дня {B.RAID_PACT_UNLOCK_DAY}." in text
     assert onboard_quest_html(4) is None
+
+
+def test_status_card_shows_next_tick():
+    db = MagicMock()
+    engine = Engine(db)
+    engine.collect_for_fief = MagicMock(return_value=[])  # type: ignore[method-assign]
+    engine.fief_prod = MagicMock(  # type: ignore[method-assign]
+        return_value=SimpleNamespace(grain=5.0, goods=1.0, might=0.0)
+    )
+    engine.barn_level = MagicMock(return_value=0)  # type: ignore[method-assign]
+    db.get_fief.return_value = {
+        "id": 1,
+        "name": "Усадьба Г",
+        "realm_id": 3,
+        "grain": 30,
+        "goods": 20,
+        "might": 5,
+        "actions": 1,
+        "hungry": False,
+        "onboard_step": 4,
+        "last_active_at": datetime.now(timezone.utc),
+        "patrol_until": None,
+        "shield_until": None,
+    }
+    db.get_realm.return_value = {
+        "id": 3,
+        "day_number": 5,
+        "timezone": "Europe/Moscow",
+        "last_tick_local_date": date(2026, 7, 16),
+        "last_tick_slot": 0,
+    }
+    db.fief_tiles.return_value = [{"is_overgrown": False}]
+    fixed_now = datetime(2026, 7, 16, 15, 0, tzinfo=ZoneInfo("Europe/Moscow"))
+
+    class _FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return fixed_now
+            return fixed_now.astimezone(tz)
+
+    with patch("app.engine.datetime", _FrozenDateTime):
+        text = engine.status_card(1)
+
+    assert "Следующий тик: 16.07 19:00" in text
 
 
 def test_guide_mentions_raid_pact_unlock_day():
