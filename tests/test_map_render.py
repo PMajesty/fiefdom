@@ -70,8 +70,9 @@ def test_render_map_aligned_columns_with_owners():
     assert "[" not in body
     assert "К = Усадьба А (это вы)" in body
     assert "можно занять" in body
-    assert "Рамки:" in body
-    assert "только свои постройки" in body
+    assert "Синяя рамка" in body
+    assert "только ваши здания" in body
+    assert "Чужие здания на карте не видны" in body
 
 
 def test_render_map_parts_separates_grid_and_footer():
@@ -86,20 +87,46 @@ def test_render_map_parts_separates_grid_and_footer():
     assert "Владельцы:" not in grid
 
 
+def test_map_caption_summary_and_owners_helpers():
+    from app.domain.economy import (
+        format_map_owners,
+        map_caption_summary,
+        map_owner_marks,
+    )
+
+    tiles = [
+        _tile(0, 0, B.TILE_FIELD, owner=1),
+        _tile(1, 0, B.TILE_FIELD, owner=2),
+    ]
+    marks = map_owner_marks(tiles)
+    assert map_caption_summary(marks, highlight_fief_id=1) == "Вы: К · владельцев: 2"
+    assert map_caption_summary(marks, highlight_fief_id=None) == "Владельцев: 2"
+    owners = format_map_owners(
+        {1: "Усадьба А", 2: "Усадьба Б"}, marks, highlight_fief_id=1
+    )
+    assert "К = Усадьба А (это вы)" in owners
+    assert "М = Усадьба Б" in owners
+
+
 def test_map_tile_legend_reads_naturally():
-    from app.domain.guide import map_tile_legend
+    from app.domain.guide import map_caption_chrome, map_tile_legend
 
     text = map_tile_legend()
-    assert "Рамки:" in text
-    assert "синяя - ваши" in text
+    assert "Синяя рамка - ваши" in text
     assert "жёлтая - можно занять" in text
-    assert "Буква на клетке" in text
+    assert "заросло (соседи могут занять)" in text
+    assert "Буква в центре" in text
     assert "Д двор" in text
     assert "Ф ферма" in text
+    assert "Чужие здания на карте не видны" in text
     assert "· свободно" not in text
     assert "+ можно" not in text
     assert "← вы" not in text
     assert "ферма ×" not in text
+    chrome = map_caption_chrome()
+    assert "Синяя рамка - вы" in chrome
+    assert "жёлтая - можно занять" in chrome
+    assert "буква - владелец" in chrome
 
 
 def test_stash_status_line_copy():
@@ -132,10 +159,10 @@ def test_map_text_wraps_only_grid_in_pre():
     text = engine.map_text(1, highlight_fief_id=1)
     assert text.startswith("🗺️ Долина (день 3)\n<pre>")
     assert "</pre>\n\nВладельцы:" in text
-    assert "Рамки:" in text
+    assert "Синяя рамка" in text
     pre = text.split("<pre>", 1)[1].split("</pre>", 1)[0]
     assert "Владельцы:" not in pre
-    assert "Рамки:" not in pre
+    assert "Синяя рамка" not in pre
 
 
 def test_toroidal_manhattan_wraps():

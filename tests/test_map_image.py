@@ -198,14 +198,27 @@ def test_map_image_cache_lru_and_file_id():
 
 
 def test_build_map_caption_splits_when_over_limit():
-    footer = "x" * 1200
-    caption, extra = build_map_caption(title="Долина", day_number=2, footer=footer, limit=1024)
+    chrome = "x" * 1200
+    caption, extra = build_map_caption(
+        title="Долина",
+        day_number=2,
+        chrome=chrome,
+        summary="Владельцев: 1",
+        limit=1024,
+    )
     assert len(caption) <= 1024
-    assert extra == footer
-    short, none = build_map_caption(title="Долина", day_number=2, footer="Рамки:\n  синяя - ваши")
+    assert extra is not None
+    assert "Владельцев: 1" in extra
+    short, none = build_map_caption(
+        title="Долина",
+        day_number=2,
+        chrome="Синяя рамка - вы · жёлтая - можно занять · буква - владелец",
+        summary="Вы: К · владельцев: 1",
+    )
     assert none is None
     assert "Долина" in short
-    assert "Рамки:" in short
+    assert "Синяя рамка - вы" in short
+    assert "Вы: К · владельцев: 1" in short
 
 
 def test_engine_map_photo_uses_cache_across_requests():
@@ -233,8 +246,14 @@ def test_engine_map_photo_uses_cache_across_requests():
     assert first.png_bytes == second.png_bytes
     assert first.png_bytes[:8] == b"\x89PNG\r\n\x1a\n"
     assert "Долина" in first.caption
-    assert "Рамки:" in first.caption
-    assert "Владельцы:" in first.caption
+    assert "Синяя рамка - вы" in first.caption
+    assert "Вы: К · владельцев: 1" in first.caption
+    assert "Владельцы:" not in first.caption
+    assert first.caption_extra is None
+    owners = engine.map_owners_text(1, highlight_fief_id=1)
+    assert "Владельцы:" in owners
+    assert "К = Усадьба А (это вы)" in owners
+    assert "Синяя рамка - ваши" in engine.map_legend_text()
 
     engine.remember_map_file_id(first.fingerprint, "AgADBAAD")
     third = engine.map_photo(1, highlight_fief_id=1)

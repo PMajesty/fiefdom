@@ -704,7 +704,7 @@ async def dm_text(message: Message) -> None:
                     message,
                     engine,
                     engine.map_photo(fief["realm_id"], highlight_fief_id=fid),
-                    reply_markup=map_view_kb(fid),
+                    reply_markup=map_view_kb(fid, fief["realm_id"]),
                 )
             else:
                 realms = engine.db.list_realms_by_chain(int(world_id))

@@ -151,6 +151,45 @@ def format_map_cell(
     return f"{mark}{emoji}"
 
 
+def map_owner_marks(tiles: list[TileView]) -> dict[int, str]:
+    """Буквы владельцев: тот же порядок, что на PNG и в текстовой сетке."""
+    fief_ids = sorted({t.owner_fief_id for t in tiles if t.owner_fief_id is not None})
+    return {fid: owner_mark(i) for i, fid in enumerate(fief_ids)}
+
+
+def format_map_owners(
+    legend: dict[int, str],
+    marks: dict[int, str],
+    *,
+    highlight_fief_id: int | None = None,
+) -> str:
+    """Полный список владельцев для кнопки под картой."""
+    owner_lines = []
+    for fid in sorted(marks):
+        name = legend.get(fid, f"#{fid}")
+        suffix = (
+            " (это вы)"
+            if highlight_fief_id is not None and fid == highlight_fief_id
+            else ""
+        )
+        owner_lines.append(f"{marks[fid]} = {name}{suffix}")
+    if not owner_lines:
+        return "Владельцы:\nна карте пока никого"
+    return "Владельцы:\n" + "\n".join(owner_lines)
+
+
+def map_caption_summary(
+    marks: dict[int, str],
+    *,
+    highlight_fief_id: int | None = None,
+) -> str:
+    """Короткая строка под фото: метка зрителя и число владельцев."""
+    count = len(marks)
+    if highlight_fief_id is not None and highlight_fief_id in marks:
+        return f"Вы: {marks[highlight_fief_id]} · владельцев: {count}"
+    return f"Владельцев: {count}"
+
+
 def render_map_parts(
     width: int,
     height: int,
@@ -160,10 +199,9 @@ def render_map_parts(
     highlight_fief_id: int | None = None,
     claimable: set[tuple[int, int]] | None = None,
 ) -> tuple[str, str]:
-    """Сетка (для <pre>) и подпись легенды/владельцев отдельно."""
+    """Сетка (для <pre>) и полный footer (текст-карта / запасной путь)."""
     by_pos = {(t.x, t.y): t for t in tiles}
-    fief_ids = sorted({t.owner_fief_id for t in tiles if t.owner_fief_id is not None})
-    marks = {fid: owner_mark(i) for i, fid in enumerate(fief_ids)}
+    marks = map_owner_marks(tiles)
 
     # Буква над слотом метки; без межклеточных пробелов (см. _MAP_CELL_DISPLAY_WIDTH)
     header = "   " + "".join(
@@ -179,15 +217,10 @@ def render_map_parts(
 
     from app.domain.guide import map_tile_legend
 
-    footer_parts: list[str] = []
-    owner_lines = []
-    for fid in fief_ids:
-        name = legend.get(fid, f"#{fid}")
-        suffix = " (это вы)" if highlight_fief_id is not None and fid == highlight_fief_id else ""
-        owner_lines.append(f"{marks[fid]} = {name}{suffix}")
-    if owner_lines:
-        footer_parts.append("Владельцы:\n" + "\n".join(owner_lines))
-    footer_parts.append(map_tile_legend())
+    footer_parts = [
+        format_map_owners(legend, marks, highlight_fief_id=highlight_fief_id),
+        map_tile_legend(),
+    ]
     return "\n".join(lines), "\n\n".join(footer_parts)
 
 

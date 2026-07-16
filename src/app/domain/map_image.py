@@ -358,15 +358,19 @@ def build_map_caption(
     *,
     title: str,
     day_number: int,
-    footer: str,
+    chrome: str,
+    summary: str,
     limit: int = 1024,
 ) -> tuple[str, str | None]:
-    """Подпись к фото; хвост легенды отдельно, если не влезает в лимит Telegram."""
+    """Короткая подпись к фото; полный хвост - только при переполнении лимита."""
     header = f"🗺️ {title} (день {day_number})"
-    if not footer:
-        return header[:limit], None
-    full = f"{header}\n\n{footer}"
+    parts = [header]
+    if chrome:
+        parts.append(chrome)
+    if summary:
+        parts.append(summary)
+    full = "\n".join(parts)
     if len(full) <= limit:
         return full, None
-    short = f"{header}\n\nЛегенда и владельцы - следующим сообщением."
-    return short[:limit], footer
+    short = f"{header}\nЛегенда и владельцы - кнопки под картой."
+    return short[:limit], "\n".join(p for p in (chrome, summary) if p)

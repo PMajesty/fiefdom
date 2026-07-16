@@ -456,7 +456,7 @@ async def cb_map(callback: CallbackQuery) -> None:
                 callback.message,
                 engine,
                 engine.map_photo(fief["realm_id"], highlight_fief_id=fief_id),
-                reply_markup=map_view_kb(fief_id),
+                reply_markup=map_view_kb(fief_id, fief["realm_id"]),
             )
             return
         realms = engine.db.list_realms_by_chain(int(world_id))
@@ -498,12 +498,57 @@ async def cb_map_realm(callback: CallbackQuery) -> None:
             callback.message,
             engine,
             engine.map_photo(view_realm_id, highlight_fief_id=highlight),
-            reply_markup=map_view_kb(fief_id),
+            reply_markup=map_view_kb(fief_id, view_realm_id),
         )
     except ValueError as exc:
         await callback.answer(str(exc), show_alert=True)
     except Exception:
         logger.exception("cb_map_realm")
+        await callback.answer("Ошибка", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("mlg:"))
+async def cb_map_legend(callback: CallbackQuery) -> None:
+    engine = get_engine()
+    try:
+        fief_id = int(callback.data.split(":")[1])
+        _ensure_owner(engine, fief_id, callback.from_user.id)
+        await _ok(callback)
+        await reply_game(callback.message, engine.map_legend_text())
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+    except Exception:
+        logger.exception("cb_map_legend")
+        await callback.answer("Ошибка", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("mown:"))
+async def cb_map_owners(callback: CallbackQuery) -> None:
+    engine = get_engine()
+    try:
+        _, fid_s, rid_s = callback.data.split(":", 2)
+        fief_id = int(fid_s)
+        view_realm_id = int(rid_s)
+        fief = _ensure_owner(engine, fief_id, callback.from_user.id)
+        home = engine.db.get_realm(fief["realm_id"])
+        view = engine.db.get_realm(view_realm_id)
+        if not view:
+            await callback.answer("Долина не найдена", show_alert=True)
+            return
+        if home and home.get("world_id") is not None:
+            if view.get("world_id") != home.get("world_id"):
+                await callback.answer("Другой континент", show_alert=True)
+                return
+        highlight = fief_id if int(view_realm_id) == int(fief["realm_id"]) else None
+        await _ok(callback)
+        await reply_game(
+            callback.message,
+            engine.map_owners_text(view_realm_id, highlight_fief_id=highlight),
+        )
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+    except Exception:
+        logger.exception("cb_map_owners")
         await callback.answer("Ошибка", show_alert=True)
 
 

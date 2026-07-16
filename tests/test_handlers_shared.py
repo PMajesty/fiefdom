@@ -278,6 +278,18 @@ def test_choose_primary_cta_onboard_ignored_without_actions():
     assert cb == "mkt:7"
 
 
+def test_map_view_kb_has_legend_and_owners():
+    from app.handlers.shared import map_view_kb
+
+    kb = map_view_kb(9, 42)
+    rows = kb.inline_keyboard
+    assert [btn.text for btn in rows[0]] == ["Легенда", "Владельцы"]
+    assert [btn.callback_data for btn in rows[0]] == ["mlg:9", "mown:9:42"]
+    assert rows[1][0].callback_data == "map:9"
+    assert rows[2][0].text == "< Меню"
+    assert rows[2][0].callback_data == "st:9"
+
+
 def test_home_kb_has_primary_hubs_map_guide():
     from app.handlers.shared import home_kb
 

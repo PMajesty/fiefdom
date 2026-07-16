@@ -17,10 +17,14 @@ from app.domain.economy import (
     TileView,
     adjacent_claimable,
     fief_daily_production,
+    format_map_owners,
+    map_caption_summary,
+    map_owner_marks,
     pick_max_separated_tiles,
     render_map_parts,
     too_close_to_ruins,
 )
+from app.domain.guide import map_caption_chrome, map_tile_legend
 from app.domain.holdings import format_holdings
 from app.domain.map_image import (
     MapImageCache,
@@ -682,6 +686,7 @@ class Engine:
             fief_label=self.fief_label(fief),
             hungry=bool(fief.get("hungry")),
             daily=self.fief_prod(fief),
+            current_might=int(fief.get("might") or 0),
         )
 
     def _map_view_context(
@@ -732,17 +737,10 @@ class Engine:
         return text
 
     def map_photo(self, realm_id: int, highlight_fief_id: int | None = None) -> MapPhoto:
-        realm, views, legend, claimable = self._map_view_context(
+        realm, views, _, claimable = self._map_view_context(
             realm_id, highlight_fief_id
         )
-        _, footer = render_map_parts(
-            realm["width"],
-            realm["height"],
-            views,
-            legend,
-            highlight_fief_id=highlight_fief_id,
-            claimable=claimable,
-        )
+        marks = map_owner_marks(views)
         fingerprint = map_fingerprint(
             realm_id=int(realm["id"]),
             width=int(realm["width"]),
@@ -754,7 +752,10 @@ class Engine:
         caption, caption_extra = build_map_caption(
             title=str(realm["title"]),
             day_number=int(realm["day_number"]),
-            footer=footer,
+            chrome=map_caption_chrome(),
+            summary=map_caption_summary(
+                marks, highlight_fief_id=highlight_fief_id
+            ),
         )
         cached = self._map_image_cache.get(fingerprint)
         if cached is not None:
@@ -779,6 +780,19 @@ class Engine:
             fingerprint=fingerprint,
             file_id=None,
             caption_extra=caption_extra,
+        )
+
+    def map_legend_text(self) -> str:
+        return map_tile_legend()
+
+    def map_owners_text(
+        self, realm_id: int, highlight_fief_id: int | None = None
+    ) -> str:
+        _, views, legend, _ = self._map_view_context(realm_id, highlight_fief_id)
+        return format_map_owners(
+            legend,
+            map_owner_marks(views),
+            highlight_fief_id=highlight_fief_id,
         )
 
     def remember_map_file_id(self, fingerprint: str, file_id: str) -> None:
