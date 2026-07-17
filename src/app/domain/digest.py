@@ -28,7 +28,6 @@ def format_digest(
     day: int,
     night_lines: list[str],
     event_line: str | None,
-    market_line: str | None,
     feud_lines: list[str],
     sunday_extra: str | None,
     rumor_lines: list[str] | None = None,
@@ -41,8 +40,6 @@ def format_digest(
     ]
     if event_line:
         parts.append(f"📜 Сегодня: {event_line}")
-    if market_line:
-        parts.append(f"🛒 Рынок: {market_line}")
     for feud in feud_lines:
         parts.append(f"⚔️ Вражда: {feud}")
     section = format_rumor_section(

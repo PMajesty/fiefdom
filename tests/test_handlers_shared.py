@@ -42,25 +42,6 @@ def test_open_estate_kb():
     assert btn.url == "https://t.me/FiefdomBot?start=realm_42"
 
 
-def test_parse_trade_line():
-    from app.handlers.dm import _parse_trade_line
-    from app import balance as B
-
-    assert _parse_trade_line("зерно 10 товары 5") == (
-        B.RES_GRAIN,
-        10,
-        B.RES_GOODS,
-        5,
-    )
-    assert _parse_trade_line("goods 3 grain 8") == (
-        B.RES_GOODS,
-        3,
-        B.RES_GRAIN,
-        8,
-    )
-    assert _parse_trade_line("nonsense") is None
-
-
 def test_choose_primary_cta_onboard_claim():
     from app.handlers.shared import choose_primary_cta
 
@@ -86,7 +67,7 @@ def test_choose_primary_cta_onboard_build():
     assert cb == "bld:9"
 
 
-def test_choose_primary_cta_onboard_unaffordable_goes_market():
+def test_choose_primary_cta_onboard_unaffordable_goes_caravan():
     from app.handlers.shared import choose_primary_cta
 
     label, cb = choose_primary_cta(
@@ -98,8 +79,8 @@ def test_choose_primary_cta_onboard_unaffordable_goes_market():
         min_build_cost=50,
         next_claim_cost=30,
     )
-    assert label == "Рынок"
-    assert cb == "mkt:9"
+    assert label == "Караван"
+    assert cb == "snd:9"
 
     label, cb = choose_primary_cta(
         9,
@@ -110,8 +91,8 @@ def test_choose_primary_cta_onboard_unaffordable_goes_market():
         min_build_cost=20,
         next_claim_cost=60,
     )
-    assert label == "Рынок"
-    assert cb == "mkt:9"
+    assert label == "Караван"
+    assert cb == "snd:9"
 
 
 def test_choose_primary_cta_expand_land():
@@ -165,8 +146,8 @@ def test_choose_primary_cta_no_raid_while_onboard():
         min_build_cost=50,
         next_claim_cost=120,
     )
-    assert label == "Рынок"
-    assert cb == "mkt:3"
+    assert label == "Караван"
+    assert cb == "snd:3"
 
 
 def test_choose_primary_cta_no_raid_before_unlock_day():
@@ -262,20 +243,20 @@ def test_valley_hub_kb_unlocked_pact():
     assert "lock:pct:9" not in by_data
 
 
-def test_choose_primary_cta_no_actions_market():
+def test_choose_primary_cta_no_actions_caravan():
     from app.handlers.shared import choose_primary_cta
 
     label, cb = choose_primary_cta(7, actions=0, onboard_step=4, tile_count=5)
-    assert label == "Рынок"
-    assert cb == "mkt:7"
+    assert label == "Караван"
+    assert cb == "snd:7"
 
 
 def test_choose_primary_cta_onboard_ignored_without_actions():
     from app.handlers.shared import choose_primary_cta
 
     label, cb = choose_primary_cta(7, actions=0, onboard_step=2)
-    assert label == "Рынок"
-    assert cb == "mkt:7"
+    assert label == "Караван"
+    assert cb == "snd:7"
 
 
 def test_home_kb_has_primary_hubs_map_guide():
@@ -306,8 +287,8 @@ def test_main_menu_kb_uses_fief_snapshot():
 
     fief = {"actions": 1, "onboard_step": 2, "goods": 0, "might": 0}
     kb = main_menu_kb(5, fief=fief, tile_count=1, min_build_cost=50, next_claim_cost=30)
-    assert kb.inline_keyboard[0][0].callback_data == "mkt:5"
-    assert kb.inline_keyboard[0][0].text == "Рынок"
+    assert kb.inline_keyboard[0][0].callback_data == "snd:5"
+    assert kb.inline_keyboard[0][0].text == "Караван"
     assert kb.inline_keyboard[1][0].callback_data == "hub:e:5"
 
     rich = {"actions": 1, "onboard_step": 2, "goods": 50, "might": 0}
@@ -343,7 +324,7 @@ def test_estate_and_valley_hub_prefixes():
 
     valley = valley_hub_kb(9)
     valley_data = [btn.callback_data for row in valley.inline_keyboard for btn in row]
-    assert valley_data == ["mkt:9", "snd:9", "pct:9", "rum:9", "home:9"]
+    assert valley_data == ["snd:9", "pct:9", "rum:9", "home:9"]
 
 
 def test_more_menu_kb_compat_hub_picker():
@@ -543,25 +524,18 @@ def test_announce_formatters_escape_names():
         format_pact_join_announce,
         format_pact_leave_announce,
         format_raid_announce,
-        format_trade_accept_announce,
-        format_trade_post_announce,
+        format_send_announce,
     )
 
     assert format_join_announce("Усадьба A <B>") == (
         "🏡 В долине новая усадьба: Усадьба A &lt;B&gt;"
     )
     assert format_raid_announce("Набег X на Y") == "⚔️ Набег X на Y"
-    assert format_trade_post_announce(
-        "Усадьба <X>", 10, B.RES_GRAIN, 5, B.RES_GOODS
+    assert format_send_announce(
+        "Усадьба <X>", "Двор <Y>", 10, B.RES_GRAIN
     ) == (
-        "🛒 Усадьба &lt;X&gt; выставляет лот: "
-        "отдаёт 10 Зерно за 5 Товары"
-    )
-    assert format_trade_accept_announce(
-        "Покупатель", "Продавец <Y>", 10, B.RES_GRAIN, 5, B.RES_GOODS
-    ) == (
-        "🛒 Сделка: Покупатель забрала 10 Зерно "
-        "у Продавец &lt;Y&gt; за 5 Товары"
+        "📦 Усадьба &lt;X&gt; отправила обоз: "
+        "10 Зерно → Двор &lt;Y&gt;"
     )
     assert format_pact_create_announce("Основатель", "Север") == (
         '🤝 Новый пакт "Север" (Основатель)'
@@ -578,10 +552,7 @@ def test_announce_formatters_escape_names():
     for text in (
         format_join_announce("A"),
         format_raid_announce("B"),
-        format_trade_post_announce("C", 1, B.RES_GRAIN, 2, B.RES_GOODS),
-        format_trade_accept_announce(
-            "A", "B", 1, B.RES_GRAIN, 2, B.RES_GOODS
-        ),
+        format_send_announce("C", "D", 1, B.RES_GRAIN),
         format_pact_leave_announce("D", "E", dissolved=True),
     ):
         assert "\u2014" not in text

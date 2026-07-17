@@ -1,4 +1,4 @@
-"""Issue 9: DB transaction helper + safe accept_trade on closed lots.
+"""Issue 9: DB transaction helper + safe caravan resolve claim.
 Critical #1: CAS spend for actions/resources + transaction wrappers.
 """
 from __future__ import annotations
@@ -87,91 +87,62 @@ def test_claim_open_trade_returns_none_when_closed():
     assert cursor.execute.call_args[0][1] == (7,)
 
 
-def test_accept_trade_closed_is_safe_noop():
-    expires = datetime.now(timezone.utc) + timedelta(hours=12)
-    db = MagicMock()
-    db.transaction = lambda: nullcontext()
-    db.get_trade.return_value = {
-        "id": 5,
-        "status": "done",
-        "expires_at": expires,
-        "offerer_fief_id": 2,
-        "target_fief_id": None,
-        "realm_id": 9,
-        "give_res": B.RES_GOODS,
-        "give_amt": 5,
-        "want_res": B.RES_GRAIN,
-        "want_amt": 10,
-    }
-
-    engine = Engine(db)
-    msg = engine.accept_trade(1, 5)
-
-    assert "закрыт" in msg.lower() or "недоступен" in msg.lower()
-    db.update_fief.assert_not_called()
-    db.claim_open_trade.assert_not_called()
-
-
-def test_accept_trade_claim_miss_inside_tx_is_noop():
-    """Двойной accept: claim_open_trade проиграл гонку - без переводов."""
-    expires = datetime.now(timezone.utc) + timedelta(hours=12)
+def test_resolve_caravan_claim_miss_is_noop():
+    """Двойной resolve: claim_resolve проиграл гонку - без кредитов."""
     state = {
         1: {
             "id": 1,
             "realm_id": 9,
-            "grain": 50,
+            "grain": 40,
             "goods": 20,
-            "onboard_step": 4,
-            "pending_grain": 0,
-            "pending_goods": 0,
-            "pending_might": 0,
-            "might": 5,
+            "frozen": False,
+            "name": "A",
+            "user_id": 100,
         },
         2: {
             "id": 2,
             "realm_id": 9,
-            "grain": 30,
+            "grain": 10,
             "goods": 10,
-            "onboard_step": 4,
-            "pending_grain": 0,
-            "pending_goods": 0,
-            "pending_might": 0,
-            "might": 5,
+            "frozen": False,
+            "name": "B",
+            "user_id": 200,
         },
     }
-    trade = {
+    intent = {
         "id": 5,
+        "world_id": 1,
+        "tick_index": 0,
+        "fief_id": 1,
+        "kind": "caravan",
         "status": "open",
-        "expires_at": expires,
-        "expires_tick": 10,
-        "offerer_fief_id": 2,
-        "target_fief_id": None,
-        "realm_id": 9,
-        "give_res": B.RES_GOODS,
-        "give_amt": 5,
-        "want_res": B.RES_GRAIN,
-        "want_amt": 10,
+        "payload": {
+            "receiver_id": 2,
+            "res": B.RES_GRAIN,
+            "amt": 10,
+            "escrowed": True,
+            "sender_realm_id": 9,
+            "receiver_realm_id": 9,
+            "is_public": False,
+        },
     }
     db = MagicMock()
     db.transaction = lambda: nullcontext()
-    db.get_trade.return_value = trade
-    db.claim_open_trade.return_value = None
-    db.get_fief.side_effect = lambda fid: dict(state[fid])
-    db.get_realm.return_value = {
-        "id": 9,
-        "active_minor_key": None,
-        "active_minor_until": None,
-        "tick_index": 0,
-    }
+    db.get_fief.side_effect = lambda fid: dict(state[int(fid)])
+    db.list_caravan_intents.return_value = [intent]
+    db.claim_resolve_action_intent.return_value = None
 
     engine = Engine(db)
-    engine.collect_for_fief = MagicMock(return_value=[])  # type: ignore[method-assign]
+    engine.world_tick_incomplete = MagicMock(return_value=False)
+    engine.barn_level = MagicMock(return_value=0)
+    engine.fief_label = MagicMock(side_effect=lambda f: f["name"])
 
-    msg = engine.accept_trade(1, 5)
+    report = engine.resolve_pending_caravans(1, 0)
 
-    assert "закрыт" in msg.lower() or "недоступен" in msg.lower()
-    db.update_fief.assert_not_called()
-    assert state[1]["grain"] == 50
+    assert report.resolved_count == 0
+    db.credit_fief_resources.assert_not_called()
+    assert state[1]["grain"] == 40
+    assert state[2]["grain"] == 10
 
 
 def test_spend_fief_action_sql_is_cas():

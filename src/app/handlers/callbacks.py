@@ -1,4 +1,4 @@
-"""CallbackQuery: меню усадьбы, клейм, стройка, набег, рынок, пакт, старт."""
+"""CallbackQuery: меню усадьбы, клейм, стройка, набег, караван, пакт, старт."""
 from __future__ import annotations
 
 import logging
@@ -11,14 +11,12 @@ from app.domain.economy import adjacent_claimable
 from app.domain.resources import resource_defs
 from app.handlers import dm as dm_mod
 from app.handlers.shared import (
-    announce_continent,
     estate_hub_kb,
     fief_home_kb,
     fief_raid_pact_state,
     format_join_announce,
     format_pact_join_announce,
     format_pact_leave_announce,
-    format_trade_accept_announce,
     get_engine,
     map_realms_kb,
     map_view_kb,
@@ -463,26 +461,6 @@ async def cb_guide(callback: CallbackQuery) -> None:
         await callback.answer("Ошибка", show_alert=True)
 
 
-@router.callback_query(F.data.startswith("mkt:"))
-async def cb_market(callback: CallbackQuery) -> None:
-    engine = get_engine()
-    try:
-        fief_id = int(callback.data.split(":")[1])
-        fief = _ensure_owner(engine, fief_id, callback.from_user.id)
-        offers = engine.db.list_open_trades(fief["realm_id"], fief_id)
-        await _ok(callback)
-        await reply_game(
-            callback.message,
-            engine.market_text(fief["realm_id"], fief_id),
-            reply_markup=dm_mod.market_kb(fief_id, offers, engine),
-        )
-    except ValueError as exc:
-        await callback.answer(str(exc), show_alert=True)
-    except Exception:
-        logger.exception("cb_market")
-        await callback.answer("Ошибка", show_alert=True)
-
-
 @router.callback_query(F.data.startswith("clm:"))
 async def cb_claim(callback: CallbackQuery) -> None:
     engine = get_engine()
@@ -804,9 +782,12 @@ async def cb_send(callback: CallbackQuery) -> None:
         await _ok(callback)
         await reply_game(
             callback.message,
-            "Кому передать зерно или товары?\n"
+            "Куда отправить обоз с зерном или товарами?\n"
             "Напишите id усадьбы, имя или @username.\n"
-            "Силу передать нельзя. Или напишите \"отмена\".",
+            "Обоз идёт до следующего колокола тика; пока в пути - можно вернуть. "
+            f"От {B.CARAVAN_PUBLIC_AMOUNT} и больше долина увидит выезд; "
+            "мелкое - только адресату. Силу везти нельзя.\n"
+            "Или напишите \"отмена\".",
             reply_markup=dm_mod.pending_cancel_kb(fief_id),
         )
     except ValueError as exc:
@@ -816,75 +797,25 @@ async def cb_send(callback: CallbackQuery) -> None:
         await callback.answer("Ошибка", show_alert=True)
 
 
-@router.callback_query(F.data.startswith("trd:"))
-async def cb_trade(callback: CallbackQuery) -> None:
+@router.callback_query(F.data.startswith("cvx:"))
+async def cb_caravan_cancel_intent(callback: CallbackQuery) -> None:
     engine = get_engine()
     try:
         parts = callback.data.split(":")
-        if parts[1] in ("new", "a", "c"):
-            action = parts[1]
-            fief_id = int(parts[2])
-        else:
-            action = "list"
-            fief_id = int(parts[1])
-
-        fief = _ensure_owner(engine, fief_id, callback.from_user.id)
-
-        if action == "list":
-            offers = engine.db.list_open_trades(fief["realm_id"], fief_id)
-            await _ok(callback)
-            await reply_game(
-                callback.message,
-                engine.market_text(fief["realm_id"], fief_id),
-                reply_markup=dm_mod.market_kb(fief_id, offers, engine),
-            )
-            return
-
-        if action == "new":
-            dm_mod.set_pending(
-                callback.from_user.id,
-                {"kind": "trade_create", "fief_id": fief_id},
-            )
-            await _ok(callback)
-            await reply_game(
-                callback.message,
-                "Отправьте лот: <code>зерно 10 товары 5</code>\n"
-                "(сначала что отдаёте, потом что хотите взамен).\n"
-                "Или напишите \"отмена\".",
-                reply_markup=dm_mod.pending_cancel_kb(fief_id),
-            )
-            return
-
-        trade_id = int(parts[3])
-        seller = None
-        trade = None
-        if action == "a":
-            trade = engine.db.get_trade(trade_id)
-            if trade:
-                seller = engine.db.get_fief(trade["offerer_fief_id"])
-            msg = engine.accept_trade(fief_id, trade_id)
-        else:
-            msg = engine.cancel_trade(fief_id, trade_id)
+        fief_id = int(parts[1])
+        intent_id = int(parts[2])
+        _ensure_owner(engine, fief_id, callback.from_user.id)
+        msg = engine.cancel_caravan_intent(fief_id, intent_id)
         await _ok(callback)
-        await reply_game(callback.message, msg, reply_markup=fief_home_kb(engine, fief_id))
-        if action == "a" and seller and trade and msg.startswith("Сделка"):
-            engine.ensure_user(callback.from_user)
-            await announce_continent(
-                callback.bot,
-                fief["realm_id"],
-                format_trade_accept_announce(
-                    engine.fief_label(fief),
-                    engine.fief_label(seller),
-                    trade["give_amt"],
-                    trade["give_res"],
-                    trade["want_amt"],
-                    trade["want_res"],
-                ),
-            )
+        await answer_html(
+            callback.message,
+            msg,
+            reply_markup=fief_home_kb(engine, fief_id),
+        )
     except ValueError as exc:
         await callback.answer(str(exc), show_alert=True)
     except Exception:
-        logger.exception("cb_trade")
+        logger.exception("cb_caravan_cancel_intent")
         await callback.answer("Ошибка", show_alert=True)
 
 

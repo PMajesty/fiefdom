@@ -453,7 +453,6 @@ def test_gather_trade_send_golden_current_resources():
 
     from app.handlers.dm import (
         _parse_send_line,
-        _parse_trade_line,
         gather_resources_kb,
     )
 
@@ -466,12 +465,6 @@ def test_gather_trade_send_golden_current_resources():
     assert _parse_send_line("зерно 10") == (B.RES_GRAIN, 10)
     assert _parse_send_line("goods 3") == (B.RES_GOODS, 3)
     assert _parse_send_line("сила 5") is None
-    assert _parse_trade_line("зерно 10 товары 5") == (
-        B.RES_GRAIN,
-        10,
-        B.RES_GOODS,
-        5,
-    )
 
     kb = gather_resources_kb(7)
     gth_buttons = [

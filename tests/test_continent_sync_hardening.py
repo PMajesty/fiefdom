@@ -894,7 +894,7 @@ def _incomplete_world_db(*, caught_up: bool = False):
     return db, B, r1, r2
 
 
-def test_incomplete_world_blocks_cross_valley_raid_send_trade_pact():
+def test_incomplete_world_blocks_cross_valley_raid_caravan_pact():
     db, B, r1, r2 = _incomplete_world_db(caught_up=False)
     atk = {
         "id": 1,
@@ -913,18 +913,6 @@ def test_incomplete_world_blocks_cross_valley_raid_send_trade_pact():
         "frozen": False,
     }
     vic = dict(atk, id=2, realm_id=2, user_id=200, name="B", might=3, pact_id=None)
-    trade = {
-        "id": 7,
-        "status": "open",
-        "realm_id": 1,
-        "offerer_fief_id": 1,
-        "target_fief_id": None,
-        "give_res": B.RES_GRAIN,
-        "give_amt": 5,
-        "want_res": B.RES_GOODS,
-        "want_amt": 3,
-        "expires_tick": 20,
-    }
     pact = {"id": 50, "realm_id": 1, "name": "Север", "founder_fief_id": 1}
     invite = {
         "id": 9,
@@ -937,7 +925,6 @@ def test_incomplete_world_blocks_cross_valley_raid_send_trade_pact():
 
     fiefs = {1: atk, 2: vic}
     db.get_fief.side_effect = lambda fid: dict(fiefs[int(fid)])
-    db.get_trade.return_value = trade
     db.get_pact.return_value = pact
     db.pact_members.return_value = [atk]
     db.get_open_pact_invite.return_value = None
@@ -953,13 +940,7 @@ def test_incomplete_world_blocks_cross_valley_raid_send_trade_pact():
     with pytest.raises(ValueError, match=_INCOMPLETE_MSG):
         engine.declare_raid(1, 2, 5)
     with pytest.raises(ValueError, match=_INCOMPLETE_MSG):
-        engine.send_resources(1, 2, B.RES_GRAIN, 10)
-    with pytest.raises(ValueError, match=_INCOMPLETE_MSG):
-        engine.accept_trade(2, 7)
-    with pytest.raises(ValueError, match=_INCOMPLETE_MSG):
-        engine.post_trade(
-            1, B.RES_GRAIN, 5, B.RES_GOODS, 3, target_fief_id=2
-        )
+        engine.declare_caravan(1, 2, B.RES_GRAIN, 10)
     with pytest.raises(ValueError, match=_INCOMPLETE_MSG):
         engine.invite_to_pact(1, 2)
     with pytest.raises(ValueError, match=_INCOMPLETE_MSG):
@@ -1032,11 +1013,19 @@ def test_caught_up_world_allows_cross_valley_again():
     def get_fief(fid):
         return dict(fiefs[int(fid)])
 
-    def update_fief(fid, **fields):
-        fiefs[int(fid)].update(fields)
+    def debit_fief_resources(fid, amounts=None, **kwargs):
+        row = fiefs[int(fid)]
+        merged = dict(amounts or {})
+        merged.update(kwargs)
+        for col, amt in merged.items():
+            if int(row.get(col) or 0) < int(amt):
+                return None
+            row[col] = int(row[col]) - int(amt)
+        return dict(row)
 
     db.get_fief.side_effect = get_fief
-    db.update_fief.side_effect = update_fief
+    db.debit_fief_resources.side_effect = debit_fief_resources
+    db.create_action_intent.return_value = {"id": 11, "kind": "caravan"}
     db.get_pact.return_value = {
         "id": 50,
         "realm_id": 1,
@@ -1047,37 +1036,20 @@ def test_caught_up_world_allows_cross_valley_again():
     db.get_open_pact_invite.return_value = None
     db.create_pact_invite.return_value = {"id": 9}
 
-    trade = {
-        "id": 7,
-        "status": "open",
-        "realm_id": 1,
-        "offerer_fief_id": 1,
-        "target_fief_id": None,
-        "give_res": B.RES_GRAIN,
-        "give_amt": 5,
-        "want_res": B.RES_GOODS,
-        "want_amt": 3,
-        "expires_tick": 20,
-    }
-    db.get_trade.return_value = trade
-    db.claim_open_trade.return_value = dict(trade)
-
     engine = Engine(db)
     engine.require_active_fief = MagicMock(side_effect=get_fief)
     engine.collect_for_fief = MagicMock()
     engine.barn_level = MagicMock(return_value=0)
     engine.fief_label = MagicMock(side_effect=lambda f: f["name"])
+    engine._world_id_for_realm = MagicMock(return_value=1)
 
-    msg = engine.send_resources(1, 2, B.RES_GRAIN, 10)
-    assert "B" in msg
+    result = engine.declare_caravan(1, 2, B.RES_GRAIN, 10)
+    assert "B" in result.dm_text
     assert fiefs[1]["grain"] == 40
-    assert fiefs[2]["grain"] == 15
+    assert fiefs[2]["grain"] == 5
 
     invite = engine.invite_to_pact(1, 2)
     assert invite["id"] == 9
-
-    msg = engine.accept_trade(2, 7)
-    assert msg.startswith("Сделка")
 
 
 def test_incomplete_same_realm_raid_skips_foreign_interceptor_spend():
@@ -1273,34 +1245,42 @@ def test_incomplete_same_realm_raid_spends_local_cover_allies_interceptor():
     assert fiefs[3]["might"] == foreign["might"]
 
 
-def test_incomplete_world_blocks_open_market_post_trade():
+def test_incomplete_world_blocks_declare_caravan():
     db, B, r1, r2 = _incomplete_world_db(caught_up=False)
-    seller = {
+    sender = {
         "id": 1,
         "realm_id": 1,
         "grain": 50,
         "goods": 10,
         "name": "A",
         "user_id": 100,
+        "frozen": False,
     }
-    fiefs = {1: dict(seller)}
+    receiver = {
+        "id": 2,
+        "realm_id": 1,
+        "grain": 5,
+        "goods": 5,
+        "name": "B",
+        "user_id": 200,
+        "frozen": False,
+    }
+    fiefs = {1: dict(sender), 2: dict(receiver)}
 
     def get_fief(fid):
         return dict(fiefs[int(fid)])
 
-    def update_fief(fid, **fields):
-        fiefs[int(fid)].update(fields)
-
     db.get_fief.side_effect = get_fief
-    db.update_fief.side_effect = update_fief
-    db.create_trade.return_value = {"id": 11}
+    db.create_action_intent.return_value = {"id": 11}
 
     engine = Engine(db)
+    engine.require_active_fief = MagicMock(side_effect=get_fief)
     engine.collect_for_fief = MagicMock()
+    engine.fief_label = MagicMock(side_effect=lambda f: f["name"])
 
     with pytest.raises(ValueError, match=_INCOMPLETE_MSG):
-        engine.post_trade(1, B.RES_GRAIN, 5, B.RES_GOODS, 3, target_fief_id=None)
-    db.create_trade.assert_not_called()
+        engine.declare_caravan(1, 2, B.RES_GRAIN, 5)
+    db.create_action_intent.assert_not_called()
     assert fiefs[1]["grain"] == 50
 
 

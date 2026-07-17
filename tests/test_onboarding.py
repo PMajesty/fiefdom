@@ -270,7 +270,7 @@ def test_onboard_build_engine_advances_step_and_goods():
     assert db.fiefs[1]["goods"] == 5 + B.ONBOARD_DAY3_GOODS
 
 
-def test_post_trade_does_not_advance_onboard():
+def test_declare_caravan_does_not_advance_onboard():
     state = {
         1: {
             "id": 1,
@@ -282,93 +282,56 @@ def test_post_trade_does_not_advance_onboard():
             "pending_goods": 0,
             "pending_might": 0,
             "might": 5,
-        }
-    }
-    db = MagicMock()
-    db.transaction = lambda: nullcontext()
-    db.get_fief.side_effect = lambda fid: dict(state[fid])
-    db.create_trade.return_value = {"id": 99}
-
-    def _update(fid, **fields):
-        state[fid].update(fields)
-
-    db.update_fief.side_effect = _update
-    engine = Engine(db)
-    engine.collect_for_fief = MagicMock(return_value=[])  # type: ignore[method-assign]
-
-    msg = engine.post_trade(1, B.RES_GRAIN, 10, B.RES_GOODS, 5)
-    assert "Лот #99" in msg
-    assert state[1]["onboard_step"] == 3
-    # Лоты без эскроу: зерно остаётся на усадьбе до сделки.
-    assert state[1]["grain"] == 40
-    db.update_fief.assert_not_called()
-
-
-def test_accept_trade_does_not_advance_onboard():
-    expires = datetime.now(timezone.utc) + timedelta(hours=12)
-    state = {
-        1: {
-            "id": 1,
-            "realm_id": 9,
-            "grain": 50,
-            "goods": 20,
-            "onboard_step": 3,
-            "pending_grain": 0,
-            "pending_goods": 0,
-            "pending_might": 0,
-            "might": 5,
+            "frozen": False,
+            "name": "A",
+            "user_id": 100,
         },
         2: {
             "id": 2,
             "realm_id": 9,
-            "grain": 30,
+            "grain": 10,
             "goods": 10,
             "onboard_step": 3,
-            "pending_grain": 0,
-            "pending_goods": 0,
-            "pending_might": 0,
-            "might": 5,
+            "frozen": False,
+            "name": "B",
+            "user_id": 200,
         },
     }
     db = MagicMock()
     db.transaction = lambda: nullcontext()
-    trade = {
-        "id": 5,
-        "status": "open",
-        "expires_at": expires,
-        "expires_tick": 10,
-        "offerer_fief_id": 2,
-        "target_fief_id": None,
-        "realm_id": 9,
-        "give_res": B.RES_GOODS,
-        "give_amt": 5,
-        "want_res": B.RES_GRAIN,
-        "want_amt": 10,
-    }
-    db.get_trade.return_value = trade
-    db.claim_open_trade.return_value = {**trade, "status": "done"}
-    db.get_fief.side_effect = lambda fid: dict(state[fid])
-    db.get_realm.return_value = {
-        "id": 9,
-        "active_minor_key": None,
-        "active_minor_until": None,
-        "tick_index": 0,
-    }
 
-    def _update(fid, **fields):
-        state[fid].update(fields)
+    def get_fief(fid):
+        return dict(state[int(fid)])
 
-    db.update_fief.side_effect = _update
+    def debit_fief_resources(fid, amounts=None, **kwargs):
+        row = state[int(fid)]
+        merged = dict(amounts or {})
+        merged.update(kwargs)
+        for col, amt in merged.items():
+            if int(row.get(col) or 0) < int(amt):
+                return None
+            row[col] = int(row[col]) - int(amt)
+        return dict(row)
+
+    db.get_fief.side_effect = get_fief
+    db.debit_fief_resources.side_effect = debit_fief_resources
+    db.create_action_intent.return_value = {"id": 99, "kind": "caravan"}
+    db.realms_are_adjacent.return_value = True
+    db.get_realm.return_value = {"id": 9, "world_id": 1, "tick_index": 0}
+
     engine = Engine(db)
     engine.collect_for_fief = MagicMock(return_value=[])  # type: ignore[method-assign]
-    engine.barn_level = MagicMock(return_value=0)  # type: ignore[method-assign]
+    engine.require_active_fief = MagicMock(side_effect=get_fief)
+    engine.fief_label = MagicMock(side_effect=lambda f: f["name"])
+    engine._world_id_for_realm = MagicMock(return_value=1)
+    engine._require_cross_valley_caught_up = MagicMock()
 
-    engine.accept_trade(1, 5)
-
+    result = engine.declare_caravan(1, 2, B.RES_GRAIN, 10)
+    assert result.intent_id == 99
     assert state[1]["onboard_step"] == 3
     assert state[2]["onboard_step"] == 3
-    assert state[2]["goods"] == 5  # 10 - 5 отдано с лота
-    assert state[2]["grain"] == 40  # 30 + 10 оплата
+    assert state[1]["grain"] == 30
+    assert state[2]["grain"] == 10
 
 
 def test_status_card_puts_bold_quest_after_title():

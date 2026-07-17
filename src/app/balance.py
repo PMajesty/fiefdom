@@ -225,8 +225,9 @@ RUMOR_EVENT_LINE_CHANCE = 0.55
 # За сколько тиков до беды рынок начинает шептать о катастрофе.
 RUMOR_CATASTROPHE_WARN_TICKS = 4
 
-# --- Торговля ---
-TRADE_EXPIRE_TICKS = 4
+# --- Караваны (передача на доверии) ---
+# Крупный обоз виден долинам континента при выезде и при прибытии.
+CARAVAN_PUBLIC_AMOUNT = 30
 # TRADEABLE - флаг ResourceDef.tradeable в domain.resources
 
 # --- События ---

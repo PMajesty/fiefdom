@@ -83,20 +83,11 @@ async def cmd_map(message: Message) -> None:
 
 @router.message(Command("вч_рынок", "vch_market"))
 async def cmd_market(message: Message) -> None:
-    engine = get_engine()
-    try:
-        realm = engine.db.get_realm_by_chat(message.chat.id)
-        if not realm:
-            await answer_html(message, "Долина ещё не основана. /вотчина")
-            return
-        fief = resolve_fief_for_user(engine, message.from_user.id, realm["id"])
-        fid = fief["id"] if fief else None
-        await reply_game(message, engine.market_text(realm["id"], fid))
-    except ValueError as exc:
-        await answer_html(message, str(exc))
-    except Exception:
-        logger.exception("cmd_market")
-        await answer_html(message, "Не удалось показать рынок.")
+    await answer_html(
+        message,
+        "Рынок закрыт. Зерно и товары между усадьбами - обозом в личке "
+        "(слово \"караван\" или кнопка Караван).",
+    )
 
 
 @router.message(Command("вч_сводка", "vch_digest"))
@@ -115,7 +106,7 @@ async def cmd_digest(message: Message, bot: Bot) -> None:
             text = (
                 f"Сводка публикуется автоматически после тиков "
                 f"в {format_tick_slots(tick_slots())} ({tz}).\n"
-                "Откройте усадьбу в личке - там задания, рынок и новости дня."
+                "Откройте усадьбу в личке - там задания, караваны и новости дня."
             )
         if is_admin(message.from_user.id if message.from_user else None):
             text += f"\nАдмин: <code>/вч_tick {realm['id']}</code>."

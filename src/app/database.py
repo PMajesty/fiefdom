@@ -1966,6 +1966,36 @@ class Database:
             (int(fief_id),),
         )
 
+    def list_caravan_intents(
+        self,
+        world_id: int,
+        tick_index: int,
+        *,
+        statuses: tuple[str, ...] = ("open", "locked"),
+    ) -> list[dict]:
+        if not statuses:
+            return []
+        placeholders = ", ".join(["%s"] * len(statuses))
+        return self._fetchall(
+            f"""
+            SELECT * FROM action_intents
+            WHERE world_id=%s AND tick_index=%s AND kind='caravan'
+              AND status IN ({placeholders})
+            ORDER BY id;
+            """,
+            (int(world_id), int(tick_index), *statuses),
+        )
+
+    def list_open_caravan_intents_for_fief(self, fief_id: int) -> list[dict]:
+        return self._fetchall(
+            """
+            SELECT * FROM action_intents
+            WHERE fief_id=%s AND kind='caravan' AND status='open'
+            ORDER BY id;
+            """,
+            (int(fief_id),),
+        )
+
     def lock_action_intents(
         self, world_id: int, tick_index: int, *, kind: str = "raid"
     ) -> int:

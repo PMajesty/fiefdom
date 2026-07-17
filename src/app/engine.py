@@ -12,7 +12,7 @@ from app import balance as B
 from app.config import TICK_HOUR, TICK_MINUTE, TIMEZONE, tick_slots
 from app.database import Database
 from app.domain import absence as absence_mod
-from app.domain.digest import format_decree, format_digest, format_lots_count
+from app.domain.digest import format_decree, format_digest
 from app.domain.economy import (
     TileView,
     adjacent_claimable,
@@ -61,6 +61,14 @@ from app.domain.ticks import tick_active
 from app.balance import best_rectangle
 from app.domain.map_gen import GenTile, append_strip, coord_label, generate_map
 from app.domain.portals import pick_portal_insertion
+from app.domain.caravans import (
+    DeclareCaravanResult,
+    ResolveCaravanReport,
+    caravan_is_public,
+    format_caravan_bounce_public,
+    format_caravan_declare_public,
+    format_caravan_land_public,
+)
 from app.domain.raids import (
     DeclareRaidResult,
     RaidActionResult,
@@ -103,7 +111,6 @@ from app.domain.resources import (
     send_forbidden_message,
     stash_amount,
     stash_from_row,
-    trade_forbidden_message,
     tradeable_keys,
 )
 from app.resource_schema import raid_stolen_fields
@@ -2216,187 +2223,15 @@ class Engine:
                 )
             )
 
-    # ---------- trade ----------
-    def post_trade(
-        self,
-        fief_id: int,
-        give_res: str,
-        give_amt: int,
-        want_res: str,
-        want_amt: int,
-        target_fief_id: int | None = None,
-    ) -> str:
-        tradeable = tradeable_keys()
-        if give_res not in tradeable or want_res not in tradeable:
-            raise ValueError(trade_forbidden_message())
-        if give_res == want_res:
-            raise ValueError("Разные ресурсы")
-        if give_amt <= 0 or want_amt <= 0:
-            raise ValueError("Количество должно быть > 0")
-        fief = self.db.get_fief(fief_id)
-        self._require_action_window(int(fief["realm_id"]))
-        if target_fief_id is not None:
-            target = self.db.get_fief(target_fief_id)
-            if not target:
-                raise ValueError("Усадьба не найдена")
-            self._require_cross_valley_caught_up(
-                int(fief["realm_id"]), int(target["realm_id"])
-            )
-        self.collect_for_fief(fief_id)
-        fief = self.db.get_fief(fief_id)
-        if stash_amount(fief, give_res) < give_amt:
-            raise ValueError("Недостаточно ресурса для предложения")
-        with self.db.transaction():
-            fief = self.db.get_fief(fief_id)
-            if target_fief_id is not None:
-                target = self.db.get_fief(target_fief_id)
-                if not target:
-                    raise ValueError("Усадьба не найдена")
-                self._require_cross_valley_caught_up(
-                    int(fief["realm_id"]), int(target["realm_id"])
-                )
-            if stash_amount(fief, give_res) < give_amt:
-                raise ValueError("Недостаточно ресурса для предложения")
-            # Ресурс остаётся на усадьбе (доступен набегам) до момента сделки.
-            realm = self.db.get_realm(fief["realm_id"]) or {}
-            tick_index = int(realm.get("tick_index") or 0)
-            offer = self.db.create_trade(
-                realm_id=fief["realm_id"],
-                offerer_fief_id=fief_id,
-                target_fief_id=target_fief_id,
-                give_res=give_res,
-                give_amt=give_amt,
-                want_res=want_res,
-                want_amt=want_amt,
-                expires_tick=tick_index + B.TRADE_EXPIRE_TICKS,
-            )
-        return (
-            f"Лот #{offer['id']}: отдаю {give_amt} "
-            f"{resource_name_ru(give_res)} за {want_amt} "
-            f"{resource_name_ru(want_res)}."
-        )
-
-    def accept_trade(self, fief_id: int, trade_id: int) -> str:
-        trade = self.db.get_trade(trade_id)
-        if not trade:
-            raise ValueError("Лот недоступен")
-        if trade["status"] != "open":
-            return "Лот уже закрыт или недоступен."
-        if trade["offerer_fief_id"] == fief_id:
-            raise ValueError("Свой лот")
-        if trade.get("target_fief_id") and trade["target_fief_id"] != fief_id:
-            raise ValueError("Лот адресован другому")
-        buyer = self.db.get_fief(fief_id)
-        if not self.db.realms_are_adjacent(
-            int(buyer["realm_id"]), int(trade["realm_id"])
-        ):
-            raise ValueError("Другой континент")
-        self._require_cross_valley_caught_up(
-            int(buyer["realm_id"]), int(trade["realm_id"])
-        )
-        self.collect_for_fief(fief_id)
-        buyer = self.db.get_fief(fief_id)
-        want = trade["want_res"]
-        want_amt = trade["want_amt"]
-        if stash_amount(buyer, want) < want_amt:
-            raise ValueError("Недостаточно ресурса для оплаты")
-
-        realm = self.db.get_realm(buyer["realm_id"])
-        tick_index = int(realm.get("tick_index") or 0)
-        # Модификаторы до write-транзакции (catastrophe snapshot без commit внутри tx).
-        trade_mods = self.realm_modifiers(realm)
-        bonus = trade_mods.trade_bonus_frac()
-        wedding_gift = trade_mods.trade_gift_grain()
-
-        with self.db.transaction():
-            live = self.db.get_trade(trade_id)
-            if not live or live["status"] != "open":
-                return "Лот уже закрыт или недоступен."
-            buyer = self.db.get_fief(fief_id)
-            self._require_cross_valley_caught_up(
-                int(buyer["realm_id"]), int(live["realm_id"])
-            )
-            expires_tick = live.get("expires_tick")
-            if expires_tick is None or int(expires_tick) <= tick_index:
-                self._refund_trade(live)
-                expired = True
-            else:
-                expired = False
-                claimed = self.db.claim_open_trade(trade_id)
-                if not claimed:
-                    return "Лот уже закрыт или недоступен."
-                trade = claimed
-
-                give_amt = int(trade["give_amt"])
-                give_res = trade["give_res"]
-                seller = self.db.get_fief(trade["offerer_fief_id"])
-                if not seller:
-                    raise ValueError("Усадьба продавца не найдена")
-                if stash_amount(seller, give_res) < give_amt:
-                    raise ValueError("У продавца недостаточно ресурса для сделки")
-
-                buyer = self.db.get_fief(fief_id)
-                if stash_amount(buyer, want) < want_amt:
-                    raise ValueError("Недостаточно ресурса для оплаты")
-
-                self.db.update_fief(
-                    int(seller["id"]),
-                    **{give_res: stash_amount(seller, give_res) - give_amt},
-                )
-                self.db.update_fief(
-                    fief_id, **{want: stash_amount(buyer, want) - want_amt}
-                )
-
-                pay_bonus = int(want_amt * bonus)
-                recv_bonus = int(give_amt * bonus)
-
-                seller = self.db.get_fief(trade["offerer_fief_id"])
-                self.db.update_fief(
-                    seller["id"],
-                    **{
-                        want: stash_amount(seller, want) + want_amt + pay_bonus,
-                    },
-                )
-
-                buyer = self.db.get_fief(fief_id)
-                cap = B.stash_cap(self.barn_level(fief_id))
-                add = capped_receive_amount(
-                    stash_amount(buyer, give_res), give_amt + recv_bonus, cap
-                )
-                self.db.update_fief(
-                    fief_id,
-                    **{give_res: stash_amount(buyer, give_res) + add},
-                )
-
-                if wedding_gift:
-                    for fid in (fief_id, trade["offerer_fief_id"]):
-                        f = self.db.get_fief(fid)
-                        self.db.update_fief(
-                            fid, grain=stash_amount(f, B.RES_GRAIN) + wedding_gift
-                        )
-        if expired:
-            raise ValueError("Лот истёк")
-        return f"Сделка #{trade_id} закрыта."
-
-    def cancel_trade(self, fief_id: int, trade_id: int) -> str:
-        """Снять свой лот. Ресурс не возвращаем - при выставлении его не снимали."""
-        trade = self.db.get_trade(trade_id)
-        if not trade or trade["offerer_fief_id"] != fief_id or trade["status"] != "open":
-            raise ValueError("Нельзя отменить")
-        with self.db.transaction():
-            claimed = self.db.claim_cancel_open_trade(int(trade_id))
-            if not claimed:
-                raise ValueError("Лот уже закрыт или недоступен")
-        return f"Лот #{trade_id} снят с рынка."
-
-    def send_resources(
+    # ---------- caravans ----------
+    def declare_caravan(
         self,
         from_fief_id: int,
         to_fief_id: int,
         res: str,
         amt: int,
-    ) -> str:
-        """Односторонняя передача tradeable-ресурсов (на доверии, без эскроу)."""
+    ) -> DeclareCaravanResult:
+        """Обоз: списать сейчас, доставить в ночном resolve тика."""
         if res not in tradeable_keys():
             raise ValueError(send_forbidden_message())
         if amt <= 0:
@@ -2421,60 +2256,256 @@ class Engine:
             raise ValueError("Усадьба недоступна")
 
         self.collect_for_fief(from_fief_id)
-        self.collect_for_fief(to_fief_id)
+        sender = self.db.get_fief(from_fief_id) or sender
+        realm = self.db.get_realm(int(sender["realm_id"])) or {}
+        tick_index = int(realm.get("tick_index") or 0)
+        wid = self._world_id_for_realm(int(sender["realm_id"]))
+        res_name = resource_name_ru(res)
+        receiver_name = self.fief_label(receiver)
+        sender_name = self.fief_label(sender)
+        is_public = caravan_is_public(amt)
 
         with self.db.transaction():
-            sender = self.db.get_fief(from_fief_id)
-            receiver = self.db.get_fief(to_fief_id)
-            if not sender or not receiver:
-                raise ValueError("Усадьба не найдена")
             self._require_cross_valley_caught_up(
                 int(sender["realm_id"]), int(receiver["realm_id"])
             )
-            if stash_amount(sender, res) < amt:
+            debited = self.db.debit_fief_resources(
+                from_fief_id, **{res: int(amt)}
+            )
+            if not debited:
                 raise ValueError("Недостаточно ресурса")
-
-            cap = B.stash_cap(self.barn_level(to_fief_id))
-            held = stash_amount(receiver, res)
-            free = max(0, cap - held)
-            if free < amt:
-                raise ValueError(
-                    f"У получателя не хватает места на складе "
-                    f"(свободно {free}, нужно {amt})"
-                )
-
-            self.db.update_fief(
-                from_fief_id, **{res: stash_amount(sender, res) - amt}
+            intent = self.db.create_action_intent(
+                world_id=wid,
+                tick_index=tick_index,
+                fief_id=from_fief_id,
+                kind="caravan",
+                status="open",
+                payload={
+                    "receiver_id": int(to_fief_id),
+                    "res": str(res),
+                    "amt": int(amt),
+                    "escrowed": True,
+                    "sender_realm_id": int(sender["realm_id"]),
+                    "receiver_realm_id": int(receiver["realm_id"]),
+                    "is_public": is_public,
+                },
             )
-            self.db.update_fief(
-                to_fief_id, **{res: stash_amount(receiver, res) + amt}
-            )
 
-        return (
-            f"Передано {amt} {resource_name_ru(res)} "
-            f"усадьбе {self.fief_label(receiver)}."
+        dm = (
+            f"Обоз ушёл к {receiver_name}: {amt} {res_name} в пути. "
+            f"Доставка после колокола тика. Пока ночь не пришла - можно вернуть."
+        )
+        recv_dm = (
+            f"К вам идёт обоз от {sender_name}: {amt} {res_name}. "
+            f"Прибудет после колокола тика."
+        )
+        public_text = None
+        if is_public:
+            public_text = format_caravan_declare_public(
+                sender_name, receiver_name, amt, res_name
+            )
+        return DeclareCaravanResult(
+            intent_id=int(intent["id"]),
+            receiver_fief_id=int(to_fief_id),
+            receiver_name=receiver_name,
+            res=str(res),
+            amt=int(amt),
+            is_public=is_public,
+            dm_text=dm,
+            receiver_dm_text=recv_dm,
+            public_declare_text=public_text,
         )
 
-    def _refund_trade(self, trade: dict) -> None:
-        """Снять истёкший лот. Ресурс не трогаем: он не уходит в эскроу при выставлении."""
+    def cancel_caravan_intent(self, fief_id: int, intent_id: int) -> str:
+        fief = self.require_active_fief(fief_id)
+        intent = self.db._fetchone(
+            "SELECT * FROM action_intents WHERE id=%s;",
+            (int(intent_id),),
+        )
+        if not intent or intent.get("kind") != "caravan":
+            raise ValueError("Обоз не найден")
+        if int(intent["fief_id"]) != int(fief_id):
+            raise ValueError("Это не ваш обоз")
+        if intent.get("status") != "open":
+            raise ValueError("После колокола обоз уже не вернуть")
+        payload = dict(intent.get("payload") or {})
+        res = str(payload.get("res") or "")
+        amt = int(payload.get("amt") or 0)
+        if res not in tradeable_keys() or amt <= 0:
+            raise ValueError("Обоз повреждён")
         with self.db.transaction():
-            self.db.claim_cancel_open_trade(int(trade["id"]))
+            claimed = self.db.cancel_action_intent(int(intent_id))
+            if not claimed:
+                raise ValueError("После колокола обоз уже не вернуть")
+            self.db.credit_fief_resources(fief_id, **{res: amt})
+        return (
+            f"Обоз возвращён: {amt} {resource_name_ru(res)} снова у "
+            f"{self.fief_label(fief)}."
+        )
 
-    def market_text(self, realm_id: int, fief_id: int | None = None) -> str:
-        offers = self.db.list_open_trades(realm_id, fief_id)
-        if not offers:
-            return "🛒 Рынок пуст."
-        lines = ["🛒 Рынок:"]
-        for o in offers:
-            seller = self.db.get_fief(int(o["offerer_fief_id"]))
-            seller_label = self.fief_label(seller) if seller else "Усадьба"
-            tgt = ", только вам" if o.get("target_fief_id") else ""
-            lines.append(
-                f"#{o['id']} ({seller_label}): отдаёт {o['give_amt']} "
-                f"{resource_name_ru(o['give_res'])} за {o['want_amt']} "
-                f"{resource_name_ru(o['want_res'])}{tgt}"
+    def resolve_pending_caravans(
+        self, world_id: int, tick_index: int
+    ) -> ResolveCaravanReport:
+        """Ночной батч обозов. После набегов; только из close-play / resume."""
+        report = ResolveCaravanReport()
+        if self.world_tick_incomplete(int(world_id)):
+            return report
+        intents = self.db.list_caravan_intents(
+            int(world_id), int(tick_index), statuses=("open", "locked")
+        )
+        for intent in intents:
+            claimed = self.db.claim_resolve_action_intent(int(intent["id"]))
+            if not claimed:
+                continue
+            report.resolved_count += 1
+            payload = dict(claimed.get("payload") or {})
+            sender_id = int(claimed["fief_id"])
+            receiver_id = int(payload.get("receiver_id") or 0)
+            res = str(payload.get("res") or "")
+            amt = int(payload.get("amt") or 0)
+            is_public = bool(payload.get("is_public")) or caravan_is_public(amt)
+            if res not in tradeable_keys() or amt <= 0 or receiver_id <= 0:
+                if res in tradeable_keys() and amt > 0:
+                    self.db.credit_fief_resources(sender_id, **{res: amt})
+                continue
+
+            sender = self.db.get_fief(sender_id)
+            receiver = self.db.get_fief(receiver_id)
+            sender_name = self.fief_label(sender) if sender else "Усадьба"
+            receiver_name = self.fief_label(receiver) if receiver else "Усадьба"
+            res_name = resource_name_ru(res)
+            sender_realm = int(
+                payload.get("sender_realm_id")
+                or (sender or {}).get("realm_id")
+                or 0
             )
-        return "\n".join(lines)
+            receiver_realm = int(
+                payload.get("receiver_realm_id")
+                or (receiver or {}).get("realm_id")
+                or 0
+            )
+
+            landed = False
+            if (
+                receiver
+                and not receiver.get("frozen")
+                and sender
+                and not sender.get("frozen")
+            ):
+                cap = B.stash_cap(self.barn_level(receiver_id))
+                held = stash_amount(receiver, res)
+                free = max(0, cap - held)
+                if free >= amt:
+                    # Груз обоза целиком; ярмарочный бонус - сверх, по месту на складе.
+                    self.db.credit_fief_resources(receiver_id, **{res: amt})
+                    mods = self.realm_modifiers(
+                        self.db.get_realm(receiver_realm) if receiver_realm else None
+                    )
+                    bonus_amt = int(amt * mods.trade_bonus_frac())
+                    if bonus_amt > 0:
+                        live = self.db.get_fief(receiver_id) or receiver
+                        add_bonus = capped_receive_amount(
+                            stash_amount(live, res), bonus_amt, cap
+                        )
+                        if add_bonus:
+                            self.db.credit_fief_resources(
+                                receiver_id, **{res: add_bonus}
+                            )
+                    wedding_gift = mods.trade_gift_grain()
+                    if wedding_gift:
+                        for fid in (sender_id, receiver_id):
+                            self.db.credit_fief_resources(
+                                fid, **{B.RES_GRAIN: int(wedding_gift)}
+                            )
+                    landed = True
+                else:
+                    self.db.credit_fief_resources(sender_id, **{res: amt})
+            else:
+                self.db.credit_fief_resources(sender_id, **{res: amt})
+
+            if landed:
+                if sender and sender.get("user_id"):
+                    report.notices.append(
+                        RaidNightPartyNotice(
+                            user_id=int(sender["user_id"]),
+                            realm_id=None,
+                            text=(
+                                f"Ваш обоз дошёл до {receiver_name}: "
+                                f"{amt} {res_name}."
+                            ),
+                            kind="dm",
+                        )
+                    )
+                if receiver and receiver.get("user_id"):
+                    report.notices.append(
+                        RaidNightPartyNotice(
+                            user_id=int(receiver["user_id"]),
+                            realm_id=None,
+                            text=(
+                                f"К вам прибыл обоз от {sender_name}: "
+                                f"{amt} {res_name}."
+                            ),
+                            kind="dm",
+                        )
+                    )
+                if is_public:
+                    public = format_caravan_land_public(
+                        sender_name, receiver_name, amt, res_name
+                    )
+                    for rid in {sender_realm, receiver_realm}:
+                        if rid:
+                            report.notices.append(
+                                RaidNightPartyNotice(
+                                    user_id=None,
+                                    realm_id=int(rid),
+                                    text=public,
+                                    kind="public",
+                                )
+                            )
+                            report.digest_lines.append((int(rid), public))
+            else:
+                if sender and sender.get("user_id"):
+                    report.notices.append(
+                        RaidNightPartyNotice(
+                            user_id=int(sender["user_id"]),
+                            realm_id=None,
+                            text=(
+                                f"Обоз к {receiver_name} вернулся: "
+                                f"{amt} {res_name} снова у вас "
+                                f"(нет места или двор недоступен)."
+                            ),
+                            kind="dm",
+                        )
+                    )
+                if receiver and receiver.get("user_id"):
+                    report.notices.append(
+                        RaidNightPartyNotice(
+                            user_id=int(receiver["user_id"]),
+                            realm_id=None,
+                            text=(
+                                f"Обоз от {sender_name} не приняли "
+                                f"({amt} {res_name}) - склада не хватило "
+                                f"или двор недоступен."
+                            ),
+                            kind="dm",
+                        )
+                    )
+                if is_public:
+                    public = format_caravan_bounce_public(
+                        sender_name, receiver_name, amt, res_name
+                    )
+                    for rid in {sender_realm, receiver_realm}:
+                        if rid:
+                            report.notices.append(
+                                RaidNightPartyNotice(
+                                    user_id=None,
+                                    realm_id=int(rid),
+                                    text=public,
+                                    kind="public",
+                                )
+                            )
+                            report.digest_lines.append((int(rid), public))
+        return report
 
     # ---------- pacts ----------
     def create_pact(self, fief_id: int, name: str) -> str:
@@ -2787,12 +2818,18 @@ class Engine:
     def _close_play_day_raids(
         self, world_id: int, tick_index: int, world: dict
     ) -> ResolveNightReport:
-        """Force-lock + ночной resolve для закрываемого play-дня."""
+        """Force-lock набегов + ночной resolve (набеги, затем обозы)."""
         if self.world_tick_incomplete(int(world_id)):
             return ResolveNightReport()
         self._enter_tick_resolve(int(world_id), int(tick_index), world)
         self.lock_open_raid_intents(int(world_id))
         report = self.resolve_pending_raids(int(world_id), int(tick_index))
+        caravan_report = self.resolve_pending_caravans(
+            int(world_id), int(tick_index)
+        )
+        report.notices.extend(caravan_report.notices)
+        for realm_id, line in caravan_report.digest_lines:
+            self._append_pending_raid_line(int(realm_id), line)
         self.db.update_world(int(world_id), resolve_tick_index=None)
         if world is not None:
             world["resolve_tick_index"] = None
@@ -3020,8 +3057,6 @@ class Engine:
         tick_index = int(realm.get("tick_index") or 0)
         day = int(realm.get("day_number") or 1)
         self.apply_absence(realm_id)
-        for t in self.db.list_expired_open_trades(realm_id, tick_index):
-            self._refund_trade(t)
         entity_digest_lines, entity_refs = self._resolve_tile_entities(
             realm_id, tick_index
         )
@@ -3089,16 +3124,6 @@ class Engine:
         raid_lines = list(realm.get("pending_raid_lines") or [])
         self.db.update_realm(realm_id, pending_raid_lines=[])
 
-        offers = self.db.list_open_trades(realm_id)
-        market_line = None
-        if offers:
-            best = max(offers, key=lambda o: o["give_amt"] + o["want_amt"])
-            market_line = (
-                f"{format_lots_count(len(offers))}. Лучший: отдаёт "
-                f"{best['give_amt']} {resource_name_ru(best['give_res'])} за "
-                f"{best['want_amt']} {resource_name_ru(best['want_res'])}"
-            )
-
         tz = ZoneInfo(realm.get("timezone") or TIMEZONE)
         local_now = datetime.now(tz)
         local_date = local_now.date()
@@ -3115,7 +3140,6 @@ class Engine:
             day=day,
             night_lines=raid_lines,
             event_line=event_line,
-            market_line=market_line,
             feud_lines=feud_lines,
             sunday_extra=sunday_extra,
             rumor_lines=rumor_bundle.local,

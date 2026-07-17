@@ -49,7 +49,7 @@ def test_list_raid_targets_includes_far_valley():
     assert far_item["via_portal"] is True
 
 
-def test_send_resources_allows_far_same_world():
+def test_declare_caravan_allows_far_same_world():
     db = MagicMock()
     db.transaction = lambda: nullcontext()
     sender = {
@@ -70,26 +70,41 @@ def test_send_resources_allows_far_same_world():
         "name": "B",
         "user_id": 200,
     }
-    db.get_fief.side_effect = lambda fid: {1: dict(sender), 2: dict(receiver)}.get(fid)
+    fiefs = {1: sender, 2: receiver}
+
+    def get_fief(fid):
+        row = fiefs.get(int(fid))
+        return dict(row) if row is not None else None
+
+    def debit_fief_resources(fid, amounts=None, **kwargs):
+        row = fiefs[int(fid)]
+        merged = dict(amounts or {})
+        merged.update(kwargs)
+        for col, amt in merged.items():
+            if int(row.get(col) or 0) < int(amt):
+                return None
+            row[col] = int(row[col]) - int(amt)
+        return dict(row)
+
+    db.get_fief.side_effect = get_fief
+    db.debit_fief_resources.side_effect = debit_fief_resources
+    db.create_action_intent.return_value = {"id": 3, "kind": "caravan"}
     db.realms_are_adjacent.return_value = True
-
-    def update_fief(fid, **fields):
-        target = sender if fid == 1 else receiver
-        target.update(fields)
-
-    db.update_fief.side_effect = update_fief
-    db.get_realm.return_value = {"id": 1, "world_id": 9}
+    db.get_realm.return_value = {"id": 1, "world_id": 9, "tick_index": 2}
     engine = Engine(db)
-    engine.require_active_fief = MagicMock(return_value=sender)
+    engine.require_active_fief = MagicMock(side_effect=get_fief)
     engine.collect_for_fief = MagicMock()
     engine.barn_level = MagicMock(return_value=0)
     engine.fief_label = MagicMock(side_effect=lambda f: f["name"])
-    engine.world_tick_incomplete = MagicMock(return_value=False)
+    engine._world_id_for_realm = MagicMock(return_value=9)
+    engine._require_cross_valley_caught_up = MagicMock()
 
-    msg = engine.send_resources(1, 2, B.RES_GRAIN, 10)
+    result = engine.declare_caravan(1, 2, B.RES_GRAIN, 10)
     assert sender["grain"] == 40
-    assert receiver["grain"] == 15
-    assert "B" in msg
+    assert receiver["grain"] == 5
+    assert result.receiver_name == "B"
+    assert "B" in result.dm_text
+    db.create_action_intent.assert_called_once()
 
 
 def test_invite_to_pact_allows_other_valley_same_world():
@@ -123,46 +138,3 @@ def test_invite_to_pact_allows_other_valley_same_world():
     assert invite["id"] == 9
     db.create_pact_invite.assert_called_once()
 
-
-def test_accept_trade_allows_other_valley_same_world():
-    db = MagicMock()
-    db.transaction = lambda: nullcontext()
-    trade = {
-        "id": 7,
-        "status": "open",
-        "realm_id": 1,
-        "offerer_fief_id": 1,
-        "target_fief_id": None,
-        "give_res": B.RES_GRAIN,
-        "give_amt": 5,
-        "want_res": B.RES_GOODS,
-        "want_amt": 3,
-        "expires_tick": 20,
-    }
-    buyer = {
-        "id": 2,
-        "realm_id": 3,
-        "grain": 10,
-        "goods": 20,
-        "name": "Buyer",
-    }
-    seller = {
-        "id": 1,
-        "realm_id": 1,
-        "grain": 5,
-        "goods": 0,
-        "name": "Seller",
-    }
-    db.get_trade.return_value = trade
-    db.get_fief.side_effect = lambda fid: {1: dict(seller), 2: dict(buyer)}.get(fid)
-    db.realms_are_adjacent.return_value = True
-    db.get_realm.return_value = {"id": 3, "tick_index": 5, "active_minor_key": None}
-    db.claim_open_trade.return_value = dict(trade)
-
-    engine = Engine(db)
-    engine.collect_for_fief = MagicMock()
-    engine.barn_level = MagicMock(return_value=0)
-    engine.world_tick_incomplete = MagicMock(return_value=False)
-
-    msg = engine.accept_trade(2, 7)
-    assert msg.startswith("Сделка")

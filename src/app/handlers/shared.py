@@ -156,42 +156,6 @@ def format_raid_announce(public_line: str) -> str:
     return f"⚔️ {escape_html(public_line)}"
 
 
-def format_trade_post_announce(
-    fief_name: str,
-    give_amt: int,
-    give_res: str,
-    want_amt: int,
-    want_res: str,
-) -> str:
-    from app.domain.resources import resource_name_ru
-
-    give = resource_name_ru(give_res)
-    want = resource_name_ru(want_res)
-    return (
-        f"🛒 {escape_html(fief_name)} выставляет лот: "
-        f"отдаёт {int(give_amt)} {give} за {int(want_amt)} {want}"
-    )
-
-
-def format_trade_accept_announce(
-    buyer_name: str,
-    seller_name: str,
-    give_amt: int,
-    give_res: str,
-    want_amt: int,
-    want_res: str,
-) -> str:
-    from app.domain.resources import resource_name_ru
-
-    give = resource_name_ru(give_res)
-    want = resource_name_ru(want_res)
-    return (
-        f"🛒 Сделка: {escape_html(buyer_name)} забрала "
-        f"{int(give_amt)} {give} у {escape_html(seller_name)} "
-        f"за {int(want_amt)} {want}"
-    )
-
-
 def format_send_announce(
     sender_name: str,
     receiver_name: str,
@@ -202,8 +166,8 @@ def format_send_announce(
 
     res_name = resource_name_ru(res)
     return (
-        f"📦 {escape_html(sender_name)} передала "
-        f"{int(amt)} {res_name} усадьбе {escape_html(receiver_name)}"
+        f"📦 {escape_html(sender_name)} отправила обоз: "
+        f"{int(amt)} {res_name} → {escape_html(receiver_name)}"
     )
 
 
@@ -311,6 +275,29 @@ async def announce_continent(
         )
 
 
+async def post_continent_public(
+    bot, realm_id: int, text: str, *, reply_markup=None
+) -> None:
+    """Крупный обоз: в групповые чаты всех долин континента."""
+    if not text:
+        return
+    seen: set[int] = set()
+    try:
+        engine = get_engine()
+        targets = [int(realm_id)]
+        for nb in engine.db.list_adjacent_realms(int(realm_id)):
+            targets.append(int(nb["id"]))
+        for rid in targets:
+            if rid in seen:
+                continue
+            seen.add(rid)
+            await post_realm_public(bot, rid, text, reply_markup=reply_markup)
+    except Exception:
+        logger.warning(
+            "post_continent_public failed realm_id=%s", realm_id, exc_info=True
+        )
+
+
 def map_realms_kb(
     fief_id: int,
     realms: list[dict],
@@ -400,11 +387,11 @@ def choose_primary_cta(
     if actions > 0 and onboard_step == 2:
         if can_claim:
             return "Квест: занять землю", f"clm:{fid}"
-        return "Рынок", f"mkt:{fid}"
+        return "Караван", f"snd:{fid}"
     if actions > 0 and onboard_step == 3:
         if can_build:
             return "Квест: строить", f"bld:{fid}"
-        return "Рынок", f"mkt:{fid}"
+        return "Караван", f"snd:{fid}"
     if actions > 0:
         if tile_count < 3:
             return "Занять землю", f"clm:{fid}"
@@ -413,7 +400,7 @@ def choose_primary_cta(
         if unlocked and might >= 5:
             return "Набег", f"rad:{fid}"
         return "Занять землю", f"clm:{fid}"
-    return "Рынок", f"mkt:{fid}"
+    return "Караван", f"snd:{fid}"
 
 
 def home_kb(
@@ -529,7 +516,7 @@ def valley_hub_kb(
     raid_pact_open: bool = True,
     lock_hint: str | None = None,
 ) -> InlineKeyboardMarkup:
-    """Хабы Долина: бесплатные связи (рынок, дар, пакт, слухи)."""
+    """Хабы Долина: бесплатные связи (караван, пакт, слухи)."""
     fid = int(fief_id)
     _raid, pact_btn = _raid_pact_hub_buttons(
         fid,
@@ -541,11 +528,12 @@ def valley_hub_kb(
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="Рынок (обмен)", callback_data=f"mkt:{fid}"),
-                InlineKeyboardButton(text="Передать (дар)", callback_data=f"snd:{fid}"),
+                InlineKeyboardButton(
+                    text="Караван (передача)", callback_data=f"snd:{fid}"
+                ),
+                pact_btn,
             ],
             [
-                pact_btn,
                 InlineKeyboardButton(text="Слухи (сводка)", callback_data=f"rum:{fid}"),
             ],
             [InlineKeyboardButton(text="< Меню", callback_data=f"home:{fid}")],

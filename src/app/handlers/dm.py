@@ -14,16 +14,14 @@ from app.domain.map_gen import coord_label
 from app.domain.economy import adjacent_claimable
 from app.engine import raid_pact_lock_message
 from app.handlers.shared import (
-    announce_continent,
     fief_home_kb,
     fief_raid_pact_state,
     format_pact_create_announce,
-    format_send_announce,
-    format_trade_post_announce,
     get_engine,
     map_realms_kb,
     map_view_kb,
     parse_start_payload,
+    post_continent_public,
     post_realm_public,
     realm_upgrade_cost_mult,
     reply_game,
@@ -46,8 +44,13 @@ _MENU_WORDS = {
     "status": "status",
     "карта": "map",
     "map": "map",
-    "рынок": "market",
-    "market": "market",
+    "рынок": "send",
+    "market": "send",
+    "сделка": "send",
+    "trade": "send",
+    "караван": "send",
+    "обоз": "send",
+    "caravan": "send",
     "земля": "claim",
     "занять": "claim",
     "расширить": "claim",
@@ -60,8 +63,6 @@ _MENU_WORDS = {
     "patrol": "patrol",
     "набег": "raid",
     "raid": "raid",
-    "сделка": "trade",
-    "trade": "trade",
     "передать": "send",
     "отдать": "send",
     "дар": "send",
@@ -309,6 +310,19 @@ def raid_cancel_intent_kb(fief_id: int, intent_id: int) -> InlineKeyboardMarkup:
     )
 
 
+def caravan_cancel_intent_kb(fief_id: int, intent_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Вернуть обоз",
+                    callback_data=f"cvx:{int(fief_id)}:{int(intent_id)}",
+                )
+            ]
+        ]
+    )
+
+
 def starter_tiles_kb(
     realm_id: int,
     tiles: list[dict],
@@ -486,42 +500,6 @@ def raid_targets_kb(fief_id: int, others: list[dict], engine=None) -> InlineKeyb
                 InlineKeyboardButton(
                     text=f"{label} · {soft}",
                     callback_data=f"rad:{fief_id}:{o['id']}",
-                )
-            ]
-        )
-    rows.append([InlineKeyboardButton(text="< Меню", callback_data=f"st:{fief_id}")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def market_kb(
-    fief_id: int, offers: list[dict], engine=None
-) -> InlineKeyboardMarkup:
-    rows = [
-        [
-            InlineKeyboardButton(text="Создать лот", callback_data=f"trd:new:{fief_id}"),
-        ]
-    ]
-    for o in offers[:12]:
-        if int(o["offerer_fief_id"]) == int(fief_id):
-            rows.append(
-                [
-                    InlineKeyboardButton(
-                        text=f"Отменить #{o['id']}",
-                        callback_data=f"trd:c:{fief_id}:{o['id']}",
-                    )
-                ]
-            )
-            continue
-        seller_bit = ""
-        if engine is not None:
-            seller = engine.db.get_fief(int(o["offerer_fief_id"]))
-            if seller:
-                seller_bit = f" · {engine.fief_label(seller)}"
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"Принять #{o['id']}{seller_bit}"[:64],
-                    callback_data=f"trd:a:{fief_id}:{o['id']}",
                 )
             ]
         )
@@ -727,8 +705,8 @@ async def dm_text(message: Message) -> None:
     if not key:
         await answer_html(
             message,
-            "Команды: статус, карта, рынок, земля, строить, дозор, набег, "
-            "сделка, передать, пакт, слухи, владения, устав, меню.",
+            "Команды: статус, карта, земля, строить, дозор, набег, "
+            "караван, передать, пакт, слухи, владения, устав, меню.",
         )
         return
 
@@ -780,13 +758,6 @@ async def dm_text(message: Message) -> None:
                 engine.holdings_text(fid),
                 reply_markup=fief_home_kb(engine, fid),
             )
-        elif key == "market":
-            offers = engine.db.list_open_trades(fief["realm_id"], fid)
-            await reply_game(
-                message,
-                engine.market_text(fief["realm_id"], fid),
-                reply_markup=market_kb(fid, offers, engine),
-            )
         elif key == "claim":
             await _offer_claim(message, engine, fief)
         elif key == "build":
@@ -810,13 +781,6 @@ async def dm_text(message: Message) -> None:
             )
         elif key == "raid":
             await _offer_raid(message, engine, fief)
-        elif key == "trade":
-            offers = engine.db.list_open_trades(fief["realm_id"], fid)
-            await reply_game(
-                message,
-                engine.market_text(fief["realm_id"], fid),
-                reply_markup=market_kb(fid, offers, engine),
-            )
         elif key == "send":
             await _offer_send(message, engine, fief)
         elif key == "pact":
@@ -839,9 +803,12 @@ async def _offer_send(message: Message, engine, fief: dict) -> None:
     )
     await reply_game(
         message,
-        "Кому передать зерно или товары?\n"
+        "Куда отправить обоз с зерном или товарами?\n"
         "Напишите id усадьбы, имя или @username.\n"
-        "Силу передать нельзя. Или напишите \"отмена\".",
+        "Обоз идёт до следующего колокола тика; пока в пути - можно вернуть. "
+        f"От {B.CARAVAN_PUBLIC_AMOUNT} и больше долина увидит выезд; "
+        "мелкое - только адресату. Силу везти нельзя.\n"
+        "Или напишите \"отмена\".",
         reply_markup=pending_cancel_kb(fief["id"]),
     )
 
@@ -1011,38 +978,6 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
         )
         return True
 
-    if kind == "trade_create":
-        # формат: зерно 10 товары 5  ИЛИ  grain 10 goods 5
-        parsed = _parse_trade_line(text)
-        if not parsed:
-            await reply_game(
-                message,
-                "Формат: <code>зерно 10 товары 5</code> "
-                "(сначала что отдаёте, потом что хотите взамен).\n"
-                "Или напишите \"отмена\".",
-                reply_markup=pending_cancel_kb(pending["fief_id"]),
-            )
-            return True
-        give_res, give_amt, want_res, want_amt = parsed
-        fief = engine.db.get_fief(pending["fief_id"])
-        msg = engine.post_trade(
-            pending["fief_id"], give_res, give_amt, want_res, want_amt
-        )
-        clear_pending(user_id)
-        await reply_game(
-            message, msg, reply_markup=fief_home_kb(engine, pending["fief_id"])
-        )
-        if fief:
-            engine.ensure_user(message.from_user)
-            await announce_continent(
-                message.bot,
-                fief["realm_id"],
-                format_trade_post_announce(
-                    engine.fief_label(fief), give_amt, give_res, want_amt, want_res
-                ),
-            )
-        return True
-
     if kind == "send_target":
         target = _resolve_fief_ref(engine, pending["realm_id"], text)
         if not target:
@@ -1056,7 +991,7 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
         if int(target["id"]) == int(pending["fief_id"]):
             await answer_html(
                 message,
-                "Нельзя передать себе. Укажите другую усадьбу.\n"
+                "Нельзя слать обоз себе. Укажите другую усадьбу.\n"
                 "Или напишите \"отмена\".",
                 reply_markup=pending_cancel_kb(pending["fief_id"]),
             )
@@ -1073,9 +1008,9 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
         await reply_game(
             message,
             f"Получатель: <b>{engine.fief_label(target)}</b>\n"
-            "Сколько отправить? Формат: <code>зерно 10</code> или "
+            "Сколько положить в обоз? Формат: <code>зерно 10</code> или "
             "<code>товары 5</code>.\n"
-            "Силу передать нельзя. Или напишите \"отмена\".",
+            "Силу везти нельзя. Или напишите \"отмена\".",
             reply_markup=pending_cancel_kb(pending["fief_id"]),
         )
         return True
@@ -1093,30 +1028,34 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
         res, amt = parsed
         sender = engine.db.get_fief(pending["fief_id"])
         receiver = engine.db.get_fief(pending["target_fief_id"])
-        msg = engine.send_resources(
+        result = engine.declare_caravan(
             pending["fief_id"], pending["target_fief_id"], res, amt
         )
         clear_pending(user_id)
         await reply_game(
-            message, msg, reply_markup=fief_home_kb(engine, pending["fief_id"])
+            message,
+            result.dm_text,
+            reply_markup=caravan_cancel_intent_kb(
+                pending["fief_id"], result.intent_id
+            ),
         )
-        # Передачи на доверии не анонсируем в общий чат - только в ЛС.
-        if sender and receiver:
+        if receiver:
             engine.ensure_user(message.from_user)
             try:
                 await message.bot.send_message(
                     int(receiver["user_id"]),
-                    format_send_announce(
-                        engine.fief_label(sender),
-                        engine.fief_label(receiver),
-                        amt,
-                        res,
-                    ),
+                    result.receiver_dm_text,
                 )
             except Exception:
                 logger.warning(
-                    "send DM to receiver %s failed", receiver.get("user_id")
+                    "caravan DM to receiver %s failed", receiver.get("user_id")
                 )
+        if sender and result.is_public and result.public_declare_text:
+            await post_continent_public(
+                message.bot,
+                sender["realm_id"],
+                result.public_declare_text,
+            )
         return True
 
     if kind == "pact_name":
@@ -1182,31 +1121,11 @@ def _tradeable_res_map() -> dict[str, str]:
     return synonym_to_key(tradeable_only=True)
 
 
-def _trade_re() -> re.Pattern[str]:
-    from app.domain.resources import tradeable_synonym_alternatives
-
-    alt = tradeable_synonym_alternatives()
-    return re.compile(
-        rf"^({alt})\s+(\d+)\s+({alt})\s+(\d+)$",
-        re.IGNORECASE,
-    )
-
-
 def _send_re() -> re.Pattern[str]:
     from app.domain.resources import tradeable_synonym_alternatives
 
     alt = tradeable_synonym_alternatives()
     return re.compile(rf"^({alt})\s+(\d+)$", re.IGNORECASE)
-
-
-def _parse_trade_line(text: str) -> tuple[str, int, str, int] | None:
-    m = _trade_re().match(text.strip())
-    if not m:
-        return None
-    res_map = _tradeable_res_map()
-    give_res = res_map[m.group(1).lower()]
-    want_res = res_map[m.group(3).lower()]
-    return give_res, int(m.group(2)), want_res, int(m.group(4))
 
 
 def _parse_send_line(text: str) -> tuple[str, int] | None:
