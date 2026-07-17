@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import html
 import logging
 from typing import Any
@@ -16,6 +17,8 @@ logger = logging.getLogger(__name__)
 TELEGRAM_MESSAGE_LIMIT = 4000
 GUIDE_DOCUMENT_FILENAME = "ustav.txt"
 GUIDE_DOCUMENT_CAPTION = "📜 Краткий устав Вотчины"
+# BOM: без него часть Android-просмотрщиков читает UTF-8 как GBK/другое и ломает кириллицу.
+UTF8_BOM = codecs.BOM_UTF8
 
 
 def escape_html(text: str) -> str:
@@ -139,7 +142,7 @@ async def answer_text_document(
         return
 
     kwargs.pop("parse_mode", None)
-    payload = plain.encode("utf-8")
+    payload = UTF8_BOM + plain.encode("utf-8")
 
     async def _send():
         # Новый буфер на каждую попытку: после RetryAfter старый может быть уже прочитан

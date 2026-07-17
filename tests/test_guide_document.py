@@ -10,6 +10,7 @@ from app.messaging import (
     GUIDE_DOCUMENT_CAPTION,
     GUIDE_DOCUMENT_FILENAME,
     TELEGRAM_MESSAGE_LIMIT,
+    UTF8_BOM,
     reply_guide_document,
 )
 
@@ -23,7 +24,7 @@ def test_game_guide_is_plain_and_long():
 
 
 @pytest.mark.asyncio
-async def test_reply_guide_document_sends_utf8_txt():
+async def test_reply_guide_document_sends_utf8_txt_with_bom():
     message = MagicMock()
     message.answer_document = AsyncMock()
     text = game_guide()
@@ -34,7 +35,9 @@ async def test_reply_guide_document_sends_utf8_txt():
     args, kwargs = message.answer_document.await_args
     document = args[0]
     assert document.filename == GUIDE_DOCUMENT_FILENAME
-    assert document.data == text.encode("utf-8")
+    assert document.data.startswith(UTF8_BOM)
+    assert document.data == UTF8_BOM + text.encode("utf-8")
+    assert document.data.decode("utf-8-sig") == text
     assert kwargs["caption"] == GUIDE_DOCUMENT_CAPTION
     assert kwargs["reply_markup"] == "kb"
     assert "parse_mode" not in kwargs
