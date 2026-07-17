@@ -396,8 +396,8 @@ def test_world_tick_equal_clock_and_resume_after_partial_failure():
     assert calls.count(2) == 2
 
 
-def test_calendar_day_bumps_once_across_same_local_date_slots():
-    """4 слота одного локального дня: day_number +1 один раз, tick_index +4."""
+def test_game_day_bumps_once_per_tick_slot():
+    """1 тик = 1 игровой день: 4 слота → day_number +4 и tick_index +4."""
     engine, world, _r1 = _ready_clock_world(
         tick_index=4,
         day_number=10,
@@ -414,32 +414,12 @@ def test_calendar_day_bumps_once_across_same_local_date_slots():
             engine.run_world_tick(1, tick_slot=slot)
 
     assert world["tick_index"] == 8
-    assert world["day_number"] == 11
+    assert world["day_number"] == 14
     assert world["last_tick_local_date"] == date(2026, 7, 17)
     assert world["last_tick_slot"] == 3
 
 
-def test_calendar_day_bumps_on_new_local_date():
-    engine, world, _r1 = _ready_clock_world(
-        tick_index=8,
-        day_number=11,
-        last_tick_local_date=date(2026, 7, 17),
-        last_tick_slot=3,
-        pending_minor_key="",
-    )
-    frozen = _freeze_msk(2026, 7, 18, hour=10)
-    with (
-        patch("app.engine.datetime", frozen),
-        patch("app.engine.roll_minor_event", return_value=None),
-    ):
-        engine.run_world_tick(1, tick_slot=0)
-
-    assert world["tick_index"] == 9
-    assert world["day_number"] == 12
-    assert world["last_tick_local_date"] == date(2026, 7, 18)
-
-
-def test_calendar_day_unchanged_on_resume_incomplete():
+def test_game_day_unchanged_on_resume_incomplete():
     db = MagicMock()
     db.transaction.return_value = nullcontext()
     r1 = _realm(1, last_economy_tick=0, tick_index=0, day_number=10)
@@ -504,7 +484,7 @@ def test_calendar_day_unchanged_on_resume_incomplete():
     assert world["day_number"] == 11
 
 
-def test_admin_tick_without_slot_does_not_bump_day_number():
+def test_admin_tick_without_slot_bumps_game_day_not_schedule_markers():
     engine, world, _r1 = _ready_clock_world(
         tick_index=5,
         day_number=10,
@@ -520,12 +500,12 @@ def test_admin_tick_without_slot_does_not_bump_day_number():
         engine.run_world_tick(1, tick_slot=None)
 
     assert world["tick_index"] == 6
-    assert world["day_number"] == 10
+    assert world["day_number"] == 11
     assert world["last_tick_local_date"] == date(2026, 7, 16)
     assert world["last_tick_slot"] == 2
 
 
-def test_empty_world_tick_does_not_bump_calendar_day():
+def test_empty_world_tick_does_not_bump_game_day():
     db = MagicMock()
     db.transaction.return_value = nullcontext()
     world = _world(tick_index=3, day_number=7, last_tick_local_date=date(2026, 7, 16))

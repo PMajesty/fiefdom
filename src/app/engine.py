@@ -1937,7 +1937,7 @@ class Engine:
 
         Часы двигаются один раз; экономика каждой долины идемпотентна по
         last_economy_tick. При обрыве следующий вызов догоняет отстающие долины
-        без повторного сдвига tick_index и календарного дня.
+        без повторного сдвига tick_index и day_number.
         """
         world = self.db.get_world(world_id) if world_id else self.db.get_or_create_world()
         if not world:
@@ -1999,7 +1999,8 @@ class Engine:
             tz = ZoneInfo(world.get("timezone") or TIMEZONE)
             local_now = datetime.now(tz)
             local_date = local_now.date()
-            day = int(world.get("day_number") or 1)
+            # Игровой день = тик: 4 слота календарных суток = 4 игровых дня.
+            day = int(world.get("day_number") or 1) + 1
             world_fields: dict[str, Any] = {
                 "tick_index": new_tick,
                 "day_number": day,
@@ -2010,15 +2011,10 @@ class Engine:
                 **TickPipeline.economy_fields(),
             }
             # Плановые слоты двигает только scheduler (когда передан tick_slot).
-            # Админский тик без слота: tick_index двигаем, календарный день и слоты - нет.
+            # Админский тик без слота: tick_index/day двигаем, маркеры расписания - нет.
             if tick_slot is not None:
                 slots = tick_slots()
                 tick_slot = max(0, min(int(tick_slot), max(0, len(slots) - 1)))
-                prev_local = _as_date(world.get("last_tick_local_date"))
-                # Календарный день: +1 только когда курсор last_tick_local_date
-                # переходит на новую локальную дату (не на каждый слот и не при NULL).
-                if prev_local is not None and local_date > prev_local:
-                    world_fields["day_number"] = day + 1
                 world_fields["last_tick_local_date"] = local_date
                 world_fields["last_tick_slot"] = tick_slot
             # Часы мира + зеркала долин - один COMMIT.
