@@ -140,6 +140,82 @@ async def test_cb_rumors_shows_text_and_home():
 
 
 @pytest.mark.asyncio
+async def test_cb_prepared_intents_shows_card_and_kb():
+    fief = {"id": 7, "user_id": 100, "realm_id": 3}
+    engine = _engine_for_fief(fief)
+    engine.prepared_intents_card.return_value = "PREP CARD"
+    engine.prepared_intents_count.return_value = 1
+    prep_kb = object()
+    callback = _callback("prep:7")
+
+    with (
+        patch.object(cb_mod, "get_engine", return_value=engine),
+        patch.object(cb_mod, "prepared_intents_kb", return_value=prep_kb) as kb,
+        patch.object(cb_mod, "reply_game", new_callable=AsyncMock) as reply,
+        patch.object(cb_mod, "_ok", new_callable=AsyncMock),
+    ):
+        await cb_mod.cb_prepared_intents(callback)
+
+    kb.assert_called_once_with(engine, 7)
+    reply.assert_awaited_once_with(
+        callback.message,
+        "PREP CARD",
+        reply_markup=prep_kb,
+    )
+
+
+@pytest.mark.asyncio
+async def test_cb_raid_cancel_returns_to_prepared_list_when_more():
+    fief = {"id": 7, "user_id": 100, "realm_id": 3}
+    engine = _engine_for_fief(fief)
+    engine.cancel_raid_intent.return_value = "Снято"
+    engine.prepared_intents_card.return_value = "Ещё заявки"
+    engine.prepared_intents_count.return_value = 1
+    prep_kb = object()
+    callback = _callback("radx:7:42")
+
+    with (
+        patch.object(cb_mod, "get_engine", return_value=engine),
+        patch.object(cb_mod, "prepared_intents_kb", return_value=prep_kb),
+        patch.object(cb_mod, "reply_game", new_callable=AsyncMock) as reply,
+        patch.object(cb_mod, "_ok", new_callable=AsyncMock),
+    ):
+        await cb_mod.cb_raid_cancel_intent(callback)
+
+    engine.cancel_raid_intent.assert_called_once_with(7, 42)
+    reply.assert_awaited_once_with(
+        callback.message,
+        "Снято\n\nЕщё заявки",
+        reply_markup=prep_kb,
+    )
+
+
+@pytest.mark.asyncio
+async def test_cb_caravan_cancel_goes_home_when_none_left():
+    fief = {"id": 7, "user_id": 100, "realm_id": 3}
+    engine = _engine_for_fief(fief)
+    engine.cancel_caravan_intent.return_value = "Обоз возвращён"
+    engine.prepared_intents_count.return_value = 0
+    home_kb = object()
+    callback = _callback("cvx:7:9")
+
+    with (
+        patch.object(cb_mod, "get_engine", return_value=engine),
+        patch.object(cb_mod, "fief_home_kb", return_value=home_kb),
+        patch.object(cb_mod, "reply_game", new_callable=AsyncMock) as reply,
+        patch.object(cb_mod, "_ok", new_callable=AsyncMock),
+    ):
+        await cb_mod.cb_caravan_cancel_intent(callback)
+
+    engine.cancel_caravan_intent.assert_called_once_with(7, 9)
+    reply.assert_awaited_once_with(
+        callback.message,
+        "Обоз возвращён",
+        reply_markup=home_kb,
+    )
+
+
+@pytest.mark.asyncio
 async def test_cb_more_rejects_foreign_fief():
     engine = _engine_for_fief({"id": 7, "user_id": 999, "realm_id": 3})
     callback = _callback("more:7", user_id=100)

@@ -319,12 +319,65 @@ def test_estate_and_valley_hub_prefixes():
         "pat:9",
         "dml:9",
         "rad:9",
+        "prep:9",
         "home:9",
     ]
 
     valley = valley_hub_kb(9)
     valley_data = [btn.callback_data for row in valley.inline_keyboard for btn in row]
-    assert valley_data == ["snd:9", "pct:9", "rum:9", "home:9"]
+    assert valley_data == ["snd:9", "pct:9", "rum:9", "prep:9", "home:9"]
+
+
+def test_home_kb_shows_prepared_when_count():
+    from app.handlers.shared import home_kb
+
+    kb = home_kb(9, "Строить", "bld:9", prepared_count=2)
+    data = [btn.callback_data for row in kb.inline_keyboard for btn in row]
+    assert "prep:9" in data
+    assert kb.inline_keyboard[2][0].text == "Заявки (2)"
+
+    bare = home_kb(9, "Строить", "bld:9", prepared_count=0)
+    bare_data = [btn.callback_data for row in bare.inline_keyboard for btn in row]
+    assert "prep:9" not in bare_data
+
+
+def test_prepared_intents_kb_cancel_buttons():
+    from unittest.mock import MagicMock
+
+    from app.handlers.shared import prepared_intents_kb
+
+    engine = MagicMock()
+    engine.list_prepared_intents.return_value = (
+        [
+            {
+                "id": 11,
+                "status": "open",
+                "payload": {"victim_id": 2, "might": 5},
+            },
+            {
+                "id": 12,
+                "status": "locked",
+                "payload": {"victim_id": 3, "might": 7},
+            },
+        ],
+        [
+            {
+                "id": 21,
+                "status": "open",
+                "payload": {"receiver_id": 4, "res": "grain", "amt": 10},
+            },
+        ],
+    )
+    engine.raid_intent_target_label.side_effect = lambda intent: {
+        11: "Ира",
+        12: "Оля",
+    }[int(intent["id"])]
+    engine.caravan_intent_target_label.return_value = "Кирилл"
+
+    kb = prepared_intents_kb(engine, 9)
+    data = [btn.callback_data for row in kb.inline_keyboard for btn in row]
+    assert data == ["radx:9:11", "cvx:9:21", "home:9"]
+    assert "radx:9:12" not in data
 
 
 def test_more_menu_kb_compat_hub_picker():

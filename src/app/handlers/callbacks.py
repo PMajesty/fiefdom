@@ -21,6 +21,7 @@ from app.handlers.shared import (
     map_realms_kb,
     map_view_kb,
     post_realm_public,
+    prepared_intents_kb,
     realm_upgrade_cost_mult,
     reply_game,
     reply_guide,
@@ -40,6 +41,40 @@ async def _ok(callback: CallbackQuery) -> None:
         await callback.answer()
     except Exception:
         pass
+
+
+async def _reply_prepared_intents(
+    message,
+    engine,
+    fief_id: int,
+    *,
+    prefix: str | None = None,
+) -> None:
+    """Показать карточку заявок; если пусто после отмены - дом.
+
+    Карточка содержит HTML движка - только через reply_game (не answer_html).
+    """
+    card = engine.prepared_intents_card(fief_id)
+    text = f"{prefix}\n\n{card}" if prefix else card
+    if engine.prepared_intents_count(fief_id) > 0:
+        await reply_game(
+            message,
+            text,
+            reply_markup=prepared_intents_kb(engine, fief_id),
+        )
+        return
+    if prefix:
+        await reply_game(
+            message,
+            prefix,
+            reply_markup=fief_home_kb(engine, fief_id),
+        )
+        return
+    await reply_game(
+        message,
+        card,
+        reply_markup=prepared_intents_kb(engine, fief_id),
+    )
 
 
 @router.callback_query(F.data.startswith("cat:"))
@@ -292,6 +327,22 @@ async def cb_hub(callback: CallbackQuery) -> None:
         await callback.answer(str(exc), show_alert=True)
     except Exception:
         logger.exception("cb_hub")
+        await callback.answer("Ошибка", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("prep:"))
+async def cb_prepared_intents(callback: CallbackQuery) -> None:
+    """Исходящие заявки: набеги и обозы - просмотр и снятие."""
+    engine = get_engine()
+    try:
+        fief_id = int(callback.data.split(":")[1])
+        _ensure_owner(engine, fief_id, callback.from_user.id)
+        await _ok(callback)
+        await _reply_prepared_intents(callback.message, engine, fief_id)
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+    except Exception:
+        logger.exception("cb_prepared_intents")
         await callback.answer("Ошибка", show_alert=True)
 
 
@@ -751,12 +802,8 @@ async def cb_raid_cancel_intent(callback: CallbackQuery) -> None:
         _ensure_owner(engine, fief_id, callback.from_user.id)
         msg = engine.cancel_raid_intent(fief_id, intent_id)
         await _ok(callback)
-        from app.handlers.shared import fief_home_kb
-
-        await answer_html(
-            callback.message,
-            msg,
-            reply_markup=fief_home_kb(engine, fief_id),
+        await _reply_prepared_intents(
+            callback.message, engine, fief_id, prefix=msg
         )
     except ValueError as exc:
         await callback.answer(str(exc), show_alert=True)
@@ -807,10 +854,8 @@ async def cb_caravan_cancel_intent(callback: CallbackQuery) -> None:
         _ensure_owner(engine, fief_id, callback.from_user.id)
         msg = engine.cancel_caravan_intent(fief_id, intent_id)
         await _ok(callback)
-        await answer_html(
-            callback.message,
-            msg,
-            reply_markup=fief_home_kb(engine, fief_id),
+        await _reply_prepared_intents(
+            callback.message, engine, fief_id, prefix=msg
         )
     except ValueError as exc:
         await callback.answer(str(exc), show_alert=True)

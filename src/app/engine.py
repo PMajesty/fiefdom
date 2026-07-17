@@ -750,21 +750,96 @@ class Engine:
             slots=tick_slots(),
         )
         lines.append(format_next_tick_line(next_at, local_now=local_now))
-        outbound = self.db.list_open_raid_intents_for_fief(fief_id)
-        if outbound:
+        prep_lines = self._prepared_intent_status_lines(fief_id)
+        if prep_lines:
             lines.append("")
-            lines.append("Заявки набега:")
-            for intent in outbound:
+            lines.extend(prep_lines)
+        if notes:
+            lines.append("· " + " · ".join(notes))
+        return "\n".join(lines)
+
+    def list_prepared_intents(
+        self, fief_id: int
+    ) -> tuple[list[dict], list[dict]]:
+        """Исходящие заявки усадьбы: (набеги open/locked, обозы open)."""
+        raids_raw = self.db.list_open_raid_intents_for_fief(int(fief_id))
+        caravans_raw = self.db.list_open_caravan_intents_for_fief(int(fief_id))
+        raids = list(raids_raw) if raids_raw else []
+        caravans = list(caravans_raw) if caravans_raw else []
+        return raids, caravans
+
+    def prepared_intents_count(self, fief_id: int) -> int:
+        raids, caravans = self.list_prepared_intents(fief_id)
+        return len(raids) + len(caravans)
+
+    def raid_intent_target_label(self, intent: dict) -> str:
+        payload = intent.get("payload") or {}
+        vid = int(payload.get("victim_id") or 0)
+        vic = self.db.get_fief(vid) if vid else None
+        return self.fief_label(vic) if vic else "?"
+
+    def caravan_intent_target_label(self, intent: dict) -> str:
+        payload = intent.get("payload") or {}
+        rid = int(payload.get("receiver_id") or 0)
+        recv = self.db.get_fief(rid) if rid else None
+        return self.fief_label(recv) if recv else "?"
+
+    def _prepared_intent_status_lines(self, fief_id: int) -> list[str]:
+        raids, caravans = self.list_prepared_intents(fief_id)
+        if not raids and not caravans:
+            return []
+        lines = ["Заявки:"]
+        for intent in raids:
+            payload = intent.get("payload") or {}
+            target = self.raid_intent_target_label(intent)
+            st = "открыта" if intent.get("status") == "open" else "закрыта"
+            lines.append(
+                f"· набег на {target}: {int(payload.get('might') or 0)} силы ({st})"
+            )
+        for intent in caravans:
+            payload = intent.get("payload") or {}
+            target = self.caravan_intent_target_label(intent)
+            res = str(payload.get("res") or "")
+            amt = int(payload.get("amt") or 0)
+            res_name = resource_name_ru(res) if res else "?"
+            lines.append(f"· обоз к {target}: {amt} {res_name} (в пути)")
+        return lines
+
+    def prepared_intents_card(self, fief_id: int) -> str:
+        """Карточка управления исходящими набегами и обозами."""
+        raids, caravans = self.list_prepared_intents(fief_id)
+        if not raids and not caravans:
+            return (
+                "Нет подготовленных заявок: ни набега, ни обоза в пути.\n"
+                "Объявить набег - в Усадьбе, обоз - в Долине."
+            )
+        lines = [
+            "<b>Заявки</b>",
+            "Открытые можно снять кнопками ниже; закрытый набег уже не отменить.",
+            "",
+        ]
+        if raids:
+            lines.append("Набеги:")
+            for intent in raids:
                 payload = intent.get("payload") or {}
-                vid = int(payload.get("victim_id") or 0)
-                vic = self.db.get_fief(vid) if vid else None
-                target = self.fief_label(vic) if vic else "?"
+                target = self.raid_intent_target_label(intent)
                 st = "открыта" if intent.get("status") == "open" else "закрыта"
                 lines.append(
                     f"· на {target}: {int(payload.get('might') or 0)} силы ({st})"
                 )
-        if notes:
-            lines.append("· " + " · ".join(notes))
+            lines.append("")
+        if caravans:
+            lines.append("Обозы:")
+            for intent in caravans:
+                payload = intent.get("payload") or {}
+                target = self.caravan_intent_target_label(intent)
+                res = str(payload.get("res") or "")
+                amt = int(payload.get("amt") or 0)
+                res_name = resource_name_ru(res) if res else "?"
+                lines.append(f"· к {target}: {amt} {res_name} (можно вернуть)")
+            lines.append("")
+        while lines and lines[-1] == "":
+            lines.pop()
         return "\n".join(lines)
 
     def holdings_text(self, fief_id: int) -> str:

@@ -407,6 +407,8 @@ def home_kb(
     fief_id: int,
     primary_label: str,
     primary_callback: str,
+    *,
+    prepared_count: int = 0,
 ) -> InlineKeyboardMarkup:
     """Дом: primary CTA + два хаба (Усадьба / Долина) + карта и устав."""
     fid = int(fief_id)
@@ -422,14 +424,65 @@ def home_kb(
                 callback_data=f"hub:v:{fid}",
             ),
         ],
+    ]
+    if int(prepared_count) > 0:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"Заявки ({int(prepared_count)})",
+                    callback_data=f"prep:{fid}",
+                )
+            ]
+        )
+    rows.append(
         [
             InlineKeyboardButton(text="Карта (мир)", callback_data=f"map:{fid}"),
             InlineKeyboardButton(
                 text="Устав (правила)",
                 callback_data=f"gd:{fid}",
             ),
-        ],
-    ]
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _short_button_label(text: str, max_len: int = 28) -> str:
+    plain = str(text or "").strip() or "?"
+    if len(plain) <= max_len:
+        return plain
+    return plain[: max_len - 1] + "..."
+
+
+def prepared_intents_kb(engine: Engine, fief_id: int) -> InlineKeyboardMarkup:
+    """Кнопки снятия открытых заявок + назад в меню."""
+    fid = int(fief_id)
+    raids, caravans = engine.list_prepared_intents(fid)
+    rows: list[list[InlineKeyboardButton]] = []
+    for intent in raids:
+        if intent.get("status") != "open":
+            continue
+        target = _short_button_label(engine.raid_intent_target_label(intent))
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"Снять набег: {target}",
+                    callback_data=f"radx:{fid}:{int(intent['id'])}",
+                )
+            ]
+        )
+    for intent in caravans:
+        target = _short_button_label(engine.caravan_intent_target_label(intent))
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"Вернуть обоз: {target}",
+                    callback_data=f"cvx:{fid}:{int(intent['id'])}",
+                )
+            ]
+        )
+    rows.append(
+        [InlineKeyboardButton(text="< Меню", callback_data=f"home:{fid}")]
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -505,6 +558,12 @@ def estate_hub_kb(
                 InlineKeyboardButton(text="Снос (вернуть)", callback_data=f"dml:{fid}"),
                 raid_btn,
             ],
+            [
+                InlineKeyboardButton(
+                    text="Заявки (набеги/обозы)",
+                    callback_data=f"prep:{fid}",
+                )
+            ],
             [InlineKeyboardButton(text="< Меню", callback_data=f"home:{fid}")],
         ]
     )
@@ -516,7 +575,7 @@ def valley_hub_kb(
     raid_pact_open: bool = True,
     lock_hint: str | None = None,
 ) -> InlineKeyboardMarkup:
-    """Хабы Долина: бесплатные связи (караван, пакт, слухи)."""
+    """Хабы Долина: бесплатные связи (караван, пакт, слухи, заявки)."""
     fid = int(fief_id)
     _raid, pact_btn = _raid_pact_hub_buttons(
         fid,
@@ -535,6 +594,10 @@ def valley_hub_kb(
             ],
             [
                 InlineKeyboardButton(text="Слухи", callback_data=f"rum:{fid}"),
+                InlineKeyboardButton(
+                    text="Заявки",
+                    callback_data=f"prep:{fid}",
+                ),
             ],
             [InlineKeyboardButton(text="< Меню", callback_data=f"home:{fid}")],
         ]
@@ -578,11 +641,14 @@ def main_menu_kb(
     day_number: int = B.RAID_PACT_UNLOCK_DAY,
     min_build_cost: int | None = None,
     next_claim_cost: int | None = None,
+    prepared_count: int = 0,
 ) -> InlineKeyboardMarkup:
     """Домашняя клавиатура усадьбы (status-first). Без снимка fief - безопасный CTA."""
     fid = int(fief_id)
     if fief is None:
-        return home_kb(fid, "Обновить статус", f"st:{fid}")
+        return home_kb(
+            fid, "Обновить статус", f"st:{fid}", prepared_count=prepared_count
+        )
     label, cb = choose_primary_cta(
         fid,
         actions=int(fief.get("actions") or 0),
@@ -594,7 +660,7 @@ def main_menu_kb(
         min_build_cost=min_build_cost,
         next_claim_cost=next_claim_cost,
     )
-    return home_kb(fid, label, cb)
+    return home_kb(fid, label, cb, prepared_count=prepared_count)
 
 
 def fief_home_kb(engine: Engine, fief_id: int) -> InlineKeyboardMarkup:
@@ -622,6 +688,7 @@ def fief_home_kb(engine: Engine, fief_id: int) -> InlineKeyboardMarkup:
         day_number=day_number,
         min_build_cost=min_build,
         next_claim_cost=next_claim,
+        prepared_count=engine.prepared_intents_count(fief_id),
     )
 
 
