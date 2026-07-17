@@ -18,7 +18,6 @@ from app.handlers.shared import (
     fief_home_kb,
     fief_raid_pact_state,
     format_pact_create_announce,
-    format_raid_announce,
     format_send_announce,
     format_trade_post_announce,
     get_engine,
@@ -260,6 +259,51 @@ def patrol_confirm_kb(fief_id: int) -> InlineKeyboardMarkup:
                     text="Отмена",
                     callback_data=f"st:{int(fief_id)}",
                 ),
+            ]
+        ]
+    )
+
+
+def raid_confirm_kb(
+    fief_id: int, *, show_truce: bool = False, open_truce: bool = False
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text="Подтвердить",
+                callback_data=f"radok:{int(fief_id)}",
+            ),
+            InlineKeyboardButton(
+                text="Отмена",
+                callback_data=pending_cancel_callback(fief_id),
+            ),
+        ]
+    ]
+    if show_truce:
+        label = (
+            "Перемирие: вкл"
+            if open_truce
+            else "Перемирие: выкл"
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=label,
+                    callback_data=f"radtruce:{int(fief_id)}",
+                )
+            ]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def raid_cancel_intent_kb(fief_id: int, intent_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Снять заявку",
+                    callback_data=f"radx:{int(fief_id)}:{int(intent_id)}",
+                )
             ]
         ]
     )
@@ -912,31 +956,59 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
 
     if kind == "raid_might":
         might = int(text.strip())
-        result = engine.raid(pending["fief_id"], pending["victim_id"], might)
-        clear_pending(user_id)
+        fief_id = int(pending["fief_id"])
+        victim_id = int(pending["victim_id"])
+        fief = engine.db.get_fief(fief_id) or {}
+        men_home = max(0, int(fief.get("might") or 0) - might)
+        set_pending(
+            user_id,
+            {
+                "kind": "raid_confirm",
+                "fief_id": fief_id,
+                "victim_id": victim_id,
+                "might": might,
+                "open_truce": False,
+            },
+        )
+        vic = engine.db.get_fief(victim_id)
+        vic_name = engine.fief_label(vic) if vic else str(victim_id)
+        world = engine.db.get_world(engine._world_id_for_realm(int(fief["realm_id"])))
+        lock_text = engine._format_raid_deadline(world or {}, midpoint=True)
+        resolve_text = engine._format_raid_deadline(world or {}, midpoint=False)
+        truce_note = ""
+        if not fief.get("pact_id"):
+            truce_note = (
+                "\nМожно включить открытое перемирие с другими одиночками "
+                "на ту же цель."
+            )
+        elif fief.get("pact_id"):
+            truce_note = "\nСоюзники по пакту сольются в один удар на дороге."
         await reply_game(
             message,
-            result.attacker_dm_text(),
-            reply_markup=fief_home_kb(engine, pending["fief_id"]),
+            (
+                f"Подтвердите набег на {vic_name}.\n"
+                f"Уйдёт {might} силы, дома останется {men_home}.\n"
+                f"Отмена заявки до {lock_text}; бой около {resolve_text}."
+                f"{truce_note}"
+            ),
+            reply_markup=raid_confirm_kb(
+                fief_id, show_truce=not bool(fief.get("pact_id"))
+            ),
         )
-        await _notify_raid_parties(message.bot, result)
-        await post_realm_public(
-            message.bot,
-            result.attacker_realm_id or 0,
-            format_raid_announce(result.attacker_public_line or result.public_line),
-        )
-        if (
-            result.via_portal
-            and result.victim_realm_id
-            and int(result.victim_realm_id) != int(result.attacker_realm_id or 0)
-        ):
-            await post_realm_public(
-                message.bot,
-                result.victim_realm_id,
-                format_raid_announce(
-                    result.victim_public_line or result.public_line
+        return True
+
+    if kind == "raid_confirm":
+        # Подтверждение только кнопками; текст - подсказка.
+        await reply_game(
+            message,
+            "Нажмите \"Подтвердить\" или \"Отмена\" под сообщением выше.",
+            reply_markup=raid_confirm_kb(
+                int(pending["fief_id"]),
+                show_truce=not bool(
+                    (engine.db.get_fief(int(pending["fief_id"])) or {}).get("pact_id")
                 ),
-            )
+            ),
+        )
         return True
 
     if kind == "trade_create":

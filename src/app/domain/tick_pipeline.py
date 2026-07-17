@@ -1,7 +1,7 @@
 """Фазы мирового тика, capabilities окна действий, конвейер переходов.
 
-Live-переходы сегодня: economy (fan-out) → play. Фазы orders/resolve объявлены
-как substrate для будущего declare-then-resolve; live-код в них не входит.
+Live: краткий resolve (ночные набеги) → economy → play.
+Фаза orders остаётся substrate и live-кодом не активируется.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ TICK_PHASE_ORDERS = "orders"
 TICK_PHASE_RESOLVE = "resolve"
 
 LIVE_TICK_PHASES: frozenset[str] = frozenset(
-    {TICK_PHASE_PLAY, TICK_PHASE_ECONOMY}
+    {TICK_PHASE_PLAY, TICK_PHASE_ECONOMY, TICK_PHASE_RESOLVE}
 )
 ALL_TICK_PHASES: frozenset[str] = frozenset(
     {
@@ -71,6 +71,11 @@ def needs_economy_wake(world: dict) -> bool:
     return normalize_tick_phase(world.get("tick_phase")) == TICK_PHASE_ECONOMY
 
 
+def needs_resolve_wake(world: dict) -> bool:
+    """Scheduler: добить ночной resolve после crash, не открывая новый слот."""
+    return normalize_tick_phase(world.get("tick_phase")) == TICK_PHASE_RESOLVE
+
+
 class ActionWindow:
     """Игровые мутации только когда фаза даёт allow_mutations и тик догнан."""
 
@@ -96,14 +101,18 @@ class ActionWindow:
 
 
 class TickPipeline:
-    """Конвейер фаз: live economy → play; substrate-поля для будущих шагов."""
+    """Конвейер фаз: live resolve → economy → play; orders не активируется."""
 
-    LIVE_SEQUENCE: tuple[str, ...] = (TICK_PHASE_ECONOMY, TICK_PHASE_PLAY)
-    # Полный целевой конвейер (не активирован): clock → economy → orders → resolve → play
-    TARGET_SEQUENCE: tuple[str, ...] = (
+    LIVE_SEQUENCE: tuple[str, ...] = (
+        TICK_PHASE_RESOLVE,
         TICK_PHASE_ECONOMY,
+        TICK_PHASE_PLAY,
+    )
+    # Полный целевой конвейер (orders не live): clock → orders → resolve → economy → play
+    TARGET_SEQUENCE: tuple[str, ...] = (
         TICK_PHASE_ORDERS,
         TICK_PHASE_RESOLVE,
+        TICK_PHASE_ECONOMY,
         TICK_PHASE_PLAY,
     )
 
@@ -127,6 +136,8 @@ class TickPipeline:
     def next_live_phase(current: str | None) -> str | None:
         """Следующая live-фаза или None, если уже play / неизвестно."""
         phase = normalize_tick_phase(current)
+        if phase == TICK_PHASE_RESOLVE:
+            return TICK_PHASE_ECONOMY
         if phase == TICK_PHASE_ECONOMY:
             return TICK_PHASE_PLAY
         return None

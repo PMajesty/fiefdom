@@ -18,7 +18,7 @@ from app.domain.events import (
     next_catastrophe_delay_ticks,
     pick_catastrophe,
 )
-from app.domain.tick_pipeline import needs_economy_wake
+from app.domain.tick_pipeline import needs_economy_wake, needs_resolve_wake
 from app.domain.tick_schedule import due_tick_slot
 from app.handlers.shared import get_engine, post_digest, post_realm_public
 from app.patch_announce import announce_pending_patches
@@ -26,6 +26,46 @@ from app.patch_announce import announce_pending_patches
 logger = logging.getLogger(__name__)
 
 POLL_SECONDS = 30
+
+
+async def _deliver_raid_notices(bot: Bot, notices: list) -> None:
+    """Лички и групповые строки после ночного resolve."""
+    seen_public: set[tuple[int, str]] = set()
+    for notice in notices:
+        kind = getattr(notice, "kind", None) or (
+            notice.get("kind") if isinstance(notice, dict) else None
+        )
+        text = getattr(notice, "text", None) or (
+            notice.get("text") if isinstance(notice, dict) else None
+        )
+        if not text:
+            continue
+        if kind == "dm":
+            user_id = getattr(notice, "user_id", None) or (
+                notice.get("user_id") if isinstance(notice, dict) else None
+            )
+            if user_id:
+                try:
+                    await bot.send_message(int(user_id), str(text))
+                except Exception:
+                    logger.warning(
+                        "raid night dm failed user=%s", user_id, exc_info=True
+                    )
+            continue
+        if kind == "public":
+            realm_id = getattr(notice, "realm_id", None) or (
+                notice.get("realm_id") if isinstance(notice, dict) else None
+            )
+            if not realm_id:
+                continue
+            key = (int(realm_id), str(text))
+            if key in seen_public:
+                continue
+            seen_public.add(key)
+            try:
+                await post_realm_public(bot, int(realm_id), str(text))
+            except Exception:
+                logger.exception("raid night public failed realm=%s", realm_id)
 
 
 def _utcnow() -> datetime:
@@ -79,14 +119,34 @@ async def _scheduler_tick(bot: Bot) -> None:
         slots=tick_slots(),
     )
     incomplete = engine.world_tick_incomplete(int(world["id"]))
-    # economy без incomplete: добить play после crash, не открывая новый слот.
+    # economy/resolve без incomplete: добить после crash, не открывая новый слот.
     phase_economy = needs_economy_wake(world)
-    if incomplete or phase_economy or slot_index is not None:
-        # incomplete/economy: догоняем/закрываем без нового слота; иначе обычный due.
+    phase_resolve = needs_resolve_wake(world)
+    # Mid-play: half-tick lock заявок набега (лаг опроса до 30с допустим).
+    if not incomplete and not phase_economy and not phase_resolve:
+        try:
+            engine.ensure_play_opened_at(int(world["id"]))
+            locked = engine.maybe_lock_raids_at_midpoint(int(world["id"]))
+            if locked:
+                logger.info(
+                    "Locked %s open raid intents at midpoint world=%s",
+                    locked,
+                    world.get("id"),
+                )
+        except Exception:
+            logger.exception("raid midpoint lock failed")
+
+    if incomplete or phase_economy or phase_resolve or slot_index is not None:
+        # incomplete/economy/resolve: догоняем/закрываем без нового слота; иначе due.
         result = engine.run_world_tick(
             int(world["id"]),
-            tick_slot=None if (incomplete or phase_economy) else slot_index,
+            tick_slot=(
+                None
+                if (incomplete or phase_economy or phase_resolve)
+                else slot_index
+            ),
         )
+        await _deliver_raid_notices(bot, result.get("raid_notices") or [])
         for item in result.get("realms") or []:
             if item.get("skipped"):
                 continue

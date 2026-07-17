@@ -13,6 +13,7 @@ from app.domain.raids import (
     loot_amounts,
     loot_overkill_factor,
     resolve_raid,
+    sample_raid_might_lost,
     standing_raid_defense,
 )
 from app.domain.tick import FiefTickState, apply_fief_tick, collect_pending_bags
@@ -127,11 +128,11 @@ def test_tick_pays_land_and_grants_action():
     assert out.stash[B.RES_GRAIN] == 50 - out.land_upkeep - out.militia_upkeep
 
 
-def test_raid_fail_loses_all_might():
+def test_raid_fail_does_not_wipe_all():
     r = _resolve_gd(
         attacker_name="A",
         victim_name="B",
-        attack_might=5,
+        attack_might=20,
         watch_defense=40,
         patrol_active=True,
         intercept=True,
@@ -140,16 +141,16 @@ def test_raid_fail_loses_all_might():
         barn_level=0,
         daily_g=10,
         daily_d=10,
+        rng=Random(0),
     )
     assert r.success is False
-    assert r.might_lost == 5
+    assert 1 <= r.might_lost < 20
 
 
 def test_raid_loot_caps():
     g, d = _loot_gd(0.9, 100, 100, 5, 5, rng=Random(0))
-    assert g + d <= int(0.40 * 200)  # max stash frac
+    assert g + d <= int(B.RAID_LOOT_MAX_FRAC * 200)  # max stash frac
     assert g + d <= int(3 * (5 + 5))  # max days of prod
-
 
 def test_loot_overkill_factor_edge_vs_crush():
     assert loot_overkill_factor(B.RAID_SUCCESS_R) == B.RAID_LOOT_EDGE_FACTOR
@@ -200,11 +201,11 @@ def test_loot_amounts_edge_small_stash_not_empty():
     assert g + d <= 16
 
 
-def test_raid_success_might_loss_severe():
+def test_raid_success_crush_loss_floor():
     r = _resolve_gd(
         attacker_name="A",
         victim_name="B",
-        attack_might=8,
+        attack_might=100,
         watch_defense=0,
         patrol_active=False,
         intercept=False,
@@ -216,15 +217,24 @@ def test_raid_success_might_loss_severe():
         rng=Random(0),
     )
     assert r.success is True
-    assert r.might_lost == max(1, int(round(8 * B.RAID_SUCCESS_MIGHT_LOSS_FRAC)))
+    assert r.might_lost >= int(round(100 * B.RAID_CRUSH_LOSS_FLOOR)) - 5
     assert sum(r.stolen.values()) > 0
     assert r.public_line == "A ограбил B"
     assert "зерна" not in r.public_line
     assert "товаров" not in r.public_line
 
 
+def test_sample_raid_might_lost_crush_floor_mean():
+    lost = [
+        sample_raid_might_lost(100, 0.9, success=True, rng=Random(i))
+        for i in range(40)
+    ]
+    assert min(lost) >= int(round(100 * B.RAID_CRUSH_LOSS_FLOOR)) - 8
+    assert max(lost) <= 100
+
+
 def test_raid_defense_includes_victim_might():
-    # 8 vs watch 0 succeeds; same 8 vs stockpile 40 fails (ratio < 0.33).
+    # 8 vs watch 0 succeeds; same 8 vs stockpile 40 fails (ratio < 0.25).
     soft = _resolve_gd(
         attacker_name="A",
         victim_name="B",
@@ -238,6 +248,7 @@ def test_raid_defense_includes_victim_might():
         daily_g=20,
         daily_d=20,
         victim_might=0,
+        rng=Random(0),
     )
     hard = _resolve_gd(
         attacker_name="A",
@@ -252,11 +263,12 @@ def test_raid_defense_includes_victim_might():
         daily_g=20,
         daily_d=20,
         victim_might=40,
+        rng=Random(0),
     )
     assert soft.success is True
     assert hard.success is False
     assert hard.defense_used == 40
-    assert hard.might_lost == 8
+    assert 1 <= hard.might_lost <= 8
 
 
 def test_raid_defense_stacks_watch_and_victim_might():

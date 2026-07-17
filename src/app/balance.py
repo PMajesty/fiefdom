@@ -167,18 +167,25 @@ REPAIR_COST_MULT = 0.5  # от стоимости апгрейда на этот
 
 # --- Набеги ---
 RAID_MIN_MIGHT = 5
-RAID_SUCCESS_R = 0.33
-RAID_LOOT_R_MULT = 0.35
-RAID_LOOT_MAX_FRAC = 0.40
+RAID_SUCCESS_R = 0.25
+RAID_LOOT_R_MULT = 0.88
+RAID_LOOT_MAX_FRAC = 0.66
 RAID_LOOT_MAX_DAYS_PROD = 3
 # Добыча: у порога успеха тонкая, к overkill (ratio) выходит на полную.
-RAID_LOOT_OVERKILL_R = 0.67
+RAID_LOOT_OVERKILL_R = 0.75
 RAID_LOOT_EDGE_FACTOR = 0.40
 # Случайный разброс добычи после учёта overkill.
 RAID_LOOT_RND_MIN = 0.85
 RAID_LOOT_RND_MAX = 1.15
-# Доля потерянной силы при удачном набеге (провал - вся выделенная сила).
-RAID_SUCCESS_MIGHT_LOSS_FRAC = 0.75
+# Потери дружины: колокол вокруг среднего от ratio (см. sample_raid_might_lost).
+RAID_CRUSH_LOSS_FLOOR = 0.18
+RAID_SUCCESS_LOSS_EDGE = 0.55
+RAID_FAIL_LOSS_FLEE = 0.18
+RAID_FAIL_LOSS_NEAR = 0.40
+RAID_LOSS_SIGMA = 0.10
+# Дорожный бой перед осадой.
+RAID_ROAD_FLEE_FRAC = 0.5
+RAID_ROAD_LOSS_FRAC = 0.25
 # Длительности в тиках долины (4 тика/день: 10:00, 13:00, 16:00 и 19:00).
 # Глобальный щит жертвы: после удачного набега никто не бьёт её N тик(ов).
 RAID_VICTIM_SHIELD_TICKS = 1

@@ -574,6 +574,13 @@ class Database:
         self.cursor.execute(
             "ALTER TABLE worlds ADD COLUMN IF NOT EXISTS expires_tick INT;"
         )
+        # Окно play для half-tick lock заявок набега; resolve_tick_index - bookmark crash.
+        self.cursor.execute(
+            "ALTER TABLE worlds ADD COLUMN IF NOT EXISTS play_opened_at TIMESTAMPTZ;"
+        )
+        self.cursor.execute(
+            "ALTER TABLE worlds ADD COLUMN IF NOT EXISTS resolve_tick_index INT;"
+        )
         self.cursor.execute(
             "ALTER TABLE realms ADD COLUMN IF NOT EXISTS realm_kind "
             "TEXT NOT NULL DEFAULT 'valley';"
@@ -1894,7 +1901,7 @@ class Database:
             )
             self.commit()
 
-    # --- action intents (substrate: declare-then-resolve; live mutations не пишут сюда) ---
+    # --- action intents (declare-then-resolve для набегов) ---
     def create_action_intent(self, **fields: Any) -> dict:
         with self.lock:
             self.cursor.execute(
@@ -1929,13 +1936,60 @@ class Database:
             (int(world_id), int(tick_index)),
         )
 
+    def list_raid_intents(
+        self,
+        world_id: int,
+        tick_index: int,
+        *,
+        statuses: tuple[str, ...] = ("open", "locked"),
+    ) -> list[dict]:
+        if not statuses:
+            return []
+        placeholders = ", ".join(["%s"] * len(statuses))
+        return self._fetchall(
+            f"""
+            SELECT * FROM action_intents
+            WHERE world_id=%s AND tick_index=%s AND kind='raid'
+              AND status IN ({placeholders})
+            ORDER BY id;
+            """,
+            (int(world_id), int(tick_index), *statuses),
+        )
+
+    def list_open_raid_intents_for_fief(self, fief_id: int) -> list[dict]:
+        return self._fetchall(
+            """
+            SELECT * FROM action_intents
+            WHERE fief_id=%s AND kind='raid' AND status IN ('open', 'locked')
+            ORDER BY id;
+            """,
+            (int(fief_id),),
+        )
+
+    def lock_action_intents(
+        self, world_id: int, tick_index: int, *, kind: str = "raid"
+    ) -> int:
+        """open→locked для заявок мира на тик. Возвращает число строк."""
+        with self.lock:
+            self.cursor.execute(
+                """
+                UPDATE action_intents SET status='locked'
+                WHERE world_id=%s AND tick_index=%s AND kind=%s AND status='open'
+                RETURNING id;
+                """,
+                (int(world_id), int(tick_index), str(kind)),
+            )
+            rows = self.cursor.fetchall() or []
+            self.commit()
+            return len(rows)
+
     def claim_resolve_action_intent(self, intent_id: int) -> dict | None:
-        """Атомарно open→resolved. None если уже не open."""
+        """Атомарно locked→resolved (или open→resolved на force-lock path)."""
         with self.lock:
             self.cursor.execute(
                 """
                 UPDATE action_intents SET status='resolved'
-                WHERE id=%s AND status='open'
+                WHERE id=%s AND status IN ('open', 'locked')
                 RETURNING *;
                 """,
                 (int(intent_id),),
@@ -1963,6 +2017,19 @@ class Database:
             cols = [d[0] for d in self.cursor.description]
             self.commit()
             return self._normalize(dict(zip(cols, row)))
+
+    def update_action_intent_payload(
+        self, intent_id: int, payload: dict
+    ) -> None:
+        with self.lock:
+            self.cursor.execute(
+                """
+                UPDATE action_intents SET payload=%s::jsonb
+                WHERE id=%s;
+                """,
+                (json.dumps(payload or {}), int(intent_id)),
+            )
+            self.commit()
 
     def event_actions(self, event_id: int) -> list[dict]:
         return self._fetchall(

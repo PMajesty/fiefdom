@@ -689,9 +689,9 @@ def test_raid_interceptor_debit_cas_miss_reresolves_without_interceptor():
         "name": "A",
         "grain": 40,
         "goods": 10,
-        "might": 12,
+        "might": 7,  # уже после escrow 5
         "hungry": False,
-        "actions": 1,
+        "actions": 0,
         "frozen": False,
         "shield_until_tick": None,
         "last_raid_tick": None,
@@ -734,6 +734,24 @@ def test_raid_interceptor_debit_cas_miss_reresolves_without_interceptor():
         "active_minor_key": None,
         "pending_raid_lines": [],
     }
+    intent = {
+        "id": 11,
+        "world_id": 1,
+        "tick_index": 4,
+        "fief_id": 1,
+        "kind": "raid",
+        "status": "locked",
+        "payload": {
+            "victim_id": 2,
+            "might": 5,
+            "open_truce": False,
+            "via_portal": False,
+            "attacker_realm_id": 9,
+            "victim_realm_id": 9,
+            "escrowed": True,
+            "attacker_pact_id": None,
+        },
+    }
 
     def get_fief(fid):
         return dict(fiefs[int(fid)])
@@ -741,14 +759,24 @@ def test_raid_interceptor_debit_cas_miss_reresolves_without_interceptor():
     def update_fief(fid, **fields):
         fiefs[int(fid)].update(fields)
 
-    def debit_fief_resources(fid, **amounts):
+    def debit_fief_resources(fid, amounts=None, **kwargs):
         if int(fid) == 3:
             return None
         row = fiefs[int(fid)]
-        for col, amt in amounts.items():
+        merged = dict(amounts or {})
+        merged.update(kwargs)
+        for col, amt in merged.items():
             if int(row.get(col) or 0) < int(amt):
                 return None
             row[col] = int(row[col]) - int(amt)
+        return dict(row)
+
+    def credit_fief_resources(fid, amounts=None, **kwargs):
+        row = fiefs[int(fid)]
+        merged = dict(amounts or {})
+        merged.update(kwargs)
+        for col, amt in merged.items():
+            row[col] = int(row.get(col) or 0) + int(amt)
         return dict(row)
 
     db = MagicMock()
@@ -756,6 +784,7 @@ def test_raid_interceptor_debit_cas_miss_reresolves_without_interceptor():
     db.get_fief.side_effect = get_fief
     db.update_fief.side_effect = update_fief
     db.debit_fief_resources.side_effect = debit_fief_resources
+    db.credit_fief_resources.side_effect = credit_fief_resources
     db.get_realm.return_value = realm
     db.realms_are_adjacent.return_value = True
     db.last_raid_attacker_victim.return_value = None
@@ -763,6 +792,9 @@ def test_raid_interceptor_debit_cas_miss_reresolves_without_interceptor():
     db.world_tick_incomplete = MagicMock(return_value=False)
     db.update_realm = MagicMock()
     db.log_raid = MagicMock()
+    db.list_raid_intents.return_value = [intent]
+    db.claim_resolve_action_intent.return_value = dict(intent, status="resolved")
+    db.update_action_intent_payload = MagicMock()
     _allow_play(db)
 
     engine = Engine(db)
@@ -772,12 +804,17 @@ def test_raid_interceptor_debit_cas_miss_reresolves_without_interceptor():
     engine.world_tick_incomplete = MagicMock(return_value=False)
     engine.fief_label = MagicMock(side_effect=lambda f: f["name"])
     engine.fief_prod = MagicMock(
-        return_value=MagicMock(defense=0, grain=1, goods=1)
+        return_value=MagicMock(
+            defense=0,
+            resources=MagicMock(
+                return_value={B.RES_GRAIN: 1.0, B.RES_GOODS: 1.0, B.RES_MIGHT: 0.0}
+            ),
+        )
     )
     engine.barn_level = MagicMock(return_value=0)
+    engine._siege_probe_would_succeed = MagicMock(return_value=True)
 
     ally_might_before = fiefs[3]["might"]
-    atk_might_before = fiefs[1]["might"]
     with patch(
         "app.engine.resolve_raid",
         side_effect=[
@@ -797,17 +834,15 @@ def test_raid_interceptor_debit_cas_miss_reresolves_without_interceptor():
             ),
         ],
     ) as resolve:
-        result = engine.raid(1, 2, might=5)
+        report = engine.resolve_pending_raids(1, 4)
 
     assert resolve.call_count == 2
     assert resolve.call_args_list[0].kwargs["intercept"] is True
     assert resolve.call_args_list[1].kwargs["intercept"] is False
-    assert result.interceptor_fief_id is None
-    assert result.intercept_applied is False
-    assert result.success is True
+    assert report.resolved_count == 1
     assert fiefs[3]["might"] == ally_might_before
-    assert fiefs[1]["might"] == atk_might_before - 4
+    assert fiefs[1]["might"] == 7 + 1  # returned commit-lost = 5-4
     assert fiefs[2]["grain"] == 38
     assert fiefs[2]["goods"] == 9
     db.debit_fief_resources.assert_any_call(3, might=B.INTERCEPT_MIGHT)
-    db.debit_fief_resources.assert_any_call(1, might=4)
+

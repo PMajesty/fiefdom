@@ -695,9 +695,9 @@ async def cb_raid(callback: CallbackQuery) -> None:
         await _ok(callback)
         await answer_html(
             callback.message,
-            f"Сколько силы отправить? (мин. {B.RAID_MIN_MIGHT})\n"
-            "Удар идёт против защиты цели: дружина на месте, сторожка, "
-            "дозор и перехват.\n"
+            f"Сколько силы отправить ночью? (мин. {B.RAID_MIN_MIGHT})\n"
+            "Дружина уйдёт сразу и не защищает дом до возвращения. "
+            "Заявку можно снять до середины окна тика.\n"
             "Или напишите \"отмена\".",
             reply_markup=dm_mod.pending_cancel_kb(fief_id),
         )
@@ -705,6 +705,85 @@ async def cb_raid(callback: CallbackQuery) -> None:
         await callback.answer(str(exc), show_alert=True)
     except Exception:
         logger.exception("cb_raid")
+        await callback.answer("Ошибка", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("radtruce:"))
+async def cb_raid_truce_toggle(callback: CallbackQuery) -> None:
+    engine = get_engine()
+    try:
+        fief_id = int(callback.data.split(":")[1])
+        _ensure_owner(engine, fief_id, callback.from_user.id)
+        pending = dm_mod.pending_actions.get(callback.from_user.id) or {}
+        if pending.get("kind") != "raid_confirm" or int(pending.get("fief_id") or 0) != fief_id:
+            await callback.answer("Сначала укажите силу набега.", show_alert=True)
+            return
+        pending["open_truce"] = not bool(pending.get("open_truce"))
+        dm_mod.set_pending(callback.from_user.id, pending)
+        await _ok(callback)
+        await callback.message.edit_reply_markup(
+            reply_markup=dm_mod.raid_confirm_kb(
+                fief_id,
+                show_truce=True,
+                open_truce=bool(pending.get("open_truce")),
+            )
+        )
+    except Exception:
+        logger.exception("cb_raid_truce_toggle")
+        await callback.answer("Ошибка", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("radok:"))
+async def cb_raid_confirm(callback: CallbackQuery) -> None:
+    engine = get_engine()
+    try:
+        fief_id = int(callback.data.split(":")[1])
+        _ensure_owner(engine, fief_id, callback.from_user.id)
+        pending = dm_mod.pending_actions.get(callback.from_user.id) or {}
+        if pending.get("kind") != "raid_confirm" or int(pending.get("fief_id") or 0) != fief_id:
+            await callback.answer("Сначала укажите силу набега.", show_alert=True)
+            return
+        might = int(pending.get("might") or 0)
+        victim_id = int(pending.get("victim_id") or 0)
+        open_truce = bool(pending.get("open_truce"))
+        result = engine.declare_raid(
+            fief_id, victim_id, might, open_truce=open_truce
+        )
+        dm_mod.clear_pending(callback.from_user.id)
+        await _ok(callback)
+        await answer_html(
+            callback.message,
+            result.dm_text,
+            reply_markup=dm_mod.raid_cancel_intent_kb(fief_id, result.intent_id),
+        )
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+    except Exception:
+        logger.exception("cb_raid_confirm")
+        await callback.answer("Ошибка", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("radx:"))
+async def cb_raid_cancel_intent(callback: CallbackQuery) -> None:
+    engine = get_engine()
+    try:
+        parts = callback.data.split(":")
+        fief_id = int(parts[1])
+        intent_id = int(parts[2])
+        _ensure_owner(engine, fief_id, callback.from_user.id)
+        msg = engine.cancel_raid_intent(fief_id, intent_id)
+        await _ok(callback)
+        from app.handlers.shared import fief_home_kb
+
+        await answer_html(
+            callback.message,
+            msg,
+            reply_markup=fief_home_kb(engine, fief_id),
+        )
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+    except Exception:
+        logger.exception("cb_raid_cancel_intent")
         await callback.answer("Ошибка", show_alert=True)
 
 

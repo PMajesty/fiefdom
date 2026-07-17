@@ -66,7 +66,8 @@ def test_tick_pipeline_live_fields_and_sequence():
     assert TickPipeline.play_fields() == {"tick_phase": "play"}
     assert TickPipeline.next_live_phase("economy") == "play"
     assert TickPipeline.next_live_phase("play") is None
-    assert TickPipeline.LIVE_SEQUENCE == ("economy", "play")
+    assert TickPipeline.LIVE_SEQUENCE == ("resolve", "economy", "play")
+    assert TickPipeline.next_live_phase("resolve") == "economy"
     assert "orders" in TickPipeline.TARGET_SEQUENCE
     assert "resolve" in TickPipeline.TARGET_SEQUENCE
 
@@ -175,6 +176,24 @@ def test_claim_resolve_action_intent_cas():
     assert row == {"id": 4, "status": "resolved"}
     sql = _sql(cursor.execute.call_args)
     assert "status='resolved'" in sql
-    assert "status='open'" in sql
+    assert "status in ('open', 'locked')" in sql.replace(" ", "").lower() or (
+        "status IN ('open', 'locked')" in sql
+        or "status in ('open', 'locked')" in sql.lower()
+    )
     cursor.fetchone.return_value = None
     assert db.claim_resolve_action_intent(4) is None
+
+
+def test_lock_action_intents_and_resolve_wake():
+    from app.domain.tick_pipeline import needs_resolve_wake
+
+    assert needs_resolve_wake({"tick_phase": "resolve"}) is True
+    assert needs_resolve_wake({"tick_phase": "play"}) is False
+    db, _conn = _db_with_mock_conn()
+    cursor = db.cursor
+    cursor.fetchall.return_value = [(1,), (2,)]
+    n = db.lock_action_intents(3, 7, kind="raid")
+    assert n == 2
+    sql = _sql(cursor.execute.call_args)
+    assert "status='locked'" in sql
+    assert "status='open'" in sql

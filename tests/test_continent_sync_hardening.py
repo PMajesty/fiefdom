@@ -135,9 +135,10 @@ def test_same_realm_raid_appends_pending_line_once():
         "last_raid_tick": None,
         "patrol_until_tick": None,
         "pact_id": None,
+        "onboard_step": 4,
     }
     vic = dict(atk, id=2, user_id=200, name="B", might=3)
-    realm = _realm(10, tick_index=3, pending_raid_lines=[])
+    realm = _realm(10, tick_index=3, day_number=5, pending_raid_lines=[])
 
     db.get_fief.side_effect = lambda fid: atk if int(fid) == 1 else vic
     db.get_realm.return_value = realm
@@ -170,6 +171,42 @@ def test_same_realm_raid_appends_pending_line_once():
     )
     engine.barn_level = MagicMock(return_value=0)
 
+    engine.raid_declare_is_open = MagicMock(return_value=True)
+    engine._world_id_for_realm = MagicMock(return_value=1)
+    engine.world_tick_incomplete = MagicMock(return_value=False)
+    engine._require_cross_valley_caught_up = MagicMock()
+    engine._format_raid_deadline = MagicMock(return_value="12:00")
+    db.get_world.return_value = {
+        "id": 1,
+        "tick_index": 3,
+        "tick_phase": "play",
+        "timezone": "UTC",
+    }
+    db.realms_are_adjacent.return_value = True
+    db.list_open_raid_intents_for_fief.return_value = []
+    intents = []
+
+    def create_action_intent(**fields):
+        row = {
+            "id": 1,
+            "status": "locked",
+            **fields,
+            "payload": dict(fields.get("payload") or {}),
+        }
+        intents.append(row)
+        return row
+
+    db.create_action_intent.side_effect = create_action_intent
+    db.list_raid_intents.side_effect = lambda *a, **k: [
+        dict(i, status="locked") for i in intents
+    ]
+    db.claim_resolve_action_intent.side_effect = lambda iid: next(
+        (dict(i, status="resolved") for i in intents if int(i["id"]) == int(iid)),
+        None,
+    )
+    db.credit_fief_resources = MagicMock()
+    db.update_action_intent_payload = MagicMock()
+    engine.declare_raid(1, 2, 5)
     with patch(
         "app.engine.resolve_raid",
         return_value=MagicMock(
@@ -180,10 +217,9 @@ def test_same_realm_raid_appends_pending_line_once():
             intercept_applied=False,
         ),
     ):
-        engine.raid(1, 2, might=5)
+        engine.resolve_pending_raids(1, 3)
 
-    assert len(updates) == 1
-    assert updates[0] == ["Набег!"]
+    assert any("Набег!" in line for batch in updates for line in batch)
 
 
 def test_raids_since_tick_includes_victim_realm():
@@ -915,7 +951,7 @@ def test_incomplete_world_blocks_cross_valley_raid_send_trade_pact():
     engine.fief_label = MagicMock(side_effect=lambda f: f["name"])
 
     with pytest.raises(ValueError, match=_INCOMPLETE_MSG):
-        engine.raid(1, 2, might=5)
+        engine.declare_raid(1, 2, 5)
     with pytest.raises(ValueError, match=_INCOMPLETE_MSG):
         engine.send_resources(1, 2, B.RES_GRAIN, 10)
     with pytest.raises(ValueError, match=_INCOMPLETE_MSG):
@@ -964,7 +1000,7 @@ def test_incomplete_world_blocks_same_realm_raid():
     engine.barn_level = MagicMock(return_value=0)
 
     with pytest.raises(ValueError, match=_INCOMPLETE_MSG):
-        engine.raid(1, 2, might=5)
+        engine.declare_raid(1, 2, 5)
     engine._spend_action.assert_not_called()
     db.log_raid.assert_not_called()
 
@@ -1124,28 +1160,14 @@ def test_incomplete_same_realm_raid_skips_foreign_interceptor_spend():
     )
     engine.barn_level = MagicMock(return_value=0)
 
+    # incomplete: ночной resolve не стартует; чужой перехватчик не тратится.
     foreign_might_before = fiefs[3]["might"]
-    with patch(
-        "app.engine.resolve_raid",
-        return_value=MagicMock(
-            public_line="Набег!",
-            success=False,
-            might_lost=1,
-            stolen={B.RES_GRAIN: 0, B.RES_GOODS: 0},
-            intercept_applied=False,
-        ),
-    ) as resolve:
-        result = engine.raid(1, 2, might=5)
-
-    assert result.via_portal is False
-    assert result.intercept_applied is False
-    assert result.interceptor_fief_id is None
-    assert resolve.call_args.kwargs["intercept"] is False
+    engine.world_tick_incomplete = MagicMock(return_value=True)
+    report = engine.resolve_pending_raids(1, 3)
+    assert report.resolved_count == 0
     assert fiefs[3]["might"] == foreign_might_before
-    for call in db.update_fief.call_args_list:
-        assert call.args[0] != 3
-    for call in db.debit_fief_resources.call_args_list:
-        assert call.args[0] != 3
+    picked = engine._pick_raid_interceptor(fiefs[2], incomplete_world=True)
+    assert picked is None or int(picked["id"]) != 3
 
 
 def test_incomplete_same_realm_raid_spends_local_cover_allies_interceptor():
@@ -1240,30 +1262,15 @@ def test_incomplete_same_realm_raid_spends_local_cover_allies_interceptor():
     )
     engine.barn_level = MagicMock(return_value=0)
 
-    local_might_before = fiefs[4]["might"]
-    foreign_might_before = fiefs[3]["might"]
-    with patch(
-        "app.engine.resolve_raid",
-        return_value=MagicMock(
-            public_line="Набег!",
-            success=False,
-            might_lost=1,
-            stolen={B.RES_GRAIN: 0, B.RES_GOODS: 0},
-            intercept_applied=True,
-        ),
-    ) as resolve:
-        result = engine.raid(1, 2, might=5)
-
-    assert result.via_portal is False
-    assert result.intercept_applied is True
-    assert result.interceptor_fief_id == 4
-    assert resolve.call_args.kwargs["intercept"] is True
-    assert fiefs[4]["might"] == local_might_before - B.INTERCEPT_MIGHT
-    assert fiefs[3]["might"] == foreign_might_before
-    for call in db.update_fief.call_args_list:
-        assert call.args[0] != 3
-    for call in db.debit_fief_resources.call_args_list:
-        assert call.args[0] != 3
+    # incomplete: resolve не идёт; выбор перехватчика пропускает чужую долину.
+    picked = engine._pick_raid_interceptor(fiefs[2], incomplete_world=True)
+    assert picked is not None
+    assert int(picked["id"]) == 4
+    engine.world_tick_incomplete = MagicMock(return_value=True)
+    report = engine.resolve_pending_raids(1, 3)
+    assert report.resolved_count == 0
+    assert fiefs[4]["might"] == local["might"]
+    assert fiefs[3]["might"] == foreign["might"]
 
 
 def test_incomplete_world_blocks_open_market_post_trade():

@@ -8,39 +8,24 @@ os.environ.setdefault("ADMIN_USER_ID", "42")
 
 import pytest
 
-from app import balance as B
-from app.domain.raids import RaidActionResult
+from app.domain.raids import DeclareRaidResult
 from app.handlers.dm import _handle_pending
 
 
-def _raid_result(**overrides) -> RaidActionResult:
-    base = dict(
-        public_line="Альфа ограбила Бета",
-        success=True,
-        victim_fief_id=2,
-        victim_user_id=200,
-        victim_name="Бета",
-        attacker_name="Альфа",
-        stolen={B.RES_GRAIN: 3, B.RES_GOODS: 1},
-        intercept_applied=False,
-        attacker_realm_id=1,
-        victim_realm_id=1,
-        via_portal=False,
-        attacker_public_line="Альфа ограбила Бета",
-        victim_public_line="",
-    )
-    base.update(overrides)
-    return RaidActionResult(**base)
-
-
 @pytest.mark.asyncio
-async def test_raid_logs_to_attacker_valley_group():
+async def test_raid_might_prompts_confirm_without_instant_group():
+    """Ввод силы не резолвит бой и не постит исход в группу."""
     engine = MagicMock()
-    result = _raid_result()
-    engine.raid = MagicMock(return_value=result)
+    engine.db.get_fief.side_effect = lambda fid: {
+        1: {"id": 1, "realm_id": 1, "might": 40, "pact_id": None},
+        2: {"id": 2, "realm_id": 1, "name": "Бета"},
+    }.get(fid)
+    engine.fief_label = MagicMock(return_value="Бета")
+    engine._world_id_for_realm = MagicMock(return_value=1)
+    engine.db.get_world.return_value = {"id": 1}
+    engine._format_raid_deadline = MagicMock(return_value="17.07 12:00")
 
     bot = MagicMock()
-    bot.send_message = AsyncMock()
     message = MagicMock()
     message.bot = bot
     message.from_user = MagicMock(id=100)
@@ -50,55 +35,35 @@ async def test_raid_logs_to_attacker_valley_group():
     with (
         patch("app.handlers.dm.reply_game", new_callable=AsyncMock) as reply,
         patch("app.handlers.dm.post_realm_public", new_callable=AsyncMock) as public,
-        patch("app.handlers.dm._notify_raid_parties", new_callable=AsyncMock) as parties,
-        patch("app.handlers.dm.clear_pending"),
-        patch("app.handlers.dm.fief_home_kb", return_value=None),
+        patch("app.handlers.dm.set_pending") as set_pending,
+        patch("app.handlers.dm.raid_confirm_kb", return_value=None),
     ):
         ok = await _handle_pending(message, engine, pending, "10")
 
     assert ok is True
-    parties.assert_awaited_once()
-    public.assert_awaited_once()
-    assert public.await_args.args[1] == 1
-    assert "⚔️" in public.await_args.args[2]
-    assert "зерна" not in public.await_args.args[2]
-    assert "товаров" not in public.await_args.args[2]
-    private = reply.await_args.args[1]
-    assert "+3 зерна" in private
-    assert "+1 товаров" in private
+    public.assert_not_awaited()
+    engine.declare_raid.assert_not_called()
+    assert set_pending.called
+    assert "Подтвердите" in reply.await_args.args[1]
+    assert "10" in reply.await_args.args[1]
 
 
 @pytest.mark.asyncio
-async def test_cross_valley_raid_logs_to_both_groups():
-    engine = MagicMock()
-    result = _raid_result(
-        via_portal=True,
-        victim_realm_id=2,
-        attacker_public_line='В "Чужая": Альфа ограбила Бета',
-        victim_public_line='Из "Домашняя": Альфа ограбила Бета',
+async def test_declare_result_has_no_loot_digits_in_public_copy():
+    """Declare DM - без цифр добычи; исход публикуется только после resolve."""
+    result = DeclareRaidResult(
+        intent_id=1,
+        victim_fief_id=2,
+        victim_name="Бета",
+        might=10,
+        men_home=5,
+        open_truce=False,
+        lock_deadline_text="12:00",
+        resolve_slot_text="14:00",
+        dm_text="Дружина ушла в ночь на хутор Бета: 10 силы в пути, дома 5.",
     )
-    engine.raid = MagicMock(return_value=result)
-
-    bot = MagicMock()
-    message = MagicMock()
-    message.bot = bot
-    message.from_user = MagicMock(id=100)
-
-    pending = {"kind": "raid_might", "fief_id": 1, "victim_id": 2}
-
-    with (
-        patch("app.handlers.dm.reply_game", new_callable=AsyncMock),
-        patch("app.handlers.dm.post_realm_public", new_callable=AsyncMock) as public,
-        patch("app.handlers.dm._notify_raid_parties", new_callable=AsyncMock),
-        patch("app.handlers.dm.clear_pending"),
-        patch("app.handlers.dm.fief_home_kb", return_value=None),
-    ):
-        ok = await _handle_pending(message, engine, pending, "10")
-
-    assert ok is True
-    assert public.await_count == 2
-    realm_ids = [c.args[1] for c in public.await_args_list]
-    assert realm_ids == [1, 2]
+    assert "зерна" not in result.dm_text
+    assert "товаров" not in result.dm_text
 
 
 @pytest.mark.asyncio

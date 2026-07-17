@@ -27,8 +27,40 @@ class RaidResult:
 
 
 @dataclass
+class DeclareRaidResult:
+    """Итог declare_raid для хендлера (без боя)."""
+
+    intent_id: int
+    victim_fief_id: int
+    victim_name: str
+    might: int
+    men_home: int
+    open_truce: bool
+    lock_deadline_text: str
+    resolve_slot_text: str
+    pact_merge_hint: str | None = None
+    dm_text: str = ""
+
+
+@dataclass
+class RaidNightPartyNotice:
+    """Личка/группа после ночного разрешения."""
+
+    user_id: int | None
+    realm_id: int | None
+    text: str
+    kind: str  # "dm" | "public"
+
+
+@dataclass
+class ResolveNightReport:
+    resolved_count: int = 0
+    notices: list[RaidNightPartyNotice] = field(default_factory=list)
+
+
+@dataclass
 class RaidActionResult:
-    """Итог engine.raid для хендлера (без Bot в движке)."""
+    """Итог осады для ночных уведомлений (без Bot в движке)."""
 
     public_line: str
     success: bool
@@ -45,20 +77,33 @@ class RaidActionResult:
     via_portal: bool = False
     attacker_public_line: str = ""
     victim_public_line: str = ""
+    might_committed: int = 0
+    might_lost: int = 0
+    road_deaths: int = 0
+    loss_rumor: str = ""
 
     def attacker_dm_text(self) -> str:
-        """Личка нападающему: итог с суммами. В группу суммы не идут."""
+        """Личка нападающему: итог с суммами и слухом о своих потерях."""
+        loss_bit = f" {self.loss_rumor}" if self.loss_rumor else ""
+        road_bit = ""
+        if self.road_deaths > 0:
+            road_bit = " На дороге тоже потрепало."
         if self.success:
             return (
                 f"Вы ограбили {self.victim_name}: "
-                f"{format_attacker_loot_suffix(self.stolen)}"
+                f"{format_attacker_loot_suffix(self.stolen)}."
+                f"{loss_bit}{road_bit}"
             )
         if self.intercept_applied:
             return (
                 f"Набег на хутор {self.victim_name} отбит "
                 f"(союзник перехватил у ворот)."
+                f"{loss_bit}{road_bit}"
             )
-        return f"Набег на хутор {self.victim_name} отбит у ворот."
+        return (
+            f"Набег на хутор {self.victim_name} отбит у ворот."
+            f"{loss_bit}{road_bit}"
+        )
 
     def victim_dm_text(self) -> str:
         if self.success:
@@ -90,6 +135,81 @@ def raid_ratio(attack_might: int, defense: int) -> float:
     if s + d <= 0:
         return 0.0
     return s / (s + d)
+
+
+def _lerp(a: float, b: float, t: float) -> float:
+    return a + (b - a) * t
+
+
+def sample_raid_might_lost(
+    attack_might: int,
+    ratio: float,
+    *,
+    success: bool,
+    rng: Random | None = None,
+) -> int:
+    """Потери дружины: колокол вокруг среднего от ratio; crush ≥ floor."""
+    atk = max(0, int(attack_might))
+    if atk <= 0:
+        return 0
+    rng = rng or Random()
+    success_r = float(B.RAID_SUCCESS_R)
+    overkill_r = float(B.RAID_LOOT_OVERKILL_R)
+    if success:
+        if overkill_r <= success_r:
+            mean = float(B.RAID_CRUSH_LOSS_FLOOR)
+        else:
+            t = (float(ratio) - success_r) / (overkill_r - success_r)
+            t = max(0.0, min(1.0, t))
+            mean = _lerp(
+                float(B.RAID_SUCCESS_LOSS_EDGE),
+                float(B.RAID_CRUSH_LOSS_FLOOR),
+                t,
+            )
+        mean = max(float(B.RAID_CRUSH_LOSS_FLOOR), mean)
+    else:
+        if success_r <= 0:
+            mean = float(B.RAID_FAIL_LOSS_FLEE)
+        else:
+            t = max(0.0, min(1.0, float(ratio) / success_r))
+            mean = _lerp(
+                float(B.RAID_FAIL_LOSS_FLEE),
+                float(B.RAID_FAIL_LOSS_NEAR),
+                t,
+            )
+    frac = rng.gauss(mean, float(B.RAID_LOSS_SIGMA))
+    frac = max(0.0, min(1.0, frac))
+    if success:
+        frac = max(float(B.RAID_CRUSH_LOSS_FLOOR), frac)
+    if atk < int(B.RAID_MIN_MIGHT):
+        return min(atk, max(0, int(round(atk * frac))))
+    return min(atk, max(1, int(round(atk * frac))))
+
+
+def own_loss_rumor_band(might_lost: int, commit: int) -> str:
+    """Слух о своих потерях без точных цифр врага."""
+    if commit <= 0 or might_lost <= 0:
+        return "Свои почти все вернулись."
+    frac = might_lost / commit
+    if frac < 0.25:
+        return "Свои потери лёгкие."
+    if frac < 0.45:
+        return "Свои потери чувствительные."
+    return "Свои потери тяжёлые."
+
+
+def own_headcount_rumor(returned: int, commit: int) -> str:
+    """Грубая оценка вернувшихся своих."""
+    if commit <= 0:
+        return ""
+    if returned <= 0:
+        return "Домой почти никто не пришёл."
+    frac = returned / commit
+    if frac >= 0.75:
+        return "Большая часть дружины вернулась."
+    if frac >= 0.4:
+        return "Около половины дружины вернулась."
+    return "Домой пришла лишь малая часть."
 
 
 def unprotected_stash(
@@ -203,13 +323,17 @@ def resolve_raid(
     )
     loot_keys = raid_lootable_keys()
     zero_loot = {key: 0 for key in loot_keys}
+    rng = rng or Random()
 
     r = raid_ratio(attack_might, defense)
     if r < B.RAID_SUCCESS_R:
+        might_lost = sample_raid_might_lost(
+            attack_might, r, success=False, rng=rng
+        )
         return RaidResult(
             success=False,
             ratio=r,
-            might_lost=attack_might,
+            might_lost=might_lost,
             stolen=zero_loot,
             defense_used=defense,
             intercept_applied=intercept,
@@ -220,8 +344,9 @@ def resolve_raid(
     stolen = loot_amounts(
         r, unprot, victim_daily, loot_keys=loot_keys, rng=rng
     )
-    might_lost = max(1, int(round(attack_might * B.RAID_SUCCESS_MIGHT_LOSS_FRAC)))
-    might_lost = min(attack_might, might_lost)
+    might_lost = sample_raid_might_lost(
+        attack_might, r, success=True, rng=rng
+    )
     return RaidResult(
         success=True,
         ratio=r,

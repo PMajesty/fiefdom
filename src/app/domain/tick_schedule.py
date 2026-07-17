@@ -185,3 +185,40 @@ def format_next_tick_line(
     if next_at <= local_now:
         return "Следующий тик: сейчас"
     return f"Следующий тик: {next_at.strftime('%d.%m %H:%M')}"
+
+
+def play_window_bounds(
+    play_opened_at: datetime | None,
+    next_tick_at: datetime | None,
+) -> tuple[datetime, datetime] | None:
+    """Окно play: от открытия до следующего слота. None если часов нет."""
+    if play_opened_at is None or next_tick_at is None:
+        return None
+    if next_tick_at <= play_opened_at:
+        return None
+    return (play_opened_at, next_tick_at)
+
+
+def raid_declare_midpoint(bounds: tuple[datetime, datetime]) -> datetime:
+    opened, closes = bounds
+    return opened + (closes - opened) / 2
+
+
+def raid_declare_open(
+    now: datetime,
+    bounds: tuple[datetime, datetime] | None,
+) -> bool:
+    """True до середины окна play. Без границ - закрыто (осторожный дефолт)."""
+    if bounds is None:
+        return False
+    return now < raid_declare_midpoint(bounds)
+
+
+def raid_lock_due(
+    now: datetime,
+    bounds: tuple[datetime, datetime] | None,
+) -> bool:
+    """True после середины окна play."""
+    if bounds is None:
+        return False
+    return now >= raid_declare_midpoint(bounds)

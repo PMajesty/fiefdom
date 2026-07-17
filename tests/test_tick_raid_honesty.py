@@ -326,75 +326,13 @@ def test_raid_action_result_includes_victim_and_dm_texts():
     assert "B" in fail.interceptor_dm_text()
 
 
-def test_engine_raid_returns_victim_user_id():
-    db = MagicMock()
-    db.transaction = lambda: nullcontext()
-    atk = {
-        "id": 1,
-        "realm_id": 1,
-        "user_id": 101,
-        "name": "Атакующий",
-        "grain": 10,
-        "goods": 10,
-        "might": 20,
-        "hungry": False,
-        "last_raid_at": None,
-        "last_raid_tick": None,
-        "actions": 2,
-        "pending_grain": 0,
-        "pending_goods": 0,
-        "pending_might": 0,
-        "pact_id": None,
-        "shield_until": None,
-        "shield_until_tick": None,
-        "patrol_until": None,
-        "patrol_until_tick": None,
-    }
-    vic = {
-        "id": 2,
-        "realm_id": 1,
-        "user_id": 202,
-        "name": "Жертва",
-        "grain": 80,
-        "goods": 40,
-        "might": 5,
-        "hungry": False,
-        "shield_until": None,
-        "shield_until_tick": None,
-        "patrol_until": None,
-        "patrol_until_tick": None,
-        "pact_id": None,
-        "pending_grain": 0,
-        "pending_goods": 0,
-        "pending_might": 0,
-        "actions": 1,
-    }
-    realm = _base_realm(id=1, active_minor_key=None, active_minor_until=None, tick_index=4)
-
-    def get_fief(fid):
-        return dict(atk) if fid == 1 else dict(vic)
-
-    db.get_fief.side_effect = get_fief
-    db.get_realm.return_value = realm
-    db.last_raid_attacker_victim.return_value = None
-    db.pact_members.return_value = []
-    db.fief_tiles.return_value = []
-
-    engine = Engine(db)
-    engine.collect_for_fief = MagicMock()
-    engine.barn_level = MagicMock(return_value=0)
-    engine._spend_action = MagicMock()
-    prod = MagicMock()
-    prod.defense = 1.0
-    prod.resources.return_value = {B.RES_GRAIN: 5.0, B.RES_GOODS: 2.0, B.RES_MIGHT: 0.0}
-    engine.fief_prod = MagicMock(return_value=prod)
-
-    result = engine.raid(1, 2, might=10)
-    assert isinstance(result, RaidActionResult)
-    assert result.victim_user_id == 202
+def test_engine_declare_raid_returns_confirm_facts():
+    engine, fiefs, _B = _raid_stateful_engine()
+    result = engine.declare_raid(1, 2, 10)
     assert result.victim_fief_id == 2
-    assert result.public_line
-    assert "Жертва" in result.victim_dm_text() or "атак" in result.victim_dm_text().lower() or "На ваш" in result.victim_dm_text()
+    assert result.might == 10
+    assert result.men_home == 10
+    assert "Жертва" in result.dm_text or "хутор" in result.dm_text
 
 
 def _tick_engine_with_schedule(realm: dict):
@@ -518,6 +456,7 @@ def _raid_stateful_engine(*, atk_extra=None, vic_extra=None, reverse_pair_at=Non
         "patrol_until_tick": None,
         "last_active_at": _utcnow(),
         "last_active_tick": 0,
+        "onboard_step": 4,
     }
     if atk_extra:
         atk.update(atk_extra)
@@ -541,11 +480,18 @@ def _raid_stateful_engine(*, atk_extra=None, vic_extra=None, reverse_pair_at=Non
         "actions": 1,
         "last_active_at": _utcnow(),
         "last_active_tick": 0,
+        "onboard_step": 4,
     }
     if vic_extra:
         vic.update(vic_extra)
     fiefs = {1: atk, 2: vic}
-    realm = _base_realm(id=1, active_minor_key=None, active_minor_until=None, tick_index=10)
+    realm = _base_realm(
+        id=1,
+        active_minor_key=None,
+        active_minor_until=None,
+        tick_index=10,
+        day_number=5,
+    )
     pair_log: dict[tuple[int, int], int] = {}
     if reverse_pair_at is not None:
         pair_log[(2, 1)] = reverse_pair_at
@@ -560,12 +506,22 @@ def _raid_stateful_engine(*, atk_extra=None, vic_extra=None, reverse_pair_at=Non
     def update_fief(fid, **fields):
         fiefs[fid].update(fields)
 
-    def debit_fief_resources(fid, **amounts):
+    def debit_fief_resources(fid, amounts=None, **kwargs):
         row = fiefs[int(fid)]
-        for col, amt in amounts.items():
+        merged = dict(amounts or {})
+        merged.update(kwargs)
+        for col, amt in merged.items():
             if int(row.get(col) or 0) < int(amt):
                 return None
             row[col] = int(row[col]) - int(amt)
+        return dict(row)
+
+    def credit_fief_resources(fid, amounts=None, **kwargs):
+        row = fiefs[int(fid)]
+        merged = dict(amounts or {})
+        merged.update(kwargs)
+        for col, amt in merged.items():
+            row[col] = int(row.get(col) or 0) + int(amt)
         return dict(row)
 
     def last_pair(a, v):
@@ -576,36 +532,117 @@ def _raid_stateful_engine(*, atk_extra=None, vic_extra=None, reverse_pair_at=Non
             kwargs.get("tick_index") or 10
         )
 
+    intents: list[dict] = []
+
+    def create_action_intent(**fields):
+        row = {
+            "id": len(intents) + 1,
+            "world_id": fields["world_id"],
+            "tick_index": fields["tick_index"],
+            "fief_id": fields["fief_id"],
+            "kind": fields["kind"],
+            "payload": dict(fields.get("payload") or {}),
+            "status": fields.get("status", "open"),
+        }
+        intents.append(row)
+        return dict(row)
+
+    def list_open_raid_intents_for_fief(fid):
+        return [
+            dict(i)
+            for i in intents
+            if int(i["fief_id"]) == int(fid) and i["status"] in ("open", "locked")
+        ]
+
+    def list_raid_intents(wid, tick, statuses=("open", "locked")):
+        return [
+            dict(i)
+            for i in intents
+            if int(i["world_id"]) == int(wid)
+            and int(i["tick_index"]) == int(tick)
+            and i["status"] in statuses
+        ]
+
+    def claim_resolve_action_intent(iid):
+        for i in intents:
+            if int(i["id"]) == int(iid) and i["status"] in ("open", "locked"):
+                i["status"] = "resolved"
+                return dict(i)
+        return None
+
+    def update_action_intent_payload(iid, payload):
+        for i in intents:
+            if int(i["id"]) == int(iid):
+                i["payload"] = dict(payload)
+
     db.get_fief.side_effect = get_fief
     db.update_fief.side_effect = update_fief
     db.debit_fief_resources.side_effect = debit_fief_resources
+    db.credit_fief_resources.side_effect = credit_fief_resources
     db.get_realm.return_value = realm
     db.update_realm = MagicMock()
     db.last_raid_attacker_victim.side_effect = last_pair
     db.log_raid.side_effect = log_raid
     db.pact_members.return_value = []
     db.fief_tiles.return_value = []
+    db.realms_are_adjacent.return_value = True
+    db.create_action_intent.side_effect = create_action_intent
+    db.list_open_raid_intents_for_fief.side_effect = list_open_raid_intents_for_fief
+    db.list_raid_intents.side_effect = list_raid_intents
+    db.claim_resolve_action_intent.side_effect = claim_resolve_action_intent
+    db.update_action_intent_payload.side_effect = update_action_intent_payload
+    world = {
+        "id": 1,
+        "tick_index": 10,
+        "tick_phase": "play",
+        "timezone": "UTC",
+        "play_opened_at": _utcnow(),
+    }
+    db.get_world.return_value = world
 
     engine = Engine(db)
     engine.barn_level = MagicMock(return_value=0)
     engine._spend_action = MagicMock()
+    engine.require_active_fief = MagicMock(side_effect=get_fief)
+    engine._world_id_for_realm = MagicMock(return_value=1)
+    engine.raid_declare_is_open = MagicMock(return_value=True)
+    engine.world_tick_incomplete = MagicMock(return_value=False)
+    engine._require_cross_valley_caught_up = MagicMock()
+    engine._format_raid_deadline = MagicMock(return_value="12:00")
     prod = MagicMock()
     prod.defense = 1.0
     prod.resources.return_value = {B.RES_GRAIN: 5.0, B.RES_GOODS: 2.0, B.RES_MIGHT: 0.0}
     engine.fief_prod = MagicMock(return_value=prod)
+    engine._intents = intents
     return engine, fiefs, B
+
+
+def _declare(engine, might=10):
+    return engine.declare_raid(1, 2, might)
+
+
+def _resolve_night(engine):
+    return engine.resolve_pending_raids(1, 10)
 
 
 def test_raid_does_not_bank_victim_pending_might():
     engine, fiefs, _B = _raid_stateful_engine()
-    result = engine.raid(1, 2, might=10)
-    assert fiefs[2]["might"] == 10
+    _declare(engine, 10)
+    assert fiefs[1]["might"] == 10  # escrow
+    with patch("app.engine.resolve_raid") as resolve:
+        resolve.return_value = RaidResult(
+            success=True,
+            ratio=1.0,
+            might_lost=5,
+            stolen={B.RES_GRAIN: 3, B.RES_GOODS: 1},
+            defense_used=1,
+            intercept_applied=False,
+            public_line="ok",
+        )
+        _resolve_night(engine)
     assert fiefs[2]["pending_might"] == 8.0
-    assert fiefs[2]["pending_grain"] == 0.0
-    assert fiefs[2]["pending_goods"] == 0.0
-    # pending зерно/товары вошли в stash, затем могла уйти добыча
-    assert fiefs[2]["grain"] == 70 - result.stolen[B.RES_GRAIN]
-    assert fiefs[2]["goods"] == 32 - result.stolen[B.RES_GOODS]
+    assert fiefs[2]["grain"] == 70 - 3
+    assert fiefs[2]["goods"] == 32 - 1
 
 
 def test_engine_raid_passes_victim_might_into_defense():
@@ -617,17 +654,18 @@ def test_engine_raid_passes_victim_might_into_defense():
             "pending_might": 0.0,
         },
     )
+    _declare(engine, 10)
     with patch("app.engine.resolve_raid") as resolve:
         resolve.return_value = RaidResult(
             success=False,
             ratio=0.2,
-            might_lost=10,
+            might_lost=5,
             stolen={B.RES_GRAIN: 0, B.RES_GOODS: 0},
             defense_used=28,
             intercept_applied=False,
             public_line="отбит",
         )
-        engine.raid(1, 2, might=10)
+        _resolve_night(engine)
     assert resolve.call_args.kwargs["victim_might"] == 27
     assert fiefs[2]["might"] == 27
 
@@ -638,7 +676,7 @@ def test_raid_bidirectional_pair_cooldown_blocks_revenge():
         vic_extra={"pending_grain": 0.0, "pending_goods": 0.0, "pending_might": 0.0},
     )
     try:
-        engine.raid(1, 2, might=10)
+        _declare(engine, 10)
         raise AssertionError("expected pair cooldown")
     except ValueError as e:
         assert "пару" in str(e).lower() or "кулдаун" in str(e).lower()
@@ -651,6 +689,7 @@ def test_raid_has_no_personal_attacker_cooldown():
         atk_extra={"last_raid_tick": 10, "might": 30},
         vic_extra={"pending_grain": 0.0, "pending_goods": 0.0, "pending_might": 0.0},
     )
+    _declare(engine, 10)
     with patch("app.engine.resolve_raid") as resolve:
         resolve.return_value = RaidResult(
             success=True,
@@ -661,9 +700,8 @@ def test_raid_has_no_personal_attacker_cooldown():
             intercept_applied=False,
             public_line="ok",
         )
-        result = engine.raid(1, 2, might=10)
-    assert result.success is True
-    assert fiefs[1]["might"] == 25
+        _resolve_night(engine)
+    assert fiefs[1]["might"] == 25  # 30-10 escrow +5 returned
     assert not hasattr(B, "RAID_ATTACKER_COOLDOWN_TICKS")
 
 
@@ -673,7 +711,7 @@ def test_raid_shield_blocks_outgoing():
         vic_extra={"pending_grain": 0.0, "pending_goods": 0.0, "pending_might": 0.0},
     )
     try:
-        engine.raid(1, 2, might=10)
+        _declare(engine, 10)
         raise AssertionError("expected shield block")
     except ValueError as e:
         assert "щит" in str(e).lower()
@@ -684,6 +722,7 @@ def test_successful_raid_grants_one_tick_global_shield():
     engine, fiefs, B = _raid_stateful_engine(
         vic_extra={"pending_grain": 0.0, "pending_goods": 0.0, "pending_might": 0.0},
     )
+    _declare(engine, 10)
     with patch("app.engine.resolve_raid") as resolve:
         resolve.return_value = RaidResult(
             success=True,
@@ -694,8 +733,8 @@ def test_successful_raid_grants_one_tick_global_shield():
             intercept_applied=False,
             public_line="ok",
         )
-        engine.raid(1, 2, might=10)
-    assert fiefs[2]["shield_until_tick"] == 10 + B.RAID_VICTIM_SHIELD_TICKS
+        _resolve_night(engine)
+    assert fiefs[2]["shield_until_tick"] == 10 + 1 + B.RAID_VICTIM_SHIELD_TICKS
     assert B.RAID_VICTIM_SHIELD_TICKS == 1
 
 
@@ -710,8 +749,15 @@ def test_victim_shield_blocks_any_attacker():
         },
     )
     try:
-        engine.raid(1, 2, might=10)
+        _declare(engine, 10)
         raise AssertionError("expected global shield block")
     except ValueError as e:
         assert "щит" in str(e).lower()
     assert fiefs[1]["might"] == 20
+
+
+def test_declare_escrow_opens_defense_hole():
+    engine, fiefs, _B = _raid_stateful_engine()
+    _declare(engine, 10)
+    assert fiefs[1]["might"] == 10
+    assert any(i["status"] == "open" for i in engine._intents)
