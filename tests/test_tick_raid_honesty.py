@@ -465,7 +465,7 @@ def test_manual_tick_does_not_advance_schedule_markers():
     ):
         engine.run_realm_tick(1)
 
-    assert realm["day_number"] == 4
+    assert realm["day_number"] == 3
     assert "last_tick_at" in realm
     assert realm.get("last_tick_local_date") is None
     assert realm.get("last_tick_slot") is None
@@ -497,7 +497,8 @@ def test_scheduled_tick_writes_slot_markers():
     ):
         engine.run_realm_tick(1, tick_slot=0)
 
-    assert realm["day_number"] == 4
+    # Первая установка курсора даты не бампит день (нет prev_local для сравнения).
+    assert realm["day_number"] == 3
     assert realm.get("last_tick_slot") == 0
     assert realm.get("last_tick_local_date") is not None
 
