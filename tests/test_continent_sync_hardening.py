@@ -2,12 +2,77 @@
 from __future__ import annotations
 
 from contextlib import contextmanager, nullcontext
+from datetime import date, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from app.engine import Engine
 from app.scheduler import _maybe_post_world_catastrophe
+
+
+def _freeze_msk(year: int, month: int, day: int, hour: int = 12):
+    fixed_now = datetime(year, month, day, hour, 0, tzinfo=ZoneInfo("Europe/Moscow"))
+
+    class _FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return fixed_now
+            return fixed_now.astimezone(tz)
+
+    return _FrozenDateTime
+
+
+def _ready_clock_world(**world_overrides):
+    """Мир с одной долиной, готовый к новому advance (не resume)."""
+    db = MagicMock()
+    db.transaction.return_value = nullcontext()
+    world = _world(**world_overrides)
+    tick = int(world.get("tick_index") or 0)
+    r1 = _realm(
+        1,
+        last_economy_tick=tick,
+        tick_index=tick,
+        day_number=int(world.get("day_number") or 1),
+    )
+    chain = [r1]
+    db.get_world.return_value = world
+    db.get_or_create_world.return_value = world
+    db.list_realms_by_chain.return_value = chain
+
+    def sync(_wid):
+        for r in chain:
+            for k in (
+                "day_number",
+                "tick_index",
+                "last_tick_local_date",
+                "last_tick_slot",
+                "active_minor_key",
+                "pending_minor_key",
+                "tick_phase",
+            ):
+                if k in world:
+                    r[k] = world[k]
+
+    def update_world(_wid, **fields):
+        world.update(fields)
+        sync(_wid)
+
+    def update_realm(rid, **fields):
+        for r in chain:
+            if int(r["id"]) == int(rid):
+                r.update(fields)
+
+    db.sync_realms_clock_from_world.side_effect = sync
+    db.update_world.side_effect = update_world
+    db.update_realm.side_effect = update_realm
+    engine = Engine(db)
+    engine.run_realm_tick = MagicMock(
+        return_value={"realm_id": 1, "digest": "d", "chat_id": -1}
+    )
+    return engine, world, r1
 
 
 def _world(**overrides):
@@ -26,6 +91,7 @@ def _world(**overrides):
         "next_catastrophe_tick": 5,
         "next_catastrophe_key": "bandit_night",
         "last_catastrophe_key": None,
+        "tick_phase": "play",
     }
     data.update(overrides)
     return data
@@ -77,6 +143,12 @@ def test_same_realm_raid_appends_pending_line_once():
     db.realms_are_adjacent.return_value = True
     db.last_raid_attacker_victim.return_value = None
     db.pact_members.return_value = []
+    world = _world(tick_index=3, tick_phase="play")
+    db.get_world.return_value = world
+    db.get_or_create_world.return_value = world
+    db.list_realms_by_chain.return_value = [
+        _realm(10, tick_index=3, last_economy_tick=3)
+    ]
 
     updates: list[list] = []
 
@@ -308,6 +380,7 @@ def test_world_tick_equal_clock_and_resume_after_partial_failure():
     assert r2.get("last_economy_tick") in (None, 0)
     assert first["incomplete"] is True
     assert world.get("pending_minor_key") is None
+    assert world["tick_phase"] == "economy"
 
     with patch("app.engine.roll_minor_event", return_value="harvest"):
         second = engine.run_world_tick(1)
@@ -318,8 +391,158 @@ def test_world_tick_equal_clock_and_resume_after_partial_failure():
     assert r2["last_economy_tick"] == 1
     assert second["incomplete"] is False
     assert world["pending_minor_key"] == "harvest"
+    assert world["tick_phase"] == "play"
     assert calls.count(1) == 1
     assert calls.count(2) == 2
+
+
+def test_calendar_day_bumps_once_across_same_local_date_slots():
+    """4 слота одного локального дня: day_number +1 один раз, tick_index +4."""
+    engine, world, _r1 = _ready_clock_world(
+        tick_index=4,
+        day_number=10,
+        last_tick_local_date=date(2026, 7, 16),
+        last_tick_slot=3,
+        pending_minor_key="",
+    )
+    frozen = _freeze_msk(2026, 7, 17)
+    with (
+        patch("app.engine.datetime", frozen),
+        patch("app.engine.roll_minor_event", return_value=None),
+    ):
+        for slot in (0, 1, 2, 3):
+            engine.run_world_tick(1, tick_slot=slot)
+
+    assert world["tick_index"] == 8
+    assert world["day_number"] == 11
+    assert world["last_tick_local_date"] == date(2026, 7, 17)
+    assert world["last_tick_slot"] == 3
+
+
+def test_calendar_day_bumps_on_new_local_date():
+    engine, world, _r1 = _ready_clock_world(
+        tick_index=8,
+        day_number=11,
+        last_tick_local_date=date(2026, 7, 17),
+        last_tick_slot=3,
+        pending_minor_key="",
+    )
+    frozen = _freeze_msk(2026, 7, 18, hour=10)
+    with (
+        patch("app.engine.datetime", frozen),
+        patch("app.engine.roll_minor_event", return_value=None),
+    ):
+        engine.run_world_tick(1, tick_slot=0)
+
+    assert world["tick_index"] == 9
+    assert world["day_number"] == 12
+    assert world["last_tick_local_date"] == date(2026, 7, 18)
+
+
+def test_calendar_day_unchanged_on_resume_incomplete():
+    db = MagicMock()
+    db.transaction.return_value = nullcontext()
+    r1 = _realm(1, last_economy_tick=0, tick_index=0, day_number=10)
+    r2 = _realm(2, last_economy_tick=0, tick_index=0, day_number=10)
+    world = _world(
+        tick_index=0,
+        day_number=10,
+        pending_minor_key=None,
+        last_tick_local_date=date(2026, 7, 16),
+        last_tick_slot=3,
+    )
+    chain = [r1, r2]
+    db.get_world.return_value = world
+    db.get_or_create_world.return_value = world
+    db.list_realms_by_chain.return_value = chain
+
+    def sync(_wid):
+        for r in chain:
+            r["tick_index"] = world["tick_index"]
+            r["day_number"] = world["day_number"]
+            r["last_tick_local_date"] = world.get("last_tick_local_date")
+            r["pending_minor_key"] = world.get("pending_minor_key")
+
+    def update_world(_wid, **fields):
+        world.update(fields)
+        sync(_wid)
+
+    def update_realm(rid, **fields):
+        for r in chain:
+            if int(r["id"]) == int(rid):
+                r.update(fields)
+
+    db.sync_realms_clock_from_world.side_effect = sync
+    db.update_world.side_effect = update_world
+    db.update_realm.side_effect = update_realm
+
+    engine = Engine(db)
+    calls: list[int] = []
+
+    def fake_realm_tick(rid, tick_slot=None, *, advance_clock=True):
+        calls.append(int(rid))
+        if int(rid) == 2 and len([c for c in calls if c == 2]) == 1:
+            raise RuntimeError("boom")
+        return {"realm_id": int(rid), "digest": f"d{rid}", "chat_id": -rid}
+
+    engine.run_realm_tick = MagicMock(side_effect=fake_realm_tick)
+    frozen = _freeze_msk(2026, 7, 17)
+
+    with (
+        patch("app.engine.datetime", frozen),
+        patch("app.engine.roll_minor_event", return_value="fog"),
+    ):
+        first = engine.run_world_tick(1, tick_slot=0)
+    assert first["incomplete"] is True
+    assert world["tick_index"] == 1
+    assert world["day_number"] == 11
+
+    with patch("app.engine.roll_minor_event", return_value="harvest"):
+        second = engine.run_world_tick(1)
+    assert second["resumed"] is True
+    assert world["tick_index"] == 1
+    assert world["day_number"] == 11
+
+
+def test_admin_tick_without_slot_does_not_bump_day_number():
+    engine, world, _r1 = _ready_clock_world(
+        tick_index=5,
+        day_number=10,
+        last_tick_local_date=date(2026, 7, 16),
+        last_tick_slot=2,
+        pending_minor_key="",
+    )
+    frozen = _freeze_msk(2026, 7, 17)
+    with (
+        patch("app.engine.datetime", frozen),
+        patch("app.engine.roll_minor_event", return_value=None),
+    ):
+        engine.run_world_tick(1, tick_slot=None)
+
+    assert world["tick_index"] == 6
+    assert world["day_number"] == 10
+    assert world["last_tick_local_date"] == date(2026, 7, 16)
+    assert world["last_tick_slot"] == 2
+
+
+def test_empty_world_tick_does_not_bump_calendar_day():
+    db = MagicMock()
+    db.transaction.return_value = nullcontext()
+    world = _world(tick_index=3, day_number=7, last_tick_local_date=date(2026, 7, 16))
+    db.get_world.return_value = world
+    db.get_or_create_world.return_value = world
+    db.list_realms_by_chain.return_value = []
+
+    def update_world(_wid, **fields):
+        world.update(fields)
+
+    db.update_world.side_effect = update_world
+    engine = Engine(db)
+
+    result = engine.run_world_tick(1, tick_slot=0)
+    assert result["realms"] == []
+    assert world["tick_index"] == 3
+    assert world["day_number"] == 7
 
 
 @pytest.mark.asyncio
@@ -583,7 +806,12 @@ def test_join_fief_rejects_second_estate_on_continent():
     db = MagicMock()
     user = MagicMock(id=42, username="u", full_name="U", first_name="U")
     db.get_fief_by_user.return_value = None
-    db.list_fiefs_by_user.return_value = [{"id": 9, "realm_id": 1, "user_id": 42}]
+    db.get_fief_by_user_world.return_value = {
+        "id": 9,
+        "realm_id": 1,
+        "user_id": 42,
+        "world_id": 1,
+    }
     db._fetchone.return_value = {
         "id": 50,
         "realm_id": 2,
@@ -592,7 +820,7 @@ def test_join_fief_rejects_second_estate_on_continent():
         "x": 1,
         "y": 1,
     }
-    db.get_realm.return_value = {"id": 2, "width": 5, "height": 5}
+    db.get_realm.return_value = {"id": 2, "width": 5, "height": 5, "world_id": 1}
     db.get_tiles.return_value = []
 
     engine = Engine(db)
@@ -601,6 +829,7 @@ def test_join_fief_rejects_second_estate_on_continent():
     with pytest.raises(ValueError, match="уже есть усадьба"):
         engine.join_fief(2, user, tile_id=50)
     db.create_fief.assert_not_called()
+    db.get_fief_by_user_world.assert_called_once_with(42, 1)
 
 
 _INCOMPLETE_MSG = "догоняет тик"
@@ -703,7 +932,7 @@ def test_incomplete_world_blocks_cross_valley_raid_send_trade_pact():
         engine.accept_pact_invite(2, 9)
 
 
-def test_incomplete_world_allows_same_realm_raid():
+def test_incomplete_world_blocks_same_realm_raid():
     db, B, r1, r2 = _incomplete_world_db(caught_up=False)
     atk = {
         "id": 1,
@@ -736,21 +965,10 @@ def test_incomplete_world_allows_same_realm_raid():
     )
     engine.barn_level = MagicMock(return_value=0)
 
-    with patch(
-        "app.engine.resolve_raid",
-        return_value=MagicMock(
-            public_line="Набег!",
-            success=False,
-            might_lost=1,
-            grain_stolen=0,
-            goods_stolen=0,
-            intercept_applied=False,
-        ),
-    ):
-        result = engine.raid(1, 2, might=5)
-
-    assert result.via_portal is False
-    db.log_raid.assert_called_once()
+    with pytest.raises(ValueError, match=_INCOMPLETE_MSG):
+        engine.raid(1, 2, might=5)
+    engine._spend_action.assert_not_called()
+    db.log_raid.assert_not_called()
 
 
 def test_caught_up_world_allows_cross_valley_again():
@@ -881,8 +1099,17 @@ def test_incomplete_same_realm_raid_skips_foreign_interceptor_spend():
     def update_fief(fid, **fields):
         fiefs[int(fid)].update(fields)
 
+    def debit_fief_resources(fid, **amounts):
+        row = fiefs[int(fid)]
+        for col, amt in amounts.items():
+            if int(row.get(col) or 0) < int(amt):
+                return None
+            row[col] = int(row[col]) - int(amt)
+        return dict(row)
+
     db.get_fief.side_effect = get_fief
     db.update_fief.side_effect = update_fief
+    db.debit_fief_resources.side_effect = debit_fief_resources
     db.last_raid_attacker_victim.return_value = None
     db.pact_members.return_value = [fiefs[2], fiefs[3]]
     db.update_realm = MagicMock()
@@ -891,6 +1118,8 @@ def test_incomplete_same_realm_raid_skips_foreign_interceptor_spend():
     engine.require_active_fief = MagicMock(side_effect=get_fief)
     engine.collect_for_fief = MagicMock()
     engine._spend_action = MagicMock()
+    # Окно действий снято, чтобы проверить skip чужого перехватчика при incomplete.
+    engine._require_action_window = MagicMock()
     engine.fief_label = MagicMock(side_effect=lambda f: f["name"])
     engine.fief_prod = MagicMock(
         return_value=MagicMock(defense=0, grain=1, goods=1)
@@ -917,6 +1146,8 @@ def test_incomplete_same_realm_raid_skips_foreign_interceptor_spend():
     assert resolve.call_args.kwargs["intercept"] is False
     assert fiefs[3]["might"] == foreign_might_before
     for call in db.update_fief.call_args_list:
+        assert call.args[0] != 3
+    for call in db.debit_fief_resources.call_args_list:
         assert call.args[0] != 3
 
 
@@ -985,8 +1216,17 @@ def test_incomplete_same_realm_raid_spends_local_cover_allies_interceptor():
     def update_fief(fid, **fields):
         fiefs[int(fid)].update(fields)
 
+    def debit_fief_resources(fid, **amounts):
+        row = fiefs[int(fid)]
+        for col, amt in amounts.items():
+            if int(row.get(col) or 0) < int(amt):
+                return None
+            row[col] = int(row[col]) - int(amt)
+        return dict(row)
+
     db.get_fief.side_effect = get_fief
     db.update_fief.side_effect = update_fief
+    db.debit_fief_resources.side_effect = debit_fief_resources
     db.last_raid_attacker_victim.return_value = None
     # Чужой союзник первым: incomplete должен его пропустить и взять локального.
     db.pact_members.return_value = [fiefs[2], fiefs[3], fiefs[4]]
@@ -996,6 +1236,7 @@ def test_incomplete_same_realm_raid_spends_local_cover_allies_interceptor():
     engine.require_active_fief = MagicMock(side_effect=get_fief)
     engine.collect_for_fief = MagicMock()
     engine._spend_action = MagicMock()
+    engine._require_action_window = MagicMock()
     engine.fief_label = MagicMock(side_effect=lambda f: f["name"])
     engine.fief_prod = MagicMock(
         return_value=MagicMock(defense=0, grain=1, goods=1)
@@ -1025,9 +1266,11 @@ def test_incomplete_same_realm_raid_spends_local_cover_allies_interceptor():
     assert fiefs[3]["might"] == foreign_might_before
     for call in db.update_fief.call_args_list:
         assert call.args[0] != 3
+    for call in db.debit_fief_resources.call_args_list:
+        assert call.args[0] != 3
 
 
-def test_incomplete_world_allows_open_market_post_trade():
+def test_incomplete_world_blocks_open_market_post_trade():
     db, B, r1, r2 = _incomplete_world_db(caught_up=False)
     seller = {
         "id": 1,
@@ -1052,11 +1295,10 @@ def test_incomplete_world_allows_open_market_post_trade():
     engine = Engine(db)
     engine.collect_for_fief = MagicMock()
 
-    msg = engine.post_trade(1, B.RES_GRAIN, 5, B.RES_GOODS, 3, target_fief_id=None)
-    assert msg.startswith("Лот #11")
-    # Без эскроу зерно остаётся на усадьбе до сделки.
+    with pytest.raises(ValueError, match=_INCOMPLETE_MSG):
+        engine.post_trade(1, B.RES_GRAIN, 5, B.RES_GOODS, 3, target_fief_id=None)
+    db.create_trade.assert_not_called()
     assert fiefs[1]["grain"] == 50
-    db.create_trade.assert_called_once()
 
 
 def test_incomplete_leave_pact_blocks_cross_valley_dissolve():
@@ -1098,3 +1340,185 @@ def test_incomplete_leave_pact_blocks_cross_valley_dissolve():
         engine.leave_pact(1)
     assert fiefs[1]["pact_id"] == 50
     db.dissolve_pact.assert_not_called()
+
+
+def test_stuck_economy_after_catch_up_closes_play_without_new_tick():
+    """Crash после fan-out: следующий вызов ставит play, не двигает tick_index."""
+    db = MagicMock()
+    db.transaction.return_value = nullcontext()
+    r1 = _realm(1, tick_index=5, last_economy_tick=5)
+    r2 = _realm(2, tick_index=5, last_economy_tick=5)
+    world = _world(tick_index=5, tick_phase="economy", pending_minor_key=None)
+    chain = [r1, r2]
+    db.get_world.return_value = world
+    db.get_or_create_world.return_value = world
+    db.list_realms_by_chain.return_value = chain
+
+    def update_world(_wid, **fields):
+        world.update(fields)
+
+    db.update_world.side_effect = update_world
+    db.sync_realms_clock_from_world = MagicMock()
+
+    engine = Engine(db)
+    engine.run_realm_tick = MagicMock(
+        side_effect=AssertionError("не должен стартовать новый fan-out")
+    )
+
+    with patch("app.engine.roll_minor_event", return_value="fog"):
+        result = engine.run_world_tick(1)
+
+    assert result["incomplete"] is False
+    assert result["resumed"] is True
+    assert world["tick_index"] == 5
+    assert world["tick_phase"] == "play"
+    assert world["pending_minor_key"] == "fog"
+    engine.run_realm_tick.assert_not_called()
+
+
+def test_economy_phase_rejects_spend_even_when_caught_up():
+    db, _B, r1, r2 = _incomplete_world_db(caught_up=True)
+    db.get_world.return_value = _world(tick_index=3, tick_phase="economy")
+    db.get_or_create_world.return_value = db.get_world.return_value
+    db.get_user.return_value = {"last_realm_id": 1}
+    db.list_fiefs_by_user.return_value = [{"id": 1, "realm_id": 1}]
+    db.spend_fief_action.return_value = {
+        "id": 1,
+        "actions": 0,
+        "frozen": False,
+        "user_id": 10,
+        "realm_id": 1,
+    }
+
+    engine = Engine(db)
+    fief = {
+        "id": 1,
+        "actions": 1,
+        "frozen": False,
+        "user_id": 10,
+        "realm_id": 1,
+    }
+    with pytest.raises(ValueError, match=_INCOMPLETE_MSG):
+        engine._spend_action(fief)
+    db.spend_fief_action.assert_not_called()
+
+
+def test_world_tick_sets_play_after_successful_catch_up():
+    db = MagicMock()
+    db.transaction.return_value = nullcontext()
+    r1 = _realm(1, last_economy_tick=0)
+    r2 = _realm(2, last_economy_tick=0)
+    world = _world(tick_index=0, pending_minor_key=None, tick_phase="play")
+    chain = [r1, r2]
+
+    db.get_world.return_value = world
+    db.get_or_create_world.return_value = world
+    db.list_realms_by_chain.return_value = chain
+
+    def sync(_wid):
+        for r in chain:
+            r["tick_index"] = world["tick_index"]
+            r["day_number"] = world["day_number"]
+
+    def update_world(_wid, **fields):
+        world.update(fields)
+        sync(_wid)
+
+    def update_realm(rid, **fields):
+        for r in chain:
+            if int(r["id"]) == int(rid):
+                r.update(fields)
+
+    db.sync_realms_clock_from_world.side_effect = sync
+    db.update_world.side_effect = update_world
+    db.update_realm.side_effect = update_realm
+
+    engine = Engine(db)
+    engine.run_realm_tick = MagicMock(
+        side_effect=lambda rid, tick_slot=None, *, advance_clock=True: {
+            "realm_id": int(rid),
+            "digest": f"d{rid}",
+            "chat_id": -rid,
+        }
+    )
+
+    with patch("app.engine.roll_minor_event", return_value="fog"):
+        result = engine.run_world_tick(1, tick_slot=0)
+
+    assert result["incomplete"] is False
+    assert world["tick_phase"] == "play"
+    assert r1["last_economy_tick"] == 1
+    assert r2["last_economy_tick"] == 1
+
+
+def test_tick_phase_migration_default_play():
+    from app.database import Database
+
+    db = Database(connect=False)
+    db.connection = MagicMock()
+    cursor = MagicMock()
+    db.cursor = cursor
+    # Минимальный happy-path для _ensure_world_schema после CREATE/ALTER.
+    cursor.fetchone.side_effect = [
+        (1,),  # existing world id
+        (0,),  # need_attach count
+        None,  # no further rows needed for optional branches
+    ]
+    cursor.fetchall.return_value = []
+
+    try:
+        db._ensure_world_schema()
+    except Exception:
+        # Схема тянет много веток; достаточно проверить ADD COLUMN.
+        pass
+
+    executed = [" ".join(c[0][0].split()) for c in cursor.execute.call_args_list]
+    assert any(
+        "ADD COLUMN IF NOT EXISTS tick_phase" in sql and "DEFAULT 'play'" in sql
+        for sql in executed
+    )
+
+
+def test_needs_economy_wake_uses_normalize():
+    from app.domain.tick_pipeline import needs_economy_wake
+
+    assert needs_economy_wake({"tick_phase": "economy"}) is True
+    assert needs_economy_wake({"tick_phase": "play"}) is False
+    assert needs_economy_wake({}) is False
+    assert needs_economy_wake({"tick_phase": None}) is False
+    assert needs_economy_wake({"tick_phase": "unknown"}) is False
+
+
+@pytest.mark.asyncio
+async def test_scheduler_economy_wake_calls_run_world_tick_without_slot():
+    """economy + caught up: будит run_world_tick с tick_slot=None, даже если слот due."""
+    from app.scheduler import _scheduler_tick
+
+    world = _world(
+        tick_index=5,
+        tick_phase="economy",
+        last_tick_local_date="2026-07-17",
+        last_tick_slot=0,
+    )
+    engine = MagicMock()
+    engine.db.get_or_create_world.return_value = world
+    engine.db.get_world.return_value = world
+    engine.db.list_realms_by_chain.return_value = []
+    engine.world_tick_incomplete.return_value = False
+    engine.run_world_tick.return_value = {
+        "world_id": 1,
+        "realms": [],
+        "resumed": True,
+        "incomplete": False,
+    }
+
+    bot = MagicMock()
+    with (
+        patch("app.scheduler.get_engine", return_value=engine),
+        patch("app.scheduler.due_tick_slot", return_value=1),
+        patch("app.scheduler._maybe_post_world_catastrophe", new=AsyncMock()),
+        patch("app.scheduler.announce_pending_patches", new=AsyncMock()),
+    ):
+        await _scheduler_tick(bot)
+
+    engine.run_world_tick.assert_called_once_with(1, tick_slot=None)

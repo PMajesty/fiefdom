@@ -12,11 +12,13 @@ from aiogram import Bot
 
 from app import balance as B
 from app.config import TIMEZONE, tick_slots
+from app.domain.event_apply import CatastropheResolveCtx, resolve_catastrophe
 from app.domain.events import (
     CATASTROPHES,
     next_catastrophe_delay_ticks,
     pick_catastrophe,
 )
+from app.domain.tick_pipeline import needs_economy_wake
 from app.domain.tick_schedule import due_tick_slot
 from app.handlers.shared import get_engine, post_digest, post_realm_public
 from app.patch_announce import announce_pending_patches
@@ -77,11 +79,13 @@ async def _scheduler_tick(bot: Bot) -> None:
         slots=tick_slots(),
     )
     incomplete = engine.world_tick_incomplete(int(world["id"]))
-    if incomplete or slot_index is not None:
-        # incomplete: догоняем долины без нового слота; иначе обычный due.
+    # economy без incomplete: добить play после crash, не открывая новый слот.
+    phase_economy = needs_economy_wake(world)
+    if incomplete or phase_economy or slot_index is not None:
+        # incomplete/economy: догоняем/закрываем без нового слота; иначе обычный due.
         result = engine.run_world_tick(
             int(world["id"]),
-            tick_slot=None if incomplete else slot_index,
+            tick_slot=None if (incomplete or phase_economy) else slot_index,
         )
         for item in result.get("realms") or []:
             if item.get("skipped"):
@@ -234,7 +238,7 @@ def _heal_divergent_catastrophe_wave(
         if _wave_pair(ev) == canonical:
             have_ids.add(rid)
             continue
-        # Sync heal: закрываем без _resolve_bandit_night и прочих gameplay-эффектов.
+        # Sync heal: закрываем без resolve_catastrophe и прочих gameplay-эффектов.
         engine.db.update_event(int(ev["id"]), status="resolved")
         closed.append(rid)
     logger.warning(
@@ -366,57 +370,18 @@ async def _resolve_expired_catastrophes(bot: Bot, engine, realm: dict) -> None:
         if int(resolves_tick) > tick_index:
             continue
 
-        key = ev.get("event_key")
-        if key == "bandit_night":
-            result_text = _resolve_bandit_night(engine, realm, ev)
-        elif key == "cattle_plague":
-            engine.db.update_event(ev["id"], status="resolved")
-            result_text = "Мор скота отступил. Поля снова дышат."
-        else:
-            engine.db.update_event(ev["id"], status="resolved")
-            meta = CATASTROPHES.get(key) or {}
-            name = meta.get("name_ru", key)
-            result_text = f"Катастрофа \"{name}\" завершилась."
+        key = str(ev.get("event_key") or "")
+        result_text = resolve_catastrophe(
+            key,
+            CatastropheResolveCtx(
+                event_id=int(ev["id"]),
+                fiefs=list(engine.db.list_fiefs(realm["id"])),
+                event_actions=list(engine.db.event_actions(ev["id"])),
+                get_fief=engine.db.get_fief,
+                update_fief=engine.db.update_fief,
+                update_event=engine.db.update_event,
+            ),
+        )
 
         if result_text:
             await post_realm_public(bot, int(realm["id"]), result_text)
-
-
-def _resolve_bandit_night(engine, realm: dict, event: dict) -> str:
-    fiefs = engine.db.list_fiefs(realm["id"])
-    players = max(1, len(fiefs))
-    threshold = int(math.ceil(B.BANDIT_NIGHT_MIGHT_PER_PLAYER * players))
-    actions = engine.db.event_actions(event["id"])
-    total_might = sum(int(a.get("amount") or 0) for a in actions)
-    contributors = {int(a["fief_id"]) for a in actions if int(a.get("amount") or 0) > 0}
-
-    if total_might >= threshold:
-        engine.db.update_event(event["id"], status="resolved")
-        loot_each = B.BANDIT_NIGHT_LOOT_PER_PLAYER
-        if contributors:
-            share = max(1, int((loot_each * players) // len(contributors)))
-            for fid in contributors:
-                f = engine.db.get_fief(fid)
-                if f:
-                    engine.db.update_fief(fid, goods=f["goods"] + share)
-        return (
-            f"⚔️ Ночь бандитов отбита! Собрано {total_might}/{threshold} силы. "
-            f"Участники получили добычу."
-        )
-
-    loss_note = []
-    for f in fiefs:
-        if f["id"] in contributors:
-            continue
-        if f.get("frozen"):
-            continue
-        loss = max(1, int(f["grain"] * B.BANDIT_NIGHT_FAIL_GRAIN_FRAC))
-        engine.db.update_fief(f["id"], grain=max(0, f["grain"] - loss))
-        loss_note.append(f["name"])
-
-    engine.db.update_event(event["id"], status="resolved")
-    who = ", ".join(loss_note[:8]) if loss_note else "-"
-    return (
-        f"☠️ Ночь бандитов: провал ({total_might}/{threshold} силы). "
-        f"Пострадали: {who}."
-    )

@@ -558,14 +558,20 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
                 engine.db.set_last_realm(user.id, rid)
                 await show_status(message, existing["id"])
                 return
-            owned = engine.db.list_fiefs_by_user(user.id)
+            world_id = realm.get("world_id")
+            owned = (
+                engine.db.get_fief_by_user_world(user.id, int(world_id))
+                if world_id is not None
+                else None
+            )
             if owned:
+                engine.db.set_last_realm(user.id, owned["realm_id"])
                 await answer_html(
                     message,
                     "У вас уже есть усадьба на континенте. "
                     "Вторая недоступна - открываю вашу.",
                 )
-                await show_status(message, owned[0]["id"])
+                await show_status(message, owned["id"])
                 return
             tiles = engine.starter_tile_choices(rid, 3)
             if not tiles:
@@ -583,29 +589,35 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
             if not realm:
                 await answer_html(message, "Долина не найдена.")
                 return
-            engine.db.set_last_realm(user.id, rid)
             fief = engine.db.get_fief_by_user(rid, user.id)
             if fief:
+                engine.db.set_last_realm(user.id, rid)
                 await show_status(message, fief["id"])
-            else:
-                owned = engine.db.list_fiefs_by_user(user.id)
-                if owned:
-                    await answer_html(
-                        message,
-                        "У вас уже есть усадьба на континенте. "
-                        "Вторая недоступна - открываю вашу.",
-                    )
-                    await show_status(message, owned[0]["id"])
-                    return
-                tiles = engine.starter_tile_choices(rid, 3)
-                if not tiles:
-                    await answer_html(message, "Нет свободных стартовых клеток.")
-                    return
+                return
+            world_id = realm.get("world_id")
+            owned = (
+                engine.db.get_fief_by_user_world(user.id, int(world_id))
+                if world_id is not None
+                else None
+            )
+            if owned:
+                engine.db.set_last_realm(user.id, owned["realm_id"])
                 await answer_html(
                     message,
-                    f"Усадьбы ещё нет. Выберите клетку в \"{realm['title']}\":",
-                    reply_markup=starter_tiles_kb(rid, tiles),
+                    "У вас уже есть усадьба на континенте. "
+                    "Вторая недоступна - открываю вашу.",
                 )
+                await show_status(message, owned["id"])
+                return
+            tiles = engine.starter_tile_choices(rid, 3)
+            if not tiles:
+                await answer_html(message, "Нет свободных стартовых клеток.")
+                return
+            await answer_html(
+                message,
+                f"Усадьбы ещё нет. Выберите клетку в \"{realm['title']}\":",
+                reply_markup=starter_tiles_kb(rid, tiles),
+            )
             return
 
         fiefs = engine.db.list_fiefs_by_user(user.id)

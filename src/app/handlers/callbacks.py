@@ -51,35 +51,15 @@ async def cb_catastrophe_contribute(callback: CallbackQuery) -> None:
         parts = callback.data.split(":")
         event_id = int(parts[1])
         action = parts[2] if len(parts) > 2 else "might5"
-        ev = engine.db._fetchone("SELECT * FROM realm_events WHERE id=%s;", (event_id,))
-        if not ev or ev.get("status") != "active":
-            await callback.answer("Событие уже завершено", show_alert=True)
-            return
-        fief = engine.db.get_fief_by_user(ev["realm_id"], callback.from_user.id)
-        if not fief:
-            await callback.answer("Сначала получите усадьбу в личке", show_alert=True)
-            return
-        if action == "might5":
-            amount = 5
-            if fief["might"] < amount:
-                await callback.answer("Недостаточно силы", show_alert=True)
-                return
-            first = engine.db.add_event_action(event_id, fief["id"], "might", amount)
-            if not first:
-                with engine.db.lock:
-                    engine.db.cursor.execute(
-                        """
-                        UPDATE event_actions SET amount = amount + %s
-                        WHERE event_id=%s AND fief_id=%s AND action_key='might';
-                        """,
-                        (amount, event_id, fief["id"]),
-                    )
-                    engine.db.commit()
-            engine.db.update_fief(fief["id"], might=fief["might"] - amount)
-            total = sum(int(a.get("amount") or 0) for a in engine.db.event_actions(event_id))
-            await callback.answer(f"Вложено! Всего силы в котле: {total}", show_alert=True)
-        else:
+        if action != "might5":
             await callback.answer("Неизвестное действие", show_alert=True)
+            return
+        total = engine.contribute_catastrophe_might(
+            event_id, callback.from_user.id, amount=5
+        )
+        await callback.answer(f"Вложено! Всего силы в котле: {total}", show_alert=True)
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
     except Exception:
         logger.exception("cb_catastrophe_contribute")
         await callback.answer("Ошибка", show_alert=True)

@@ -1,10 +1,12 @@
 """Рендер эмодзи-карты и расчёт дневного производства."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 
 from app import balance as B
 from app.domain.map_gen import col_label
+from app.domain.resources import LIVE_RESOURCES, add_bags, scale_bag
 
 
 @dataclass
@@ -27,12 +29,27 @@ class Production:
     might: float = 0.0
     defense: float = 0.0
 
+    def resources(self) -> dict[str, float]:
+        return {key: float(getattr(self, key)) for key in LIVE_RESOURCES}
+
+    @classmethod
+    def from_resources(
+        cls, bag: Mapping[str, float], *, defense: float = 0.0
+    ) -> "Production":
+        return cls(
+            **{key: float(bag.get(key, 0) or 0) for key in LIVE_RESOURCES},
+            defense=float(defense),
+        )
+
     def scale(self, mult: float) -> "Production":
-        return Production(
-            grain=self.grain * mult,
-            goods=self.goods * mult,
-            might=self.might * mult,
-            defense=self.defense,
+        return Production.from_resources(
+            scale_bag(self.resources(), mult), defense=self.defense
+        )
+
+    def plus(self, other: "Production") -> "Production":
+        return Production.from_resources(
+            add_bags(self.resources(), other.resources()),
+            defense=self.defense + other.defense,
         )
 
 
@@ -84,32 +101,17 @@ def fief_daily_production(
         p = tile_passive(t.tile_type)
         b = building_production(t.building or "", t.building_level, t.tile_type)
         if t.building == B.BLD_FARM:
-            b = Production(grain=b.grain * farm_mult, goods=b.goods, might=b.might, defense=b.defense)
+            b = replace(b, grain=b.grain * farm_mult)
         if t.building == B.BLD_MANOR:
             manor_might += b.might
-            b = Production(grain=b.grain, goods=b.goods, might=0.0, defense=b.defense)
-        total = Production(
-            grain=total.grain + p.grain + b.grain,
-            goods=total.goods + p.goods + b.goods,
-            might=total.might + p.might + b.might,
-            defense=total.defense + b.defense,
-        )
+            b = replace(b, might=0.0)
+        total = total.plus(p).plus(b)
     # Сила двора только до бесплатного потолка дружины.
     free_room = max(0, B.MILITIA_FREE - max(0, int(current_might)))
     manor_applied = min(manor_might, float(free_room))
-    total = Production(
-        grain=total.grain,
-        goods=total.goods,
-        might=total.might + manor_applied,
-        defense=total.defense,
-    )
+    total = replace(total, might=total.might + manor_applied)
     if active_tiles > 0 and B.FIEF_BASE_GOODS:
-        total = Production(
-            grain=total.grain,
-            goods=total.goods + B.FIEF_BASE_GOODS,
-            might=total.might,
-            defense=total.defense,
-        )
+        total = replace(total, goods=total.goods + B.FIEF_BASE_GOODS)
     if hungry:
         total = total.scale(B.HUNGER_PRODUCTION_MULT)
     return total

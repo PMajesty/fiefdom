@@ -465,7 +465,7 @@ def test_manual_tick_does_not_advance_schedule_markers():
     ):
         engine.run_realm_tick(1)
 
-    assert realm["day_number"] == 4
+    assert realm["day_number"] == 3
     assert "last_tick_at" in realm
     assert realm.get("last_tick_local_date") is None
     assert realm.get("last_tick_slot") is None
@@ -497,7 +497,8 @@ def test_scheduled_tick_writes_slot_markers():
     ):
         engine.run_realm_tick(1, tick_slot=0)
 
-    assert realm["day_number"] == 4
+    # Первая установка курсора даты не бампит день (нет prev_local для сравнения).
+    assert realm["day_number"] == 3
     assert realm.get("last_tick_slot") == 0
     assert realm.get("last_tick_local_date") is not None
 
@@ -569,6 +570,14 @@ def _raid_stateful_engine(*, atk_extra=None, vic_extra=None, reverse_pair_at=Non
     def update_fief(fid, **fields):
         fiefs[fid].update(fields)
 
+    def debit_fief_resources(fid, **amounts):
+        row = fiefs[int(fid)]
+        for col, amt in amounts.items():
+            if int(row.get(col) or 0) < int(amt):
+                return None
+            row[col] = int(row[col]) - int(amt)
+        return dict(row)
+
     def last_pair(a, v):
         return pair_log.get((a, v))
 
@@ -579,6 +588,7 @@ def _raid_stateful_engine(*, atk_extra=None, vic_extra=None, reverse_pair_at=Non
 
     db.get_fief.side_effect = get_fief
     db.update_fief.side_effect = update_fief
+    db.debit_fief_resources.side_effect = debit_fief_resources
     db.get_realm.return_value = realm
     db.update_realm = MagicMock()
     db.last_raid_attacker_victim.side_effect = last_pair

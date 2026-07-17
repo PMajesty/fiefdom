@@ -163,9 +163,16 @@ async def cmd_me(message: Message, bot: Bot) -> None:
             payload = f"realm_{realm['id']}"
             label = "Открыть усадьбу"
         else:
-            owned = engine.db.list_fiefs_by_user(message.from_user.id)
+            world_id = realm.get("world_id")
+            owned = (
+                engine.db.get_fief_by_user_world(
+                    message.from_user.id, int(world_id)
+                )
+                if world_id is not None
+                else None
+            )
             if owned:
-                payload = f"realm_{owned[0]['realm_id']}"
+                payload = f"realm_{owned['realm_id']}"
                 label = "Открыть усадьбу"
             else:
                 payload = f"join_{realm['id']}"

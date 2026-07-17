@@ -29,10 +29,18 @@ from app.domain.map_image import (
     map_fingerprint,
     render_map_image,
 )
+from app.domain.event_apply import (
+    InstantMinorCtx,
+    apply_instant_minor,
+    minor_fog_ignores_patrol,
+    minor_trade_bonus_frac,
+    minor_upgrade_cost_mult,
+    minor_wedding_gift_grain,
+    realm_farm_mult,
+)
 from app.domain.events import (
     CATASTROPHES,
     MINOR_EVENTS,
-    catastrophe_effect,
     event_digest_line,
     minor_effect,
     next_catastrophe_delay_ticks,
@@ -52,7 +60,24 @@ from app.domain.rumors import (
     parse_stored_rumors,
     roll_valley_day_rumors,
 )
-from app.domain.tick import FiefTickState, apply_fief_tick, collect_pending
+from app.domain.resources import (
+    apply_gather_to_stash,
+    fief_balance_columns,
+    pending_from_row,
+    stash_from_row,
+)
+from app.domain.tick import (
+    FiefTickState,
+    apply_fief_tick,
+    collect_pending_bags,
+)
+from app.domain.tick_pipeline import (
+    ActionWindow,
+    TickPipeline,
+    normalize_tick_phase,
+    TICK_PHASE_ECONOMY,
+    TICK_PHASE_PLAY,
+)
 from app.domain.tick_schedule import (
     format_next_tick_line,
     format_tick_slots,
@@ -424,11 +449,13 @@ class Engine:
         return pick_max_separated_tiles(candidates, cores, width, height, count)
 
     def has_fief_elsewhere(self, user_id: int, realm_id: int) -> bool:
-        """У игрока уже есть усадьба (на континенте допускается только одна)."""
-        for f in self.db.list_fiefs_by_user(user_id):
-            if int(f["realm_id"]) != int(realm_id):
-                return True
-        return False
+        """У игрока уже есть усадьба в том же мире (в другой долине)."""
+        realm = self.db.get_realm(realm_id) or {}
+        world_id = realm.get("world_id")
+        if world_id is None:
+            return False
+        owned = self.db.get_fief_by_user_world(user_id, int(world_id))
+        return owned is not None and int(owned["realm_id"]) != int(realm_id)
 
     def join_fief(
         self,
@@ -440,7 +467,10 @@ class Engine:
         existing = self.db.get_fief_by_user(realm_id, user.id)
         if existing:
             raise ValueError("У вас уже есть усадьба в этой долине")
-        owned = self.db.list_fiefs_by_user(user.id)
+        realm = self.db.get_realm(realm_id)
+        if not realm or realm.get("world_id") is None:
+            raise ValueError("Долина не привязана к континенту")
+        owned = self.db.get_fief_by_user_world(user.id, int(realm["world_id"]))
         if owned:
             raise ValueError(
                 "У вас уже есть усадьба на континенте. "
@@ -453,7 +483,6 @@ class Engine:
         if tile["tile_type"] in (B.TILE_WILDS, B.TILE_ROAD, B.TILE_RIVER, B.TILE_RUINS):
             raise ValueError("Нельзя начать здесь")
 
-        realm = self.db.get_realm(realm_id)
         width, height = int(realm["width"]), int(realm["height"])
         tiles = self.db.get_tiles(realm_id)
         ruins = [
@@ -546,24 +575,15 @@ class Engine:
         if not fief:
             return []
         barn = self.barn_level(fief_id)
-        g, d, m, pg, pd, pm, notes = collect_pending(
-            fief["grain"],
-            fief["goods"],
-            fief["might"],
-            fief["pending_grain"],
-            fief["pending_goods"],
-            fief["pending_might"],
+        stash, pending, notes = collect_pending_bags(
+            stash_from_row(fief),
+            pending_from_row(fief),
             barn,
             include_might=include_might,
         )
         self.db.update_fief(
             fief_id,
-            grain=g,
-            goods=d,
-            might=m,
-            pending_grain=pg,
-            pending_goods=pd,
-            pending_might=pm,
+            **fief_balance_columns(stash, pending),
             last_active_at=_utcnow(),
             last_active_tick=int(
                 (self.db.get_realm(fief["realm_id"]) or {}).get("tick_index") or 0
@@ -638,7 +658,7 @@ class Engine:
             watch_defense=prod.defense,
             victim_might=int(fief.get("might") or 0),
             patrol_active=tick_active(fief.get("patrol_until_tick"), tick_index),
-            fog_ignores_patrol=realm.get("active_minor_key") == "fog",
+            fog_ignores_patrol=minor_fog_ignores_patrol(realm.get("active_minor_key")),
         )
         lines.extend(
             [
@@ -815,7 +835,7 @@ class Engine:
             )
         return fief
 
-    def _spend_action(self, fief: dict) -> None:
+    def _spend_action(self, fief: dict) -> dict:
         if fief["actions"] < 1:
             raise ValueError("Нет действий на сегодня (макс. запас 3)")
         if fief["frozen"]:
@@ -825,13 +845,20 @@ class Engine:
                 "Сначала выберите эту долину активной "
                 "(меню усадьбы / список долин в /start)"
             )
+        self._require_action_window(int(fief["realm_id"]))
         realm = self.db.get_realm(fief["realm_id"]) or {}
-        self.db.update_fief(
-            fief["id"],
-            actions=fief["actions"] - 1,
+        updated = self.db.spend_fief_action(
+            int(fief["id"]),
             last_active_at=_utcnow(),
             last_active_tick=int(realm.get("tick_index") or 0),
         )
+        if not updated:
+            cur = self.db.get_fief(int(fief["id"]))
+            if cur and cur.get("frozen"):
+                raise ValueError("Усадьба заморожена")
+            raise ValueError("Нет действий на сегодня (макс. запас 3)")
+        fief.update(updated)
+        return updated
 
     def claim_tile(self, fief_id: int, x: int, y: int) -> str:
         fief = self.db.get_fief(fief_id)
@@ -867,7 +894,8 @@ class Engine:
                 raise ValueError(f"Нужно {cost} товаров")
             with self.db.transaction():
                 self._spend_action(fief)
-                self.db.update_fief(fief_id, goods=fief["goods"] - cost)
+                if not self.db.debit_fief_resources(fief_id, goods=cost):
+                    raise ValueError(f"Нужно {cost} товаров")
                 if prev and prev != fief_id:
                     comp = absence_mod.compensation_for_claim(cost)
                     prev_f = self.db.get_fief(prev)
@@ -902,8 +930,8 @@ class Engine:
 
         with self.db.transaction():
             self._spend_action(fief)
-            fief = self.db.get_fief(fief_id)
-            self.db.update_fief(fief_id, goods=fief["goods"] - cost)
+            if not self.db.debit_fief_resources(fief_id, goods=cost):
+                raise ValueError(f"Нужно {cost} товаров (у вас {fief['goods']})")
 
             if ruins_loot:
                 fief = self.db.get_fief(fief_id)
@@ -953,10 +981,11 @@ class Engine:
             cost = B.repair_cost(current, level)
             if fief["goods"] < cost:
                 raise ValueError(f"Ремонт: нужно {cost} товаров")
-            self._spend_action(fief)
-            fief = self.db.get_fief(fief_id)
-            self.db.update_fief(fief_id, goods=fief["goods"] - cost)
-            self.db.update_tile(tile["id"], damaged=False)
+            with self.db.transaction():
+                self._spend_action(fief)
+                if not self.db.debit_fief_resources(fief_id, goods=cost):
+                    raise ValueError(f"Ремонт: нужно {cost} товаров")
+                self.db.update_tile(tile["id"], damaged=False)
             self._onboard_build(fief_id)
             return f"Отремонтирован {B.BUILDING_NAMES_RU[current]} {level} (−{cost} товаров)."
 
@@ -977,19 +1006,21 @@ class Engine:
         # если damaged сбросили выше; апгрейд
         cost = B.building_upgrade_cost(building, target_level)
         realm = self.db.get_realm(fief["realm_id"])
-        if realm.get("active_minor_key") == "good_stone":
-            cost = int(cost * 0.75)
+        cost = B.scaled_building_cost(
+            cost, minor_upgrade_cost_mult(realm.get("active_minor_key"))
+        )
         if fief["goods"] < cost:
             raise ValueError(f"Нужно {cost} товаров")
-        self._spend_action(fief)
-        fief = self.db.get_fief(fief_id)
-        self.db.update_fief(fief_id, goods=fief["goods"] - cost)
-        self.db.update_tile(
-            tile["id"],
-            building=building,
-            building_level=target_level,
-            damaged=False,
-        )
+        with self.db.transaction():
+            self._spend_action(fief)
+            if not self.db.debit_fief_resources(fief_id, goods=cost):
+                raise ValueError(f"Нужно {cost} товаров")
+            self.db.update_tile(
+                tile["id"],
+                building=building,
+                building_level=target_level,
+                damaged=False,
+            )
         self._onboard_build(fief_id)
         return f"{B.BUILDING_NAMES_RU[building]} {target_level} на {coord_label(x, y)} (−{cost} товаров)."
 
@@ -1012,15 +1043,16 @@ class Engine:
         if building not in B.BUILDING_COSTS:
             raise ValueError("Это здание нельзя снести")
         refund = B.demolish_refund_goods(building, level)
-        self._spend_action(fief)
-        fief = self.db.get_fief(fief_id)
-        self.db.update_fief(fief_id, goods=int(fief["goods"]) + refund)
-        self.db.update_tile(
-            tile["id"],
-            building=None,
-            building_level=0,
-            damaged=False,
-        )
+        with self.db.transaction():
+            self._spend_action(fief)
+            fief = self.db.get_fief(fief_id)
+            self.db.update_fief(fief_id, goods=int(fief["goods"]) + refund)
+            self.db.update_tile(
+                tile["id"],
+                building=None,
+                building_level=0,
+                damaged=False,
+            )
         name = B.BUILDING_NAMES_RU.get(building, building)
         return (
             f"Снесено: {name} {level} на {coord_label(x, y)}. "
@@ -1039,24 +1071,22 @@ class Engine:
         amount = B.gather_amount(resource)
         self.collect_for_fief(fief_id, include_might=(resource != B.RES_MIGHT))
         fief = self.db.get_fief(fief_id)
-        self._spend_action(fief)
-        fief = self.db.get_fief(fief_id)
-        if resource == B.RES_MIGHT:
-            self.db.update_fief(fief_id, might=int(fief["might"]) + amount)
-            return f"Сбор: +{amount} силы (−1 действие)."
-        barn = self.barn_level(fief_id)
-        cap = B.stash_cap(barn)
-        if resource == B.RES_GRAIN:
-            room = max(0, cap - int(fief["grain"]))
-            gained = min(amount, room)
-            self.db.update_fief(fief_id, grain=int(fief["grain"]) + gained)
+        with self.db.transaction():
+            self._spend_action(fief)
+            fief = self.db.get_fief(fief_id)
+            barn = self.barn_level(fief_id)
+            cap = B.stash_cap(barn)
+            stash, gained = apply_gather_to_stash(
+                stash_from_row(fief), resource, amount, cap=cap
+            )
+            self.db.update_fief(fief_id, **{resource: stash[resource]})
+            if resource == B.RES_MIGHT:
+                return f"Сбор: +{gained} силы (−1 действие)."
+            if resource == B.RES_GRAIN:
+                suffix = "" if gained == amount else " (склад почти полон)"
+                return f"Сбор: +{gained} зерна (−1 действие).{suffix}"
             suffix = "" if gained == amount else " (склад почти полон)"
-            return f"Сбор: +{gained} зерна (−1 действие).{suffix}"
-        room = max(0, cap - int(fief["goods"]))
-        gained = min(amount, room)
-        self.db.update_fief(fief_id, goods=int(fief["goods"]) + gained)
-        suffix = "" if gained == amount else " (склад почти полон)"
-        return f"Сбор: +{gained} товаров (−1 действие).{suffix}"
+            return f"Сбор: +{gained} товаров (−1 действие).{suffix}"
 
     def _onboard_claim(self, fief_id: int) -> None:
         fief = self.db.get_fief(fief_id)
@@ -1075,23 +1105,51 @@ class Engine:
         cost = int(B.PATROL_COST_MIGHT)
         if cost > 0 and fief["might"] < cost:
             raise ValueError(f"Нужно {cost} силы")
-        self._spend_action(fief)
-        fief = self.db.get_fief(fief_id)
-        realm = self.db.get_realm(fief["realm_id"]) or {}
-        tick_index = int(realm.get("tick_index") or 0)
-        new_might = fief["might"] - cost if cost > 0 else fief["might"]
-        self.db.update_fief(
-            fief_id,
-            might=new_might,
-            patrol_until=None,
-            patrol_until_tick=tick_index + B.PATROL_TICKS,
-        )
+        with self.db.transaction():
+            self._spend_action(fief)
+            realm = self.db.get_realm(fief["realm_id"]) or {}
+            tick_index = int(realm.get("tick_index") or 0)
+            if cost > 0:
+                if not self.db.debit_fief_resources(fief_id, might=cost):
+                    raise ValueError(f"Нужно {cost} силы")
+            self.db.update_fief(
+                fief_id,
+                patrol_until=None,
+                patrol_until_tick=tick_index + B.PATROL_TICKS,
+            )
         if cost > 0:
             return (
                 f"Дозор выставлен на {B.PATROL_TICKS} тик(а) "
                 f"(−{cost} силы)."
             )
         return f"Дозор выставлен на {B.PATROL_TICKS} тик(а)."
+
+    def contribute_catastrophe_might(
+        self, event_id: int, user_id: int, amount: int = 5
+    ) -> int:
+        """Вклад силы в активную катастрофу. Возвращает сумму в котле."""
+        amt = int(amount)
+        if amt <= 0:
+            raise ValueError("Недостаточно силы")
+        ev = self.db.get_event(event_id)
+        if not ev or ev.get("status") != "active":
+            raise ValueError("Событие уже завершено")
+        fief = self.db.get_fief_by_user(ev["realm_id"], user_id)
+        if not fief:
+            raise ValueError("Сначала получите усадьбу в личке")
+        self._require_action_window(int(fief["realm_id"]))
+        with self.db.transaction():
+            ev = self.db.get_event(event_id)
+            if not ev or ev.get("status") != "active":
+                raise ValueError("Событие уже завершено")
+            self._require_action_window(int(fief["realm_id"]))
+            if not self.db.debit_fief_resources(int(fief["id"]), might=amt):
+                raise ValueError("Недостаточно силы")
+            self.db.bump_event_action(event_id, int(fief["id"]), "might", amt)
+            total = sum(
+                int(a.get("amount") or 0) for a in self.db.event_actions(event_id)
+            )
+        return total
 
     def list_raid_target_fiefs(self, attacker_fief_id: int) -> list[dict]:
         """Цели на всём континенте (без своей user_id)."""
@@ -1161,9 +1219,8 @@ class Engine:
         atk = self.db.get_fief(attacker_id)
         vic = self.db.get_fief(victim_id)
 
-        fog = (
-            realm.get("active_minor_key") == "fog"
-            or vic_realm.get("active_minor_key") == "fog"
+        fog = minor_fog_ignores_patrol(realm.get("active_minor_key")) or (
+            minor_fog_ignores_patrol(vic_realm.get("active_minor_key"))
         )
         watch_def = self.fief_prod(vic).defense
         patrol = tick_active(vic.get("patrol_until_tick"), tick_index)
@@ -1217,15 +1274,44 @@ class Engine:
                 int(atk["realm_id"]), int(vic["realm_id"])
             )
             self._spend_action(atk)
-            atk = self.db.get_fief(attacker_id)
             self.db.update_fief(
                 attacker_id,
-                might=atk["might"] - result.might_lost,
                 last_raid_at=_utcnow(),
                 last_raid_tick=tick_index,
             )
+            # CAS-промах перехватчика: пересчёт без него (дозор/стража), набег не рвём.
             if interceptor:
-                self.db.update_fief(interceptor["id"], might=interceptor["might"] - B.INTERCEPT_MIGHT)
+                if not self.db.debit_fief_resources(
+                    int(interceptor["id"]), might=int(B.INTERCEPT_MIGHT)
+                ):
+                    interceptor = None
+                    result = resolve_raid(
+                        attacker_name=atk_label,
+                        victim_name=vic_label,
+                        attack_might=might,
+                        watch_defense=watch_def,
+                        patrol_active=patrol,
+                        intercept=False,
+                        victim_grain=vic["grain"],
+                        victim_goods=vic["goods"],
+                        barn_level=self.barn_level(victim_id),
+                        victim_daily_grain=self.fief_prod(vic).grain,
+                        victim_daily_goods=self.fief_prod(vic).goods,
+                        fog_ignores_patrol=fog,
+                        victim_might=int(vic.get("might") or 0),
+                    )
+                    atk_line = result.public_line
+                    vic_line = result.public_line
+                    if cross_valley:
+                        atk_valley = realm.get("title") or "Долина"
+                        vic_valley = vic_realm.get("title") or "Долина"
+                        atk_line = f"В \"{vic_valley}\": {result.public_line}"
+                        vic_line = f"Из \"{atk_valley}\": {result.public_line}"
+            if result.might_lost > 0:
+                if not self.db.debit_fief_resources(
+                    attacker_id, might=int(result.might_lost)
+                ):
+                    raise ValueError("Недостаточно силы")
 
             if result.success:
                 vic = self.db.get_fief(victim_id)
@@ -1303,6 +1389,7 @@ class Engine:
         if give_amt <= 0 or want_amt <= 0:
             raise ValueError("Количество должно быть > 0")
         fief = self.db.get_fief(fief_id)
+        self._require_action_window(int(fief["realm_id"]))
         if target_fief_id is not None:
             target = self.db.get_fief(target_fief_id)
             if not target:
@@ -1370,8 +1457,8 @@ class Engine:
 
         realm = self.db.get_realm(buyer["realm_id"])
         tick_index = int(realm.get("tick_index") or 0)
-        bonus = 0.05 if realm.get("active_minor_key") == "fair" else 0.0
-        wedding = realm.get("active_minor_key") == "wedding"
+        bonus = minor_trade_bonus_frac(realm.get("active_minor_key"))
+        wedding_gift = minor_wedding_gift_grain(realm.get("active_minor_key"))
 
         with self.db.transaction():
             live = self.db.get_trade(trade_id)
@@ -1446,11 +1533,10 @@ class Engine:
                     add = min(give_amt + recv_bonus, max(0, cap - buyer["goods"]))
                     self.db.update_fief(fief_id, goods=buyer["goods"] + add)
 
-                if wedding:
-                    gift = int(minor_effect("wedding").get("trade_gift_grain") or 5)
+                if wedding_gift:
                     for fid in (fief_id, trade["offerer_fief_id"]):
                         f = self.db.get_fief(fid)
-                        self.db.update_fief(fid, grain=f["grain"] + gift)
+                        self.db.update_fief(fid, grain=f["grain"] + wedding_gift)
         if expired:
             raise ValueError("Лот истёк")
         return f"Сделка #{trade_id} закрыта."
@@ -1559,6 +1645,7 @@ class Engine:
         fief = self.db.get_fief(fief_id)
         if fief.get("pact_id"):
             raise ValueError("Вы уже в пакте")
+        self._require_action_window(int(fief["realm_id"]))
         name = name.strip()[:40]
         if not name:
             raise ValueError("Нужно имя")
@@ -1684,10 +1771,12 @@ class Engine:
         fief = self.db.get_fief(fief_id)
         if not fief.get("pact_id"):
             raise ValueError("Вы не в пакте")
+        self._require_action_window(int(fief["realm_id"]))
         with self.db.transaction():
             fief = self.db.get_fief(fief_id)
             if not fief.get("pact_id"):
                 raise ValueError("Вы не в пакте")
+            self._require_action_window(int(fief["realm_id"]))
             pact_id = fief["pact_id"]
             pact = self.db.get_pact(pact_id)
             remaining = [
@@ -1696,9 +1785,6 @@ class Engine:
                 if int(m["id"]) != int(fief_id)
             ]
             if len(remaining) < B.PACT_SIZE_MIN:
-                leaver_realm = int(fief["realm_id"])
-                if any(int(m["realm_id"]) != leaver_realm for m in remaining):
-                    self._require_continent_caught_up(leaver_realm)
                 self.db.update_fief(fief_id, pact_id=None)
                 self.db.dissolve_pact(pact_id)
                 return "Вы вышли. Пакт распущен (меньше 2 участников)."
@@ -1792,20 +1878,55 @@ class Engine:
                 return True
         return False
 
+    def _require_action_window(self, realm_id: int) -> None:
+        """Игровые мутации только в play при полностью догнанном тике."""
+        wid = self._world_id_for_realm(realm_id)
+        world = self.db.get_world(wid) or {}
+        ActionWindow.require(
+            tick_phase=world.get("tick_phase"),
+            incomplete=self.world_tick_incomplete(wid),
+        )
+
     def _require_continent_caught_up(self, realm_id: int) -> None:
-        """Междолинные мутации запрещены, пока часть долин не догнала тик."""
-        if self.world_tick_incomplete(self._world_id_for_realm(realm_id)):
-            raise ValueError(
-                "Континент ещё догоняет тик. "
-                "Междолинные действия временно недоступны."
-            )
+        """Мутации запрещены, пока тик континента не завершён (фаза play)."""
+        self._require_action_window(int(realm_id))
 
     def _require_cross_valley_caught_up(
         self, realm_a: int, realm_b: int
     ) -> None:
-        if int(realm_a) == int(realm_b):
+        # Одна долина тоже ждёт play: иначе first-click гонка внутри долины.
+        self._require_action_window(int(realm_a))
+        if int(realm_a) != int(realm_b):
+            self._require_action_window(int(realm_b))
+
+    def _enter_tick_economy(
+        self, world_id: int, world: dict | None = None
+    ) -> None:
+        if (
+            world is not None
+            and normalize_tick_phase(world.get("tick_phase")) == TICK_PHASE_ECONOMY
+        ):
             return
-        self._require_continent_caught_up(int(realm_a))
+        self.db.update_world(int(world_id), **TickPipeline.economy_fields())
+        if world is not None:
+            world["tick_phase"] = TICK_PHASE_ECONOMY
+
+    def _enter_tick_play(
+        self,
+        world_id: int,
+        world: dict | None = None,
+        **extra: Any,
+    ) -> None:
+        if (
+            world is not None
+            and normalize_tick_phase(world.get("tick_phase")) == TICK_PHASE_PLAY
+            and not extra
+        ):
+            return
+        fields = {**TickPipeline.play_fields(), **extra}
+        self.db.update_world(int(world_id), **fields)
+        if world is not None:
+            world.update(fields)
 
     def run_world_tick(
         self,
@@ -1816,7 +1937,7 @@ class Engine:
 
         Часы двигаются один раз; экономика каждой долины идемпотентна по
         last_economy_tick. При обрыве следующий вызов догоняет отстающие долины
-        без повторного сдвига дня.
+        без повторного сдвига tick_index и календарного дня.
         """
         world = self.db.get_world(world_id) if world_id else self.db.get_or_create_world()
         if not world:
@@ -1824,6 +1945,8 @@ class Engine:
         wid = int(world["id"])
         realms = self.db.list_realms_by_chain(wid)
         if not realms:
+            # Пустой континент не двигает часы; play чтобы не зависнуть в economy.
+            self._enter_tick_play(wid, world)
             return {"world_id": wid, "realms": [], "digest": None, "chat_id": None}
 
         current = int(world.get("tick_index") or 0)
@@ -1833,12 +1956,38 @@ class Engine:
                 self.db.update_realm(int(r["id"]), last_economy_tick=current)
                 r["last_economy_tick"] = current
 
+        economies_done = all(
+            int(r.get("last_economy_tick") or -1) >= current for r in realms
+        )
+        # Crash после fan-out, до enter_play: закрыть окно без нового тика.
+        if (
+            current > 0
+            and economies_done
+            and normalize_tick_phase(world.get("tick_phase")) == TICK_PHASE_ECONOMY
+        ):
+            play_fields: dict[str, Any] = {}
+            if world.get("pending_minor_key") is None:
+                play_fields["pending_minor_key"] = (
+                    roll_minor_event(random.Random()) or ""
+                )
+            self._enter_tick_play(wid, world, **play_fields)
+            self.db.sync_realms_clock_from_world(wid)
+            return {
+                "world_id": wid,
+                "realms": [],
+                "digest": None,
+                "chat_id": None,
+                "resumed": True,
+                "incomplete": False,
+            }
+
         resuming = any(
             int(r.get("last_economy_tick") or -1) < current for r in realms
         ) and current > 0
 
         if resuming:
             new_tick = current
+            self._enter_tick_economy(wid, world)
         else:
             new_tick = current + 1
             pending_raw = world.get("pending_minor_key")
@@ -1850,7 +1999,7 @@ class Engine:
             tz = ZoneInfo(world.get("timezone") or TIMEZONE)
             local_now = datetime.now(tz)
             local_date = local_now.date()
-            day = int(world.get("day_number") or 1) + 1
+            day = int(world.get("day_number") or 1)
             world_fields: dict[str, Any] = {
                 "tick_index": new_tick,
                 "day_number": day,
@@ -1858,12 +2007,18 @@ class Engine:
                 "active_minor_key": minor_key,
                 "active_minor_until": None,
                 "pending_minor_key": None,
+                **TickPipeline.economy_fields(),
             }
             # Плановые слоты двигает только scheduler (когда передан tick_slot).
-            # Админский тик без слота часы мира двигает, плановые слоты - нет.
+            # Админский тик без слота: tick_index двигаем, календарный день и слоты - нет.
             if tick_slot is not None:
                 slots = tick_slots()
                 tick_slot = max(0, min(int(tick_slot), max(0, len(slots) - 1)))
+                prev_local = _as_date(world.get("last_tick_local_date"))
+                # Календарный день: +1 только когда курсор last_tick_local_date
+                # переходит на новую локальную дату (не на каждый слот и не при NULL).
+                if prev_local is not None and local_date > prev_local:
+                    world_fields["day_number"] = day + 1
                 world_fields["last_tick_local_date"] = local_date
                 world_fields["last_tick_slot"] = tick_slot
             # Часы мира + зеркала долин - один COMMIT.
@@ -1871,6 +2026,7 @@ class Engine:
             with self.db.transaction():
                 self.db.update_world(wid, **world_fields)
                 self.db.sync_realms_clock_from_world(wid)
+            world.update(world_fields)
 
         realm_results = []
         # Единый снимок на этот вызов тика (при догоне после сбоя - best-effort
@@ -1922,9 +2078,12 @@ class Engine:
         )
         if caught_up:
             world = self.db.get_world(wid) or world
+            play_fields: dict[str, Any] = {}
             if world.get("pending_minor_key") is None:
-                next_minor = roll_minor_event(random.Random())
-                self.db.update_world(wid, pending_minor_key=next_minor or "")
+                play_fields["pending_minor_key"] = (
+                    roll_minor_event(random.Random()) or ""
+                )
+            self._enter_tick_play(wid, world, **play_fields)
             self.db.sync_realms_clock_from_world(wid)
 
         posted = [x for x in realm_results if not x.get("skipped")]
@@ -2008,28 +2167,16 @@ class Engine:
 
             farm_mult = base_farm_mult
 
-            state = FiefTickState(
-                grain=fief["grain"],
-                goods=fief["goods"],
-                might=fief["might"],
-                pending_grain=float(fief["pending_grain"]),
-                pending_goods=float(fief["pending_goods"]),
-                pending_might=float(fief["pending_might"]),
-                actions=fief["actions"],
-                hungry=bool(fief["hungry"]),
-                tiles=tiles,
-                barn_level=self.barn_level(fief["id"]),
+            state = FiefTickState.from_fief_row(
+                fief,
+                tiles,
+                self.barn_level(fief["id"]),
                 farm_mult=farm_mult,
             )
             out = apply_fief_tick(state)
             self.db.update_fief(
                 fief["id"],
-                grain=out.grain,
-                goods=out.goods,
-                might=out.might,
-                pending_grain=out.pending_grain,
-                pending_goods=out.pending_goods,
-                pending_might=out.pending_might,
+                **out.balance_columns(),
                 actions=out.actions,
                 hungry=out.hungry,
             )
@@ -2151,15 +2298,15 @@ class Engine:
         return event_line
 
     def _realm_farm_mult(self, realm: dict) -> float:
-        mult = 1.0
-        key = realm.get("active_minor_key")
-        if key == "harvest":
-            mult *= float(minor_effect("harvest").get("farm_mult") or 1.15)
-        elif key == "drought":
-            mult *= float(minor_effect("drought").get("farm_mult") or 0.4375)
-        if self._active_cattle_plague(int(realm["id"])) is not None:
-            mult *= float(catastrophe_effect("cattle_plague").get("farm_mult") or 0.375)
-        return mult
+        cat_keys = [
+            str(ev["event_key"])
+            for ev in self.db.get_active_events(int(realm["id"]), kind="catastrophe")
+            if ev.get("event_key")
+        ]
+        return realm_farm_mult(
+            active_minor_key=realm.get("active_minor_key"),
+            active_catastrophe_keys=cat_keys,
+        )
 
     def _active_cattle_plague(self, realm_id: int) -> dict | None:
         for ev in self.db.get_active_events(realm_id, kind="catastrophe"):
@@ -2172,56 +2319,17 @@ class Engine:
             self.db.update_event(ev["id"], status="resolved")
 
     def _apply_instant_minor(self, realm_id: int, key: str) -> None:
-        eff = minor_effect(key)
-        if key == "rats":
-            threshold = int(eff.get("unprot_grain_threshold") or 80)
-            loss_frac = float(eff.get("loss_frac") or 0.25)
-            for fief in self.db.list_fiefs(realm_id):
-                barn = self.barn_level(fief["id"])
-                unprot = int(fief["grain"] * (1.0 - B.barn_protect_frac(barn)))
-                if unprot > threshold:
-                    loss = max(1, int(unprot * loss_frac))
-                    self.db.update_fief(fief["id"], grain=max(0, fief["grain"] - loss))
-            return
-        if key == "blight":
-            frac = float(eff.get("goods_loss_frac") or 0.225)
-            for fief in self.db.list_fiefs(realm_id):
-                loss = max(1, int(int(fief["goods"]) * frac)) if int(fief["goods"]) > 0 else 0
-                if loss:
-                    self.db.update_fief(fief["id"], goods=max(0, int(fief["goods"]) - loss))
-            return
-        if key == "spoilage":
-            frac = float(eff.get("grain_loss_frac") or 0.1875)
-            for fief in self.db.list_fiefs(realm_id):
-                loss = max(1, int(int(fief["grain"]) * frac)) if int(fief["grain"]) > 0 else 0
-                if loss:
-                    self.db.update_fief(fief["id"], grain=max(0, int(fief["grain"]) - loss))
-            return
-        if key == "toll":
-            flat = int(eff.get("goods_flat_loss") or 15)
-            for fief in self.db.list_fiefs(realm_id):
-                self.db.update_fief(fief["id"], goods=max(0, int(fief["goods"]) - flat))
-            return
-        if key == "press_gang":
-            loss = int(eff.get("might_loss") or 4)
-            for fief in self.db.list_fiefs(realm_id):
-                self.db.update_fief(fief["id"], might=max(0, int(fief["might"]) - loss))
-            return
-        if key == "fire":
-            for fief in self.db.list_fiefs(realm_id):
-                tiles = [
-                    t
-                    for t in self.db.fief_tiles(fief["id"])
-                    if t.get("building")
-                    and t.get("building") != B.BLD_MANOR
-                    and not t.get("is_overgrown")
-                    and not t.get("damaged")
-                ]
-                if not tiles:
-                    continue
-                victim = random.choice(tiles)
-                self.db.update_tile(victim["id"], damaged=True)
-            return
+        apply_instant_minor(
+            key,
+            InstantMinorCtx(
+                fiefs=list(self.db.list_fiefs(realm_id)),
+                barn_level=self.barn_level,
+                fief_tiles=self.db.fief_tiles,
+                update_fief=self.db.update_fief,
+                update_tile=self.db.update_tile,
+                rng=random,
+            ),
+        )
 
     def _feud_lines(self, realm_id: int) -> list[str]:
         realm = self.db.get_realm(realm_id) or {}

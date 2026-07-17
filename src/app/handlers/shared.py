@@ -78,7 +78,7 @@ def parse_start_payload(payload: str | None) -> tuple[str | None, int | None]:
 
 
 def resolve_realm_for_user(engine: Engine, user_id: int, chat: Any = None) -> dict | None:
-    """Realm из группового чата, last_realm пользователя или единственной усадьбы."""
+    """Realm из группового чата, last_realm с усадьбой пользователя или единственной усадьбы."""
     db = engine.db
     if chat is not None:
         chat_type = getattr(chat, "type", None)
@@ -87,14 +87,18 @@ def resolve_realm_for_user(engine: Engine, user_id: int, chat: Any = None) -> di
             return db.get_realm_by_chat(chat_id)
 
     user = db.get_user(user_id)
-    if user and user.get("last_realm_id"):
-        realm = db.get_realm(user["last_realm_id"])
-        if realm:
+    last_realm_id = user.get("last_realm_id") if user else None
+    if last_realm_id:
+        realm = db.get_realm(last_realm_id)
+        if realm and db.get_fief_by_user(int(realm["id"]), user_id):
             return realm
 
     fiefs = db.list_fiefs_by_user(user_id)
     if len(fiefs) == 1:
-        return db.get_realm(fiefs[0]["realm_id"])
+        owned_realm_id = int(fiefs[0]["realm_id"])
+        if last_realm_id is not None and int(last_realm_id) != owned_realm_id:
+            db.set_last_realm(user_id, owned_realm_id)
+        return db.get_realm(owned_realm_id)
     return None
 
 
@@ -108,7 +112,9 @@ def resolve_fief_for_user(
         return db.get_fief_by_user(realm_id, user_id)
     realm = resolve_realm_for_user(engine, user_id)
     if realm:
-        return db.get_fief_by_user(realm["id"], user_id)
+        fief = db.get_fief_by_user(realm["id"], user_id)
+        if fief:
+            return fief
     fiefs = db.list_fiefs_by_user(user_id)
     if len(fiefs) == 1:
         return fiefs[0]

@@ -99,7 +99,7 @@ def test_fief_label_uses_profile_and_syncs():
 def test_join_fief_sets_onboard_step_2():
     db = MagicMock()
     db.get_fief_by_user.return_value = None
-    db.list_fiefs_by_user.return_value = []
+    db.get_fief_by_user_world.return_value = None
     db._fetchone.return_value = {
         "id": 50,
         "x": 1,
@@ -107,7 +107,7 @@ def test_join_fief_sets_onboard_step_2():
         "tile_type": B.TILE_FIELD,
         "owner_fief_id": None,
     }
-    db.get_realm.return_value = {"width": 6, "height": 6}
+    db.get_realm.return_value = {"width": 6, "height": 6, "world_id": 1}
     db.get_tiles.return_value = [
         {"id": 50, "x": 1, "y": 2, "tile_type": B.TILE_FIELD, "owner_fief_id": None},
     ]
@@ -133,7 +133,8 @@ def test_join_fief_sets_onboard_step_2():
 def test_join_fief_rejects_ruins_tile():
     db = MagicMock()
     db.get_fief_by_user.return_value = None
-    db.list_fiefs_by_user.return_value = []
+    db.get_fief_by_user_world.return_value = None
+    db.get_realm.return_value = {"width": 6, "height": 6, "world_id": 1}
     db._fetchone.return_value = {
         "id": 50,
         "x": 1,
@@ -152,7 +153,7 @@ def test_join_fief_rejects_ruins_tile():
 def test_join_fief_rejects_tile_adjacent_to_ruins():
     db = MagicMock()
     db.get_fief_by_user.return_value = None
-    db.list_fiefs_by_user.return_value = []
+    db.get_fief_by_user_world.return_value = None
     db._fetchone.return_value = {
         "id": 50,
         "x": 1,
@@ -160,7 +161,7 @@ def test_join_fief_rejects_tile_adjacent_to_ruins():
         "tile_type": B.TILE_FIELD,
         "owner_fief_id": None,
     }
-    db.get_realm.return_value = {"width": 6, "height": 6}
+    db.get_realm.return_value = {"width": 6, "height": 6, "world_id": 1}
     db.get_tiles.return_value = [
         {"id": 50, "x": 1, "y": 2, "tile_type": B.TILE_FIELD, "owner_fief_id": None},
         {"id": 51, "x": 2, "y": 2, "tile_type": B.TILE_RUINS, "owner_fief_id": None},

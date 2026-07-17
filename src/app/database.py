@@ -6,6 +6,7 @@ import logging
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from collections.abc import Mapping
 from typing import Any, Iterator
 
 import pg8000
@@ -125,7 +126,8 @@ class Database:
                     last_rumor_lines JSONB NOT NULL DEFAULT '[]',
                     wipe_confirm_code TEXT,
                     wipe_confirm_until TIMESTAMPTZ,
-                    forced_tick_count INT NOT NULL DEFAULT 0
+                    forced_tick_count INT NOT NULL DEFAULT 0,
+                    clock_mode TEXT NOT NULL DEFAULT 'shared'
                 );
                 """,
                 """
@@ -133,6 +135,7 @@ class Database:
                     id BIGSERIAL PRIMARY KEY,
                     realm_id BIGINT NOT NULL REFERENCES realms(id) ON DELETE CASCADE,
                     user_id BIGINT NOT NULL REFERENCES users(telegram_id),
+                    world_id BIGINT,
                     name TEXT NOT NULL,
                     grain INT NOT NULL DEFAULT 0,
                     goods INT NOT NULL DEFAULT 0,
@@ -155,8 +158,7 @@ class Database:
                     pact_id BIGINT,
                     cover_allies BOOLEAN NOT NULL DEFAULT TRUE,
                     frozen BOOLEAN NOT NULL DEFAULT FALSE,
-                    UNIQUE (realm_id, user_id),
-                    UNIQUE (user_id)
+                    UNIQUE (realm_id, user_id)
                 );
                 """,
                 """
@@ -544,12 +546,17 @@ class Database:
                 active_minor_key TEXT,
                 active_minor_until TIMESTAMPTZ,
                 pending_minor_key TEXT,
+                tick_phase TEXT NOT NULL DEFAULT 'play',
                 forced_tick_count INT NOT NULL DEFAULT 0,
                 wipe_confirm_code TEXT,
                 wipe_confirm_until TIMESTAMPTZ,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
             """
+        )
+        self.cursor.execute(
+            "ALTER TABLE worlds ADD COLUMN IF NOT EXISTS tick_phase "
+            "TEXT NOT NULL DEFAULT 'play';"
         )
         self.cursor.execute(
             "ALTER TABLE realms ADD COLUMN IF NOT EXISTS world_id BIGINT "
@@ -727,9 +734,67 @@ class Database:
             """
         )
         self.cursor.execute(
+            "ALTER TABLE realms ADD COLUMN IF NOT EXISTS clock_mode "
+            "TEXT NOT NULL DEFAULT 'shared';"
+        )
+        self.cursor.execute(
+            "UPDATE realms SET clock_mode = 'shared' WHERE clock_mode IS NULL;"
+        )
+        self.cursor.execute(
+            "ALTER TABLE fiefs ADD COLUMN IF NOT EXISTS world_id BIGINT;"
+        )
+        self.cursor.execute(
             """
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_fiefs_user_id
-            ON fiefs(user_id);
+            UPDATE fiefs AS f
+            SET world_id = r.world_id
+            FROM realms r
+            WHERE f.realm_id = r.id
+              AND f.world_id IS NULL
+              AND r.world_id IS NOT NULL;
+            """
+        )
+        self.cursor.execute("SELECT COUNT(*) FROM fiefs WHERE world_id IS NULL;")
+        null_world = int(self.cursor.fetchone()[0] or 0)
+        if null_world > 0:
+            raise RuntimeError(
+                f"fiefs identity migration blocked: {null_world} fiefs without world_id"
+            )
+        self.cursor.execute(
+            """
+            SELECT user_id, world_id, COUNT(*) AS n
+            FROM fiefs
+            GROUP BY user_id, world_id
+            HAVING COUNT(*) > 1
+            LIMIT 5;
+            """
+        )
+        dupes = self.cursor.fetchall() or []
+        if dupes:
+            raise RuntimeError(
+                "fiefs identity migration blocked: duplicate (user_id, world_id) "
+                f"rows: {dupes}"
+            )
+        self.cursor.execute("DROP INDEX IF EXISTS idx_fiefs_user_id;")
+        self.cursor.execute(
+            "ALTER TABLE fiefs DROP CONSTRAINT IF EXISTS fiefs_user_id_key;"
+        )
+        self.cursor.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_fiefs_user_world
+            ON fiefs(user_id, world_id);
+            """
+        )
+        self.cursor.execute(
+            "ALTER TABLE fiefs ALTER COLUMN world_id SET NOT NULL;"
+        )
+        self.cursor.execute(
+            """
+            DO $$ BEGIN
+                ALTER TABLE fiefs
+                ADD CONSTRAINT fiefs_world_id_fk
+                FOREIGN KEY (world_id) REFERENCES worlds(id);
+            EXCEPTION WHEN duplicate_object THEN NULL;
+            END $$;
             """
         )
 
@@ -771,7 +836,7 @@ class Database:
             self.commit()
 
     def sync_realms_clock_from_world(self, world_id: int) -> None:
-        """Зеркалит континентальные часы/события на все долины мира."""
+        """Зеркалит часы мира на долины с clock_mode=shared."""
         with self.lock:
             self.cursor.execute(
                 """
@@ -789,7 +854,9 @@ class Database:
                     pending_minor_key = w.pending_minor_key,
                     forced_tick_count = w.forced_tick_count
                 FROM worlds w
-                WHERE w.id = %s AND realms.world_id = w.id;
+                WHERE w.id = %s
+                  AND realms.world_id = w.id
+                  AND realms.clock_mode = 'shared';
                 """,
                 (int(world_id),),
             )
@@ -1045,22 +1112,26 @@ class Database:
     def create_fief(self, realm_id: int, user_id: int, name: str, **resources: Any) -> dict:
         with self.lock:
             self.cursor.execute(
-                "SELECT tick_index FROM realms WHERE id=%s;",
+                "SELECT tick_index, world_id FROM realms WHERE id=%s;",
                 (realm_id,),
             )
             row_tick = self.cursor.fetchone()
-            tick_index = int(row_tick[0]) if row_tick else 0
+            if not row_tick or row_tick[1] is None:
+                raise ValueError("Долина не привязана к миру")
+            tick_index = int(row_tick[0] or 0)
+            world_id = int(row_tick[1])
             self.cursor.execute(
                 """
                 INSERT INTO fiefs (
-                    realm_id, user_id, name, grain, goods, might, actions,
+                    realm_id, user_id, world_id, name, grain, goods, might, actions,
                     onboard_step, last_active_tick
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 RETURNING *;
                 """,
                 (
                     realm_id,
                     user_id,
+                    world_id,
                     name,
                     resources.get("grain", 0),
                     resources.get("goods", 0),
@@ -1084,6 +1155,12 @@ class Database:
             (realm_id, user_id),
         )
 
+    def get_fief_by_user_world(self, user_id: int, world_id: int) -> dict | None:
+        return self._fetchone(
+            "SELECT * FROM fiefs WHERE user_id=%s AND world_id=%s;",
+            (int(user_id), int(world_id)),
+        )
+
     def list_fiefs(self, realm_id: int) -> list[dict]:
         return self._fetchall(
             "SELECT * FROM fiefs WHERE realm_id=%s ORDER BY id;",
@@ -1098,6 +1175,103 @@ class Database:
 
     def update_fief(self, fief_id: int, **fields: Any) -> None:
         self._update("fiefs", fief_id, fields)
+
+    def spend_fief_action(
+        self,
+        fief_id: int,
+        *,
+        last_active_at: datetime,
+        last_active_tick: int,
+    ) -> dict | None:
+        """Атомарно списать 1 действие. None если actions < 1 или frozen."""
+        with self.lock:
+            try:
+                self.cursor.execute(
+                    """
+                    UPDATE fiefs
+                    SET actions = actions - 1,
+                        last_active_at = %s,
+                        last_active_tick = %s
+                    WHERE id = %s
+                      AND actions >= 1
+                      AND frozen = false
+                    RETURNING *;
+                    """,
+                    (last_active_at, int(last_active_tick), int(fief_id)),
+                )
+                row = self.cursor.fetchone()
+                if not row:
+                    self.commit()
+                    return None
+                cols = [d[0] for d in self.cursor.description]
+                result = self._normalize(dict(zip(cols, row)))
+                self.commit()
+                return result
+            except Exception:
+                self._rollback_outside_tx()
+                raise
+
+    def debit_fief_resources(
+        self,
+        fief_id: int,
+        amounts: Mapping[str, int] | None = None,
+        **kwargs: int,
+    ) -> dict | None:
+        """Атомарно списать grain/goods/might. None если не хватает остатка."""
+        from app.domain.resources import normalize_debit_amounts
+
+        normalized = normalize_debit_amounts(amounts, **kwargs)
+        sets: list[str] = []
+        set_vals: list[int] = []
+        conds = ["id=%s"]
+        cond_vals: list[int] = [int(fief_id)]
+        for col, amt in normalized.items():
+            sets.append(f"{col} = {col} - %s")
+            set_vals.append(amt)
+            conds.append(f"{col} >= %s")
+            cond_vals.append(amt)
+        sql = (
+            f"UPDATE fiefs SET {', '.join(sets)} "
+            f"WHERE {' AND '.join(conds)} RETURNING *;"
+        )
+        with self.lock:
+            try:
+                self.cursor.execute(sql, tuple(set_vals + cond_vals))
+                row = self.cursor.fetchone()
+                if not row:
+                    self.commit()
+                    return None
+                cols = [d[0] for d in self.cursor.description]
+                result = self._normalize(dict(zip(cols, row)))
+                self.commit()
+                return result
+            except Exception:
+                self._rollback_outside_tx()
+                raise
+
+    def bump_event_action(
+        self,
+        event_id: int,
+        fief_id: int,
+        action_key: str,
+        amount: int,
+    ) -> None:
+        """Вклад в котёл события без rollback при повторном вкладе."""
+        with self.lock:
+            try:
+                self.cursor.execute(
+                    """
+                    INSERT INTO event_actions (event_id, fief_id, action_key, amount)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (event_id, fief_id, action_key)
+                    DO UPDATE SET amount = event_actions.amount + EXCLUDED.amount;
+                    """,
+                    (int(event_id), int(fief_id), action_key, int(amount)),
+                )
+                self.commit()
+            except Exception:
+                self._rollback_outside_tx()
+                raise
 
     def set_fief_names_for_user(self, user_id: int, name: str) -> None:
         with self.lock:
@@ -1473,23 +1647,6 @@ class Database:
                 self.commit()
             return
         self._update("realm_events", event_id, fields)
-
-    def add_event_action(self, event_id: int, fief_id: int, action_key: str = "default", amount: int = 0) -> bool:
-        """True если впервые записано."""
-        with self.lock:
-            try:
-                self.cursor.execute(
-                    """
-                    INSERT INTO event_actions (event_id, fief_id, action_key, amount)
-                    VALUES (%s,%s,%s,%s);
-                    """,
-                    (event_id, fief_id, action_key, amount),
-                )
-                self.commit()
-                return True
-            except Exception:
-                self.rollback()
-                return False
 
     def get_event(self, event_id: int) -> dict | None:
         return self._fetchone("SELECT * FROM realm_events WHERE id=%s;", (event_id,))
