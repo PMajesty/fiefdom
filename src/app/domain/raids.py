@@ -1,10 +1,18 @@
 """Набеги, дозор, перехват."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from random import Random
 
 from app import balance as B
+from app.domain.resources import (
+    LootBag,
+    empty_loot_bag,
+    format_attacker_loot_suffix,
+    format_victim_loot_sentence,
+    raid_lootable_keys,
+)
 
 
 @dataclass
@@ -12,8 +20,7 @@ class RaidResult:
     success: bool
     ratio: float
     might_lost: int
-    grain_stolen: int
-    goods_stolen: int
+    stolen: LootBag
     defense_used: int
     intercept_applied: bool
     public_line: str = ""
@@ -29,8 +36,7 @@ class RaidActionResult:
     victim_user_id: int
     victim_name: str
     attacker_name: str
-    grain_stolen: int
-    goods_stolen: int
+    stolen: LootBag = field(default_factory=empty_loot_bag)
     intercept_applied: bool = False
     interceptor_fief_id: int | None = None
     interceptor_user_id: int | None = None
@@ -45,7 +51,7 @@ class RaidActionResult:
         if self.success:
             return (
                 f"Вы ограбили {self.victim_name}: "
-                f"+{self.grain_stolen} зерна, +{self.goods_stolen} товаров."
+                f"{format_attacker_loot_suffix(self.stolen)}"
             )
         if self.intercept_applied:
             return (
@@ -58,7 +64,7 @@ class RaidActionResult:
         if self.success:
             return (
                 f"На ваш хутор напал {self.attacker_name}! "
-                f"Унесено {self.grain_stolen} зерна и {self.goods_stolen} товаров."
+                f"{format_victim_loot_sentence(self.stolen)}"
             )
         if self.intercept_applied:
             return (
@@ -86,11 +92,18 @@ def raid_ratio(attack_might: int, defense: int) -> float:
     return s / (s + d)
 
 
-def unprotected_stash(grain: int, goods: int, barn_level: int) -> tuple[int, int]:
+def unprotected_stash(
+    stash: Mapping[str, int],
+    barn_level: int,
+    *,
+    loot_keys: Sequence[str] | None = None,
+) -> LootBag:
+    keys = tuple(loot_keys) if loot_keys is not None else raid_lootable_keys()
     protect = B.barn_protect_frac(barn_level)
-    ug = int(grain * (1.0 - protect))
-    ugds = int(goods * (1.0 - protect))
-    return max(0, ug), max(0, ugds)
+    return {
+        key: max(0, int(int(stash.get(key, 0) or 0) * (1.0 - protect)))
+        for key in keys
+    }
 
 
 def loot_overkill_factor(ratio: float) -> float:
@@ -107,36 +120,46 @@ def loot_overkill_factor(ratio: float) -> float:
 
 def loot_amounts(
     ratio: float,
-    unprot_grain: int,
-    unprot_goods: int,
-    victim_daily_grain: float,
-    victim_daily_goods: float,
+    unprot: Mapping[str, int],
+    daily: Mapping[str, float],
+    *,
+    loot_keys: Sequence[str] | None = None,
     rng: Random | None = None,
-) -> tuple[int, int]:
+) -> LootBag:
+    """Добыча по lootable-ключам. Для grain/goods числа совпадают с прежней формулой."""
+    keys = tuple(loot_keys) if loot_keys is not None else raid_lootable_keys()
     rng = rng or Random()
     swing = rng.uniform(float(B.RAID_LOOT_RND_MIN), float(B.RAID_LOOT_RND_MAX))
     factor = loot_overkill_factor(ratio) * swing
-    raw_g = ratio * B.RAID_LOOT_R_MULT * unprot_grain * factor
-    raw_d = ratio * B.RAID_LOOT_R_MULT * unprot_goods * factor
-    total_unprot = unprot_grain + unprot_goods
-    desired = raw_g + raw_d
+    raw = {
+        key: ratio * B.RAID_LOOT_R_MULT * int(unprot.get(key, 0) or 0) * factor
+        for key in keys
+    }
+    total_unprot = sum(int(unprot.get(key, 0) or 0) for key in keys)
+    desired = sum(raw.values())
     if desired <= 0 or total_unprot <= 0:
-        return 0, 0
+        return {key: 0 for key in keys}
     cap_frac = B.RAID_LOOT_MAX_FRAC * total_unprot
-    cap_days = B.RAID_LOOT_MAX_DAYS_PROD * (victim_daily_grain + victim_daily_goods)
+    daily_sum = sum(float(daily.get(key, 0) or 0) for key in keys)
+    cap_days = B.RAID_LOOT_MAX_DAYS_PROD * daily_sum
     scale = min(1.0, cap_frac / desired, (cap_days / desired) if desired else 1.0)
-    g = min(int(raw_g * scale), unprot_grain)
-    d = min(int(raw_d * scale), unprot_goods)
-    g, d = max(0, g), max(0, d)
-    # У порога int() часто обнуляет оба; успех при ненулевом складе даёт хотя бы кроху.
-    if g + d == 0 and total_unprot > 0:
-        if unprot_grain >= unprot_goods and unprot_grain > 0:
-            g = 1
-        elif unprot_goods > 0:
-            d = 1
-        else:
-            g = 1
-    return g, d
+    out: LootBag = {
+        key: max(0, min(int(raw[key] * scale), int(unprot.get(key, 0) or 0)))
+        for key in keys
+    }
+    # У порога int() часто обнуляет всё; успех при ненулевом складе даёт кроху.
+    # При равном unprot побеждает более ранний ключ реестра (зерно перед товарами).
+    if sum(out.values()) == 0 and total_unprot > 0:
+        best_key: str | None = None
+        best_unprot = -1
+        for key in keys:
+            u = int(unprot.get(key, 0) or 0)
+            if u > best_unprot:
+                best_unprot = u
+                best_key = key
+        if best_key is not None and best_unprot > 0:
+            out[best_key] = 1
+    return out
 
 
 def standing_raid_defense(
@@ -164,11 +187,9 @@ def resolve_raid(
     watch_defense: float,
     patrol_active: bool,
     intercept: bool,
-    victim_grain: int,
-    victim_goods: int,
+    victim_stash: Mapping[str, int],
     barn_level: int,
-    victim_daily_grain: float,
-    victim_daily_goods: float,
+    victim_daily: Mapping[str, float],
     fog_ignores_patrol: bool = False,
     victim_might: int = 0,
     rng: Random | None = None,
@@ -180,6 +201,8 @@ def resolve_raid(
         fog_ignores_patrol=fog_ignores_patrol,
         intercept=intercept,
     )
+    loot_keys = raid_lootable_keys()
+    zero_loot = {key: 0 for key in loot_keys}
 
     r = raid_ratio(attack_might, defense)
     if r < B.RAID_SUCCESS_R:
@@ -187,16 +210,15 @@ def resolve_raid(
             success=False,
             ratio=r,
             might_lost=attack_might,
-            grain_stolen=0,
-            goods_stolen=0,
+            stolen=zero_loot,
             defense_used=defense,
             intercept_applied=intercept,
             public_line=f"Набег {attacker_name} на хутор {victim_name} отбит у ворот",
         )
 
-    ug, ud = unprotected_stash(victim_grain, victim_goods, barn_level)
-    g, d = loot_amounts(
-        r, ug, ud, victim_daily_grain, victim_daily_goods, rng=rng
+    unprot = unprotected_stash(victim_stash, barn_level, loot_keys=loot_keys)
+    stolen = loot_amounts(
+        r, unprot, victim_daily, loot_keys=loot_keys, rng=rng
     )
     might_lost = max(1, int(round(attack_might * B.RAID_SUCCESS_MIGHT_LOSS_FRAC)))
     might_lost = min(attack_might, might_lost)
@@ -204,8 +226,7 @@ def resolve_raid(
         success=True,
         ratio=r,
         might_lost=might_lost,
-        grain_stolen=g,
-        goods_stolen=d,
+        stolen=stolen,
         defense_used=defense,
         intercept_applied=intercept,
         # Суммы добычи только в личке сторон; в группе и в ночной сводке - без цифр.

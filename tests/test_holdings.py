@@ -202,7 +202,10 @@ def test_format_holdings_manor_matches_total_at_cap():
     )
     assert "сила двора не копится" in text
     assert f"+{watch_might:.0f} силы/день" in text
-    assert f"+{daily.might:.0f} силы/день" in text.split("Итого:")[1]
+    assert (
+        f"+{daily.resources()[B.RES_MIGHT]:.0f} силы/день"
+        in text.split("Итого:")[1]
+    )
 
 
 def test_format_holdings_empty_and_hungry_banner():

@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
+from types import MappingProxyType
 
 from app import balance as B
 from app.domain.map_gen import col_label
-from app.domain.resources import LIVE_RESOURCES, add_bags, scale_bag
+from app.domain.resources import add_bags, live_resource_keys, scale_bag
 
 
 @dataclass
@@ -22,24 +23,54 @@ class TileView:
     is_overgrown: bool = False
 
 
-@dataclass
 class Production:
-    grain: float = 0.0
-    goods: float = 0.0
-    might: float = 0.0
-    defense: float = 0.0
+    """Дневное производство: сумка по ключам реестра + defense.
+
+    Мутация сумки - только через with_amounts / scale / plus.
+    Свойство bag - read-only снимок (MappingProxyType).
+    """
+
+    __slots__ = ("_bag", "defense")
+
+    def __init__(self, *, defense: float = 0.0, **amounts: float) -> None:
+        self.defense = float(defense)
+        self._bag = {
+            key: float(amounts.get(key, 0) or 0) for key in live_resource_keys()
+        }
+
+    @property
+    def bag(self) -> Mapping[str, float]:
+        return MappingProxyType(self._bag)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Production):
+            return NotImplemented
+        return self.defense == other.defense and self._bag == other._bag
+
+    def __repr__(self) -> str:
+        parts = ", ".join(f"{k}={v!r}" for k, v in self._bag.items())
+        return f"Production({parts}, defense={self.defense!r})"
 
     def resources(self) -> dict[str, float]:
-        return {key: float(getattr(self, key)) for key in LIVE_RESOURCES}
+        return dict(self._bag)
 
     @classmethod
     def from_resources(
         cls, bag: Mapping[str, float], *, defense: float = 0.0
     ) -> "Production":
         return cls(
-            **{key: float(bag.get(key, 0) or 0) for key in LIVE_RESOURCES},
             defense=float(defense),
+            **{key: float(bag.get(key, 0) or 0) for key in live_resource_keys()},
         )
+
+    def with_amounts(self, **changes: float) -> "Production":
+        bag = dict(self._bag)
+        defense = self.defense
+        if "defense" in changes:
+            defense = float(changes.pop("defense"))
+        for key, value in changes.items():
+            bag[key] = float(value)
+        return Production(defense=defense, **bag)
 
     def scale(self, mult: float) -> "Production":
         return Production.from_resources(
@@ -55,9 +86,9 @@ class Production:
 
 def tile_passive(tile_type: str) -> Production:
     if tile_type == B.TILE_RIVER:
-        return Production(grain=B.RIVER_PASSIVE_GRAIN)
+        return Production(**{B.RES_GRAIN: B.RIVER_PASSIVE_GRAIN})
     if tile_type == B.TILE_ROAD:
-        return Production(goods=B.ROAD_PASSIVE_GOODS)
+        return Production(**{B.RES_GOODS: B.ROAD_PASSIVE_GOODS})
     return Production()
 
 
@@ -66,20 +97,22 @@ def building_production(building: str, level: int, tile_type: str) -> Production
         return Production()
     if building == B.BLD_MANOR:
         return Production(
-            grain=float(B.MANOR_GRAIN),
-            goods=float(B.MANOR_GOODS),
-            might=float(B.MANOR_MIGHT),
+            **{
+                B.RES_GRAIN: float(B.MANOR_GRAIN),
+                B.RES_GOODS: float(B.MANOR_GOODS),
+                B.RES_MIGHT: float(B.MANOR_MIGHT),
+            }
         )
     native = B.NATIVE_TILE.get(building)
     bonus = B.NATIVE_BONUS if native and tile_type == native else 1.0
     if building == B.BLD_FARM:
-        return Production(grain=B.FARM_YIELD[level] * bonus)
+        return Production(**{B.RES_GRAIN: B.FARM_YIELD[level] * bonus})
     if building == B.BLD_WORKSHOP:
-        return Production(goods=B.WORKSHOP_YIELD[level] * bonus)
+        return Production(**{B.RES_GOODS: B.WORKSHOP_YIELD[level] * bonus})
     if building == B.BLD_WATCH:
         return Production(
-            might=B.WATCH_MIGHT[level] * bonus,
             defense=B.WATCH_DEFENSE[level] * bonus,
+            **{B.RES_MIGHT: B.WATCH_MIGHT[level] * bonus},
         )
     return Production()
 
@@ -101,17 +134,23 @@ def fief_daily_production(
         p = tile_passive(t.tile_type)
         b = building_production(t.building or "", t.building_level, t.tile_type)
         if t.building == B.BLD_FARM:
-            b = replace(b, grain=b.grain * farm_mult)
+            b = b.with_amounts(
+                **{B.RES_GRAIN: b.resources()[B.RES_GRAIN] * farm_mult}
+            )
         if t.building == B.BLD_MANOR:
-            manor_might += b.might
-            b = replace(b, might=0.0)
+            manor_might += b.resources()[B.RES_MIGHT]
+            b = b.with_amounts(**{B.RES_MIGHT: 0.0})
         total = total.plus(p).plus(b)
     # Сила двора только до бесплатного потолка дружины.
     free_room = max(0, B.MILITIA_FREE - max(0, int(current_might)))
     manor_applied = min(manor_might, float(free_room))
-    total = replace(total, might=total.might + manor_applied)
+    total = total.with_amounts(
+        **{B.RES_MIGHT: total.resources()[B.RES_MIGHT] + manor_applied}
+    )
     if active_tiles > 0 and B.FIEF_BASE_GOODS:
-        total = replace(total, goods=total.goods + B.FIEF_BASE_GOODS)
+        total = total.with_amounts(
+            **{B.RES_GOODS: total.resources()[B.RES_GOODS] + B.FIEF_BASE_GOODS}
+        )
     if hungry:
         total = total.scale(B.HUNGER_PRODUCTION_MULT)
     return total

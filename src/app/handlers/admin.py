@@ -130,26 +130,30 @@ async def cmd_grant(message: Message) -> None:
         return
     engine = get_engine()
     try:
+        from app.domain.resources import live_resource_keys, resource_defs
+
         parts = (message.text or "").split()
-        if len(parts) < 6:
-            raise ValueError("Формат: /вч_grant realm_id fief_id grain goods might")
+        keys = live_resource_keys()
+        if len(parts) < 3 + len(keys):
+            raise ValueError(
+                "Формат: /вч_grant realm_id fief_id " + " ".join(keys)
+            )
         realm_id = int(parts[1])
         fief_id = int(parts[2])
-        grain = int(parts[3])
-        goods = int(parts[4])
-        might = int(parts[5])
+        deltas = {keys[i]: int(parts[3 + i]) for i in range(len(keys))}
         fief = engine.db.get_fief(fief_id)
         if not fief or fief["realm_id"] != realm_id:
             raise ValueError("Усадьба не найдена в этой долине")
         engine.db.update_fief(
             fief_id,
-            grain=fief["grain"] + grain,
-            goods=fief["goods"] + goods,
-            might=fief["might"] + might,
+            **{key: int(fief[key]) + deltas[key] for key in keys},
+        )
+        granted = ", ".join(
+            f"+{deltas[r.key]} {r.name_ru_genitive}" for r in resource_defs()
         )
         await answer_html(
             message,
-            f"Выдано усадьбе #{fief_id}: +{grain} зерна, +{goods} товаров, +{might} силы.",
+            f"Выдано усадьбе #{fief_id}: {granted}.",
         )
     except ValueError as exc:
         await answer_html(message, str(exc))

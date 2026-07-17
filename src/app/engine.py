@@ -62,10 +62,22 @@ from app.domain.rumors import (
 )
 from app.domain.resources import (
     apply_gather_to_stash,
+    capped_receive_amount,
     fief_balance_columns,
+    format_daily_production_line,
+    format_status_stash_line,
+    gather_forbidden_message,
+    gather_result_text,
+    live_resource_keys,
     pending_from_row,
+    resource_name_ru,
+    send_forbidden_message,
+    stash_amount,
     stash_from_row,
+    trade_forbidden_message,
+    tradeable_keys,
 )
+from app.resource_schema import raid_stolen_fields
 from app.domain.tick import (
     FiefTickState,
     apply_fief_tick,
@@ -666,16 +678,10 @@ class Engine:
                     f"⚡ Действия: {fief['actions']}/{B.ACTIONS_BANK_MAX} · "
                     f"Клетки: {len(tiles)}/{B.TILE_HARD_CAP}"
                 ),
-                (
-                    f"🌾 {fief['grain']} · 📦 {fief['goods']} · "
-                    f"⚔️ {fief['might']} · 🛡 {defense}"
-                ),
+                format_status_stash_line(fief, defense=defense),
                 _stash_status_line(barn),
                 "",
-                (
-                    f"+{prod.grain:.0f} зерна/день, +{prod.goods:.0f} товаров/день, "
-                    f"+{prod.might:.0f} силы/день"
-                ),
+                format_daily_production_line(prod.resources()),
                 f"Корм: земля {land}, дружина {militia}",
                 "",
             ]
@@ -1061,8 +1067,8 @@ class Engine:
 
     def gather_resource(self, fief_id: int, resource: str) -> str:
         """Потратить 1 действие на плоский сбор одного ресурса."""
-        if resource not in (B.RES_GRAIN, B.RES_GOODS, B.RES_MIGHT):
-            raise ValueError("Можно собрать зерно, товары или силу")
+        if resource not in live_resource_keys():
+            raise ValueError(gather_forbidden_message())
         fief = self.db.get_fief(fief_id)
         if not fief:
             raise ValueError("Усадьба не найдена")
@@ -1080,13 +1086,7 @@ class Engine:
                 stash_from_row(fief), resource, amount, cap=cap
             )
             self.db.update_fief(fief_id, **{resource: stash[resource]})
-            if resource == B.RES_MIGHT:
-                return f"Сбор: +{gained} силы (−1 действие)."
-            if resource == B.RES_GRAIN:
-                suffix = "" if gained == amount else " (склад почти полон)"
-                return f"Сбор: +{gained} зерна (−1 действие).{suffix}"
-            suffix = "" if gained == amount else " (склад почти полон)"
-            return f"Сбор: +{gained} товаров (−1 действие).{suffix}"
+            return gather_result_text(resource, gained, amount)
 
     def _onboard_claim(self, fief_id: int) -> None:
         fief = self.db.get_fief(fief_id)
@@ -1245,6 +1245,7 @@ class Engine:
 
         atk_label = self.fief_label(atk)
         vic_label = self.fief_label(vic)
+        vic_prod = self.fief_prod(vic)
         result = resolve_raid(
             attacker_name=atk_label,
             victim_name=vic_label,
@@ -1252,11 +1253,9 @@ class Engine:
             watch_defense=watch_def,
             patrol_active=patrol,
             intercept=intercept,
-            victim_grain=vic["grain"],
-            victim_goods=vic["goods"],
+            victim_stash=stash_from_row(vic),
             barn_level=self.barn_level(victim_id),
-            victim_daily_grain=self.fief_prod(vic).grain,
-            victim_daily_goods=self.fief_prod(vic).goods,
+            victim_daily=vic_prod.resources(),
             fog_ignores_patrol=fog,
             victim_might=int(vic.get("might") or 0),
         )
@@ -1292,11 +1291,9 @@ class Engine:
                         watch_defense=watch_def,
                         patrol_active=patrol,
                         intercept=False,
-                        victim_grain=vic["grain"],
-                        victim_goods=vic["goods"],
+                        victim_stash=stash_from_row(vic),
                         barn_level=self.barn_level(victim_id),
-                        victim_daily_grain=self.fief_prod(vic).grain,
-                        victim_daily_goods=self.fief_prod(vic).goods,
+                        victim_daily=self.fief_prod(vic).resources(),
                         fog_ignores_patrol=fog,
                         victim_might=int(vic.get("might") or 0),
                     )
@@ -1313,21 +1310,27 @@ class Engine:
                 ):
                     raise ValueError("Недостаточно силы")
 
+            stolen_bag = dict(result.stolen)
             if result.success:
                 vic = self.db.get_fief(victim_id)
                 atk = self.db.get_fief(attacker_id)
-                self.db.update_fief(
-                    victim_id,
-                    grain=vic["grain"] - result.grain_stolen,
-                    goods=vic["goods"] - result.goods_stolen,
-                    shield_until=None,
-                    shield_until_tick=tick_index + B.RAID_VICTIM_SHIELD_TICKS,
+                victim_patch = {
+                    key: stash_amount(vic, key) - amt
+                    for key, amt in stolen_bag.items()
+                }
+                victim_patch["shield_until"] = None
+                victim_patch["shield_until_tick"] = (
+                    tick_index + B.RAID_VICTIM_SHIELD_TICKS
                 )
+                self.db.update_fief(victim_id, **victim_patch)
                 barn = self.barn_level(attacker_id)
                 cap = B.stash_cap(barn)
-                g_add = min(result.grain_stolen, max(0, cap - atk["grain"]))
-                d_add = min(result.goods_stolen, max(0, cap - atk["goods"]))
-                self.db.update_fief(attacker_id, grain=atk["grain"] + g_add, goods=atk["goods"] + d_add)
+                attacker_patch = {
+                    key: stash_amount(atk, key)
+                    + capped_receive_amount(stash_amount(atk, key), amt, cap)
+                    for key, amt in stolen_bag.items()
+                }
+                self.db.update_fief(attacker_id, **attacker_patch)
 
             self.db.log_raid(
                 realm_id=int(atk["realm_id"]),
@@ -1336,10 +1339,9 @@ class Engine:
                 victim_fief_id=victim_id,
                 success=result.success,
                 might_spent=might,
-                grain_stolen=result.grain_stolen,
-                goods_stolen=result.goods_stolen,
                 public_line=atk_line,
                 tick_index=tick_index,
+                **raid_stolen_fields(stolen_bag),
             )
             digest_by_realm: dict[int, str] = {
                 int(atk["realm_id"]): atk_line,
@@ -1360,8 +1362,7 @@ class Engine:
             victim_user_id=int(vic_final["user_id"]),
             victim_name=self.fief_label(vic_final),
             attacker_name=self.fief_label(atk_final),
-            grain_stolen=result.grain_stolen,
-            goods_stolen=result.goods_stolen,
+            stolen=dict(result.stolen),
             intercept_applied=result.intercept_applied,
             interceptor_fief_id=int(interceptor["id"]) if interceptor else None,
             interceptor_user_id=int(interceptor["user_id"]) if interceptor else None,
@@ -1382,8 +1383,9 @@ class Engine:
         want_amt: int,
         target_fief_id: int | None = None,
     ) -> str:
-        if give_res not in B.TRADEABLE or want_res not in B.TRADEABLE:
-            raise ValueError("Можно менять только зерно и товары")
+        tradeable = tradeable_keys()
+        if give_res not in tradeable or want_res not in tradeable:
+            raise ValueError(trade_forbidden_message())
         if give_res == want_res:
             raise ValueError("Разные ресурсы")
         if give_amt <= 0 or want_amt <= 0:
@@ -1399,8 +1401,7 @@ class Engine:
             )
         self.collect_for_fief(fief_id)
         fief = self.db.get_fief(fief_id)
-        have = fief["grain"] if give_res == B.RES_GRAIN else fief["goods"]
-        if have < give_amt:
+        if stash_amount(fief, give_res) < give_amt:
             raise ValueError("Недостаточно ресурса для предложения")
         with self.db.transaction():
             fief = self.db.get_fief(fief_id)
@@ -1411,8 +1412,7 @@ class Engine:
                 self._require_cross_valley_caught_up(
                     int(fief["realm_id"]), int(target["realm_id"])
                 )
-            have = fief["grain"] if give_res == B.RES_GRAIN else fief["goods"]
-            if have < give_amt:
+            if stash_amount(fief, give_res) < give_amt:
                 raise ValueError("Недостаточно ресурса для предложения")
             # Ресурс остаётся на усадьбе (доступен набегам) до момента сделки.
             realm = self.db.get_realm(fief["realm_id"]) or {}
@@ -1427,7 +1427,11 @@ class Engine:
                 want_amt=want_amt,
                 expires_tick=tick_index + B.TRADE_EXPIRE_TICKS,
             )
-        return f"Лот #{offer['id']}: отдаю {give_amt} {B.RES_NAMES_RU[give_res]} за {want_amt} {B.RES_NAMES_RU[want_res]}."
+        return (
+            f"Лот #{offer['id']}: отдаю {give_amt} "
+            f"{resource_name_ru(give_res)} за {want_amt} "
+            f"{resource_name_ru(want_res)}."
+        )
 
     def accept_trade(self, fief_id: int, trade_id: int) -> str:
         trade = self.db.get_trade(trade_id)
@@ -1451,8 +1455,7 @@ class Engine:
         buyer = self.db.get_fief(fief_id)
         want = trade["want_res"]
         want_amt = trade["want_amt"]
-        have = buyer["grain"] if want == B.RES_GRAIN else buyer["goods"]
-        if have < want_amt:
+        if stash_amount(buyer, want) < want_amt:
             raise ValueError("Недостаточно ресурса для оплаты")
 
         realm = self.db.get_realm(buyer["realm_id"])
@@ -1484,59 +1487,48 @@ class Engine:
                 seller = self.db.get_fief(trade["offerer_fief_id"])
                 if not seller:
                     raise ValueError("Усадьба продавца не найдена")
-                seller_have = (
-                    seller["grain"] if give_res == B.RES_GRAIN else seller["goods"]
-                )
-                if seller_have < give_amt:
+                if stash_amount(seller, give_res) < give_amt:
                     raise ValueError("У продавца недостаточно ресурса для сделки")
 
                 buyer = self.db.get_fief(fief_id)
-                have = buyer["grain"] if want == B.RES_GRAIN else buyer["goods"]
-                if have < want_amt:
+                if stash_amount(buyer, want) < want_amt:
                     raise ValueError("Недостаточно ресурса для оплаты")
 
-                if give_res == B.RES_GRAIN:
-                    self.db.update_fief(
-                        int(seller["id"]), grain=int(seller["grain"]) - give_amt
-                    )
-                else:
-                    self.db.update_fief(
-                        int(seller["id"]), goods=int(seller["goods"]) - give_amt
-                    )
-
-                if want == B.RES_GRAIN:
-                    self.db.update_fief(fief_id, grain=buyer["grain"] - want_amt)
-                else:
-                    self.db.update_fief(fief_id, goods=buyer["goods"] - want_amt)
+                self.db.update_fief(
+                    int(seller["id"]),
+                    **{give_res: stash_amount(seller, give_res) - give_amt},
+                )
+                self.db.update_fief(
+                    fief_id, **{want: stash_amount(buyer, want) - want_amt}
+                )
 
                 pay_bonus = int(want_amt * bonus)
                 recv_bonus = int(give_amt * bonus)
 
                 seller = self.db.get_fief(trade["offerer_fief_id"])
-                if want == B.RES_GRAIN:
-                    self.db.update_fief(
-                        seller["id"],
-                        grain=seller["grain"] + want_amt + pay_bonus,
-                    )
-                else:
-                    self.db.update_fief(
-                        seller["id"],
-                        goods=seller["goods"] + want_amt + pay_bonus,
-                    )
+                self.db.update_fief(
+                    seller["id"],
+                    **{
+                        want: stash_amount(seller, want) + want_amt + pay_bonus,
+                    },
+                )
 
                 buyer = self.db.get_fief(fief_id)
                 cap = B.stash_cap(self.barn_level(fief_id))
-                if give_res == B.RES_GRAIN:
-                    add = min(give_amt + recv_bonus, max(0, cap - buyer["grain"]))
-                    self.db.update_fief(fief_id, grain=buyer["grain"] + add)
-                else:
-                    add = min(give_amt + recv_bonus, max(0, cap - buyer["goods"]))
-                    self.db.update_fief(fief_id, goods=buyer["goods"] + add)
+                add = capped_receive_amount(
+                    stash_amount(buyer, give_res), give_amt + recv_bonus, cap
+                )
+                self.db.update_fief(
+                    fief_id,
+                    **{give_res: stash_amount(buyer, give_res) + add},
+                )
 
                 if wedding_gift:
                     for fid in (fief_id, trade["offerer_fief_id"]):
                         f = self.db.get_fief(fid)
-                        self.db.update_fief(fid, grain=f["grain"] + wedding_gift)
+                        self.db.update_fief(
+                            fid, grain=stash_amount(f, B.RES_GRAIN) + wedding_gift
+                        )
         if expired:
             raise ValueError("Лот истёк")
         return f"Сделка #{trade_id} закрыта."
@@ -1559,9 +1551,9 @@ class Engine:
         res: str,
         amt: int,
     ) -> str:
-        """Односторонняя передача зерна/товаров (на доверии, без эскроу)."""
-        if res not in B.TRADEABLE:
-            raise ValueError("Можно передать только зерно или товары")
+        """Односторонняя передача tradeable-ресурсов (на доверии, без эскроу)."""
+        if res not in tradeable_keys():
+            raise ValueError(send_forbidden_message())
         if amt <= 0:
             raise ValueError("Количество должно быть > 0")
         if from_fief_id == to_fief_id:
@@ -1594,12 +1586,11 @@ class Engine:
             self._require_cross_valley_caught_up(
                 int(sender["realm_id"]), int(receiver["realm_id"])
             )
-            have = sender["grain"] if res == B.RES_GRAIN else sender["goods"]
-            if have < amt:
+            if stash_amount(sender, res) < amt:
                 raise ValueError("Недостаточно ресурса")
 
             cap = B.stash_cap(self.barn_level(to_fief_id))
-            held = receiver["grain"] if res == B.RES_GRAIN else receiver["goods"]
+            held = stash_amount(receiver, res)
             free = max(0, cap - held)
             if free < amt:
                 raise ValueError(
@@ -1607,16 +1598,16 @@ class Engine:
                     f"(свободно {free}, нужно {amt})"
                 )
 
-            if res == B.RES_GRAIN:
-                self.db.update_fief(from_fief_id, grain=sender["grain"] - amt)
-                self.db.update_fief(to_fief_id, grain=receiver["grain"] + amt)
-            else:
-                self.db.update_fief(from_fief_id, goods=sender["goods"] - amt)
-                self.db.update_fief(to_fief_id, goods=receiver["goods"] + amt)
+            self.db.update_fief(
+                from_fief_id, **{res: stash_amount(sender, res) - amt}
+            )
+            self.db.update_fief(
+                to_fief_id, **{res: stash_amount(receiver, res) + amt}
+            )
 
-        res_name = B.RES_NAMES_RU[res]
         return (
-            f"Передано {amt} {res_name} усадьбе {self.fief_label(receiver)}."
+            f"Передано {amt} {resource_name_ru(res)} "
+            f"усадьбе {self.fief_label(receiver)}."
         )
 
     def _refund_trade(self, trade: dict) -> None:
@@ -1635,8 +1626,8 @@ class Engine:
             tgt = ", только вам" if o.get("target_fief_id") else ""
             lines.append(
                 f"#{o['id']} ({seller_label}): отдаёт {o['give_amt']} "
-                f"{B.RES_NAMES_RU[o['give_res']]} за {o['want_amt']} "
-                f"{B.RES_NAMES_RU[o['want_res']]}{tgt}"
+                f"{resource_name_ru(o['give_res'])} за {o['want_amt']} "
+                f"{resource_name_ru(o['want_res'])}{tgt}"
             )
         return "\n".join(lines)
 
@@ -2192,8 +2183,8 @@ class Engine:
             best = max(offers, key=lambda o: o["give_amt"] + o["want_amt"])
             market_line = (
                 f"{format_lots_count(len(offers))}. Лучший: отдаёт "
-                f"{best['give_amt']} {B.RES_NAMES_RU[best['give_res']]} за "
-                f"{best['want_amt']} {B.RES_NAMES_RU[best['want_res']]}"
+                f"{best['give_amt']} {resource_name_ru(best['give_res'])} за "
+                f"{best['want_amt']} {resource_name_ru(best['want_res'])}"
             )
 
         tz = ZoneInfo(realm.get("timezone") or TIMEZONE)

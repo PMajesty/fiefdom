@@ -5,6 +5,7 @@ from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
+from app import balance as B
 from app.domain.events import minor_effect
 from app.domain.raids import RaidActionResult, RaidResult
 from app.domain.tick import FiefTickState
@@ -158,12 +159,10 @@ def test_tick_applies_harvest_mult_same_day():
     def fake_apply(state: FiefTickState):
         captured["farm_mult"] = state.farm_mult
         out = MagicMock()
-        out.grain = state.grain
-        out.goods = state.goods
-        out.might = state.might
-        out.pending_grain = state.pending_grain
-        out.pending_goods = state.pending_goods
-        out.pending_might = state.pending_might
+        out.balance_columns.return_value = {
+            **state.stash,
+            **{f"pending_{k}": v for k, v in state.pending.items()},
+        }
         out.actions = state.actions + 1
         out.hungry = False
         return out
@@ -227,12 +226,10 @@ def test_tick_drought_applies_farm_mult_to_all_fiefs():
     def fake_apply(state: FiefTickState):
         mults.append(state.farm_mult)
         out = MagicMock()
-        out.grain = state.grain
-        out.goods = state.goods
-        out.might = state.might
-        out.pending_grain = 0.0
-        out.pending_goods = 0.0
-        out.pending_might = 0.0
+        out.balance_columns.return_value = {
+            **state.stash,
+            **{f"pending_{k}": v for k, v in state.pending.items()},
+        }
         out.actions = 2
         out.hungry = False
         return out
@@ -300,8 +297,7 @@ def test_raid_action_result_includes_victim_and_dm_texts():
         victim_user_id=2002,
         victim_name="B",
         attacker_name="A",
-        grain_stolen=3,
-        goods_stolen=1,
+        stolen={B.RES_GRAIN: 3, B.RES_GOODS: 1},
         intercept_applied=False,
     )
     assert r.victim_user_id == 2002
@@ -320,8 +316,7 @@ def test_raid_action_result_includes_victim_and_dm_texts():
         victim_user_id=2002,
         victim_name="B",
         attacker_name="A",
-        grain_stolen=0,
-        goods_stolen=0,
+        stolen={B.RES_GRAIN: 0, B.RES_GOODS: 0},
         intercept_applied=True,
         interceptor_fief_id=3,
         interceptor_user_id=2003,
@@ -391,8 +386,7 @@ def test_engine_raid_returns_victim_user_id():
     engine._spend_action = MagicMock()
     prod = MagicMock()
     prod.defense = 1.0
-    prod.grain = 5.0
-    prod.goods = 2.0
+    prod.resources.return_value = {B.RES_GRAIN: 5.0, B.RES_GOODS: 2.0, B.RES_MIGHT: 0.0}
     engine.fief_prod = MagicMock(return_value=prod)
 
     result = engine.raid(1, 2, might=10)
@@ -449,12 +443,10 @@ def test_manual_tick_does_not_advance_schedule_markers():
 
     def fake_apply(state: FiefTickState):
         out = MagicMock()
-        out.grain = state.grain
-        out.goods = state.goods
-        out.might = state.might
-        out.pending_grain = state.pending_grain
-        out.pending_goods = state.pending_goods
-        out.pending_might = state.pending_might
+        out.balance_columns.return_value = {
+            **state.stash,
+            **{f"pending_{k}": v for k, v in state.pending.items()},
+        }
         out.actions = state.actions + 1
         out.hungry = False
         return out
@@ -481,12 +473,10 @@ def test_scheduled_tick_writes_slot_markers():
 
     def fake_apply(state: FiefTickState):
         out = MagicMock()
-        out.grain = state.grain
-        out.goods = state.goods
-        out.might = state.might
-        out.pending_grain = state.pending_grain
-        out.pending_goods = state.pending_goods
-        out.pending_might = state.pending_might
+        out.balance_columns.return_value = {
+            **state.stash,
+            **{f"pending_{k}": v for k, v in state.pending.items()},
+        }
         out.actions = state.actions + 1
         out.hungry = False
         return out
@@ -601,8 +591,7 @@ def _raid_stateful_engine(*, atk_extra=None, vic_extra=None, reverse_pair_at=Non
     engine._spend_action = MagicMock()
     prod = MagicMock()
     prod.defense = 1.0
-    prod.grain = 5.0
-    prod.goods = 2.0
+    prod.resources.return_value = {B.RES_GRAIN: 5.0, B.RES_GOODS: 2.0, B.RES_MIGHT: 0.0}
     engine.fief_prod = MagicMock(return_value=prod)
     return engine, fiefs, B
 
@@ -615,8 +604,8 @@ def test_raid_does_not_bank_victim_pending_might():
     assert fiefs[2]["pending_grain"] == 0.0
     assert fiefs[2]["pending_goods"] == 0.0
     # pending зерно/товары вошли в stash, затем могла уйти добыча
-    assert fiefs[2]["grain"] == 70 - result.grain_stolen
-    assert fiefs[2]["goods"] == 32 - result.goods_stolen
+    assert fiefs[2]["grain"] == 70 - result.stolen[B.RES_GRAIN]
+    assert fiefs[2]["goods"] == 32 - result.stolen[B.RES_GOODS]
 
 
 def test_engine_raid_passes_victim_might_into_defense():
@@ -633,8 +622,7 @@ def test_engine_raid_passes_victim_might_into_defense():
             success=False,
             ratio=0.2,
             might_lost=10,
-            grain_stolen=0,
-            goods_stolen=0,
+            stolen={B.RES_GRAIN: 0, B.RES_GOODS: 0},
             defense_used=28,
             intercept_applied=False,
             public_line="отбит",
@@ -668,8 +656,7 @@ def test_raid_has_no_personal_attacker_cooldown():
             success=True,
             ratio=1.0,
             might_lost=5,
-            grain_stolen=1,
-            goods_stolen=0,
+            stolen={B.RES_GRAIN: 1, B.RES_GOODS: 0},
             defense_used=1,
             intercept_applied=False,
             public_line="ok",
@@ -702,8 +689,7 @@ def test_successful_raid_grants_one_tick_global_shield():
             success=True,
             ratio=1.0,
             might_lost=5,
-            grain_stolen=1,
-            goods_stolen=0,
+            stolen={B.RES_GRAIN: 1, B.RES_GOODS: 0},
             defense_used=1,
             intercept_applied=False,
             public_line="ok",

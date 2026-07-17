@@ -8,6 +8,7 @@ os.environ.setdefault("ADMIN_USER_ID", "42")
 
 import pytest
 
+from app import balance as B
 from app.domain.raids import RaidActionResult
 from app.handlers.dm import _handle_pending
 
@@ -20,8 +21,7 @@ def _raid_result(**overrides) -> RaidActionResult:
         victim_user_id=200,
         victim_name="Бета",
         attacker_name="Альфа",
-        grain_stolen=3,
-        goods_stolen=1,
+        stolen={B.RES_GRAIN: 3, B.RES_GOODS: 1},
         intercept_applied=False,
         attacker_realm_id=1,
         victim_realm_id=1,

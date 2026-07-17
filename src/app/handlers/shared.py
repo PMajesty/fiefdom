@@ -172,8 +172,10 @@ def format_trade_post_announce(
     want_amt: int,
     want_res: str,
 ) -> str:
-    give = B.RES_NAMES_RU.get(give_res, give_res)
-    want = B.RES_NAMES_RU.get(want_res, want_res)
+    from app.domain.resources import resource_name_ru
+
+    give = resource_name_ru(give_res)
+    want = resource_name_ru(want_res)
     return (
         f"🛒 {escape_html(fief_name)} выставляет лот: "
         f"отдаёт {int(give_amt)} {give} за {int(want_amt)} {want}"
@@ -188,8 +190,10 @@ def format_trade_accept_announce(
     want_amt: int,
     want_res: str,
 ) -> str:
-    give = B.RES_NAMES_RU.get(give_res, give_res)
-    want = B.RES_NAMES_RU.get(want_res, want_res)
+    from app.domain.resources import resource_name_ru
+
+    give = resource_name_ru(give_res)
+    want = resource_name_ru(want_res)
     return (
         f"🛒 Сделка: {escape_html(buyer_name)} забрала "
         f"{int(give_amt)} {give} у {escape_html(seller_name)} "
@@ -203,7 +207,9 @@ def format_send_announce(
     amt: int,
     res: str,
 ) -> str:
-    res_name = B.RES_NAMES_RU.get(res, res)
+    from app.domain.resources import resource_name_ru
+
+    res_name = resource_name_ru(res)
     return (
         f"📦 {escape_html(sender_name)} передала "
         f"{int(amt)} {res_name} усадьбе {escape_html(receiver_name)}"

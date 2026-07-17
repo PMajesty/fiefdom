@@ -8,6 +8,7 @@ from aiogram.types import CallbackQuery
 
 from app import balance as B
 from app.domain.economy import adjacent_claimable
+from app.domain.resources import resource_defs
 from app.handlers import dm as dm_mod
 from app.handlers.shared import (
     announce_continent,
@@ -78,9 +79,10 @@ async def cb_gather(callback: CallbackQuery) -> None:
                 callback.message,
                 (
                     "Сбор за 1 действие - плоская добыча, здания не нужны:\n"
-                    f"• зерно +{B.GATHER_GRAIN}\n"
-                    f"• товары +{B.GATHER_GOODS}\n"
-                    f"• сила +{B.GATHER_MIGHT}"
+                    + "\n".join(
+                        f"• {r.synonyms[0]} +{B.gather_amount(r.key)}"
+                        for r in resource_defs()
+                    )
                 ),
                 reply_markup=dm_mod.gather_resources_kb(fief_id),
             )

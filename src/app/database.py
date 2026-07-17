@@ -12,6 +12,20 @@ from typing import Any, Iterator
 import pg8000
 
 from app.config import DB_CONFIG, tick_slots
+from app.domain.resources import (
+    live_resource_keys,
+    normalize_credit_amounts,
+    normalize_debit_amounts,
+    raid_lootable_defs,
+)
+from app.resource_schema import (
+    build_annul_open_trades_sql,
+    build_credit_sql,
+    build_debit_sql,
+    ensure_resource_columns_sql,
+    fief_stash_ddl_lines,
+    raids_stolen_ddl_lines,
+)
 from app.domain.tick_schedule import LEGACY_TWO_TICK_SLOTS, remap_last_tick_slot
 
 logger = logging.getLogger(__name__)
@@ -130,19 +144,14 @@ class Database:
                     clock_mode TEXT NOT NULL DEFAULT 'shared'
                 );
                 """,
-                """
+                f"""
                 CREATE TABLE IF NOT EXISTS fiefs (
                     id BIGSERIAL PRIMARY KEY,
                     realm_id BIGINT NOT NULL REFERENCES realms(id) ON DELETE CASCADE,
                     user_id BIGINT NOT NULL REFERENCES users(telegram_id),
                     world_id BIGINT,
                     name TEXT NOT NULL,
-                    grain INT NOT NULL DEFAULT 0,
-                    goods INT NOT NULL DEFAULT 0,
-                    might INT NOT NULL DEFAULT 0,
-                    pending_grain DOUBLE PRECISION NOT NULL DEFAULT 0,
-                    pending_goods DOUBLE PRECISION NOT NULL DEFAULT 0,
-                    pending_might DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    {", ".join(fief_stash_ddl_lines())},
                     actions INT NOT NULL DEFAULT 1,
                     hungry BOOLEAN NOT NULL DEFAULT FALSE,
                     patrol_until TIMESTAMPTZ,
@@ -217,7 +226,7 @@ class Database:
                     expires_tick INT
                 );
                 """,
-                """
+                f"""
                 CREATE TABLE IF NOT EXISTS raids_log (
                     id BIGSERIAL PRIMARY KEY,
                     realm_id BIGINT NOT NULL REFERENCES realms(id) ON DELETE CASCADE,
@@ -225,8 +234,7 @@ class Database:
                     victim_fief_id BIGINT NOT NULL,
                     success BOOLEAN NOT NULL,
                     might_spent INT NOT NULL,
-                    grain_stolen INT NOT NULL DEFAULT 0,
-                    goods_stolen INT NOT NULL DEFAULT 0,
+                    {", ".join(raids_stolen_ddl_lines())},
                     public_line TEXT NOT NULL,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     tick_index INT
@@ -351,6 +359,7 @@ class Database:
                 "ALTER TABLE personal_deals ADD COLUMN IF NOT EXISTS expires_tick INT;",
                 "ALTER TABLE realm_events ADD COLUMN IF NOT EXISTS resolves_tick INT;",
                 "ALTER TABLE raids_log ADD COLUMN IF NOT EXISTS tick_index INT;",
+                *ensure_resource_columns_sql(),
             ):
                 self.cursor.execute(stmt)
             # Старые wall-clock сроки без тика - считаем уже истёкшими.
@@ -414,40 +423,7 @@ class Database:
         # Точный возврат give_amt без бонусов и без обрезки склада.
         # Суммы по усадьбе одним UPDATE: иначе PG молча теряет
         # повторные правки одной строки fiefs в одном statement.
-        self.cursor.execute(
-            """
-            WITH open_lots AS (
-                SELECT id, offerer_fief_id, give_res, give_amt
-                FROM trade_offers
-                WHERE status = 'open'
-                FOR UPDATE
-            ),
-            totals AS (
-                SELECT
-                    offerer_fief_id,
-                    COALESCE(
-                        SUM(give_amt) FILTER (WHERE give_res = 'grain'), 0
-                    )::INT AS grain_amt,
-                    COALESCE(
-                        SUM(give_amt) FILTER (WHERE give_res = 'goods'), 0
-                    )::INT AS goods_amt
-                FROM open_lots
-                GROUP BY offerer_fief_id
-            ),
-            refunded AS (
-                UPDATE fiefs AS f
-                SET
-                    grain = f.grain + t.grain_amt,
-                    goods = f.goods + t.goods_amt
-                FROM totals AS t
-                WHERE f.id = t.offerer_fief_id
-            )
-            UPDATE trade_offers AS t
-            SET status = 'cancelled'
-            FROM open_lots AS o
-            WHERE t.id = o.id;
-            """
-        )
+        self.cursor.execute(build_annul_open_trades_sql())
         self.cursor.execute(
             "INSERT INTO applied_patches (name) VALUES (%s);",
             (patch_name,),
@@ -1120,12 +1096,16 @@ class Database:
                 raise ValueError("Долина не привязана к миру")
             tick_index = int(row_tick[0] or 0)
             world_id = int(row_tick[1])
+            res_keys = live_resource_keys()
+            res_cols = ", ".join(res_keys)
+            res_placeholders = ", ".join(["%s"] * len(res_keys))
+            res_vals = tuple(int(resources.get(key, 0) or 0) for key in res_keys)
             self.cursor.execute(
-                """
+                f"""
                 INSERT INTO fiefs (
-                    realm_id, user_id, world_id, name, grain, goods, might, actions,
+                    realm_id, user_id, world_id, name, {res_cols}, actions,
                     onboard_step, last_active_tick
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ) VALUES (%s,%s,%s,%s,{res_placeholders},%s,%s,%s)
                 RETURNING *;
                 """,
                 (
@@ -1133,9 +1113,7 @@ class Database:
                     user_id,
                     world_id,
                     name,
-                    resources.get("grain", 0),
-                    resources.get("goods", 0),
-                    resources.get("might", 0),
+                    *res_vals,
                     resources.get("actions", 1),
                     resources.get("onboard_step", 1),
                     resources.get("last_active_tick", tick_index),
@@ -1217,26 +1195,36 @@ class Database:
         amounts: Mapping[str, int] | None = None,
         **kwargs: int,
     ) -> dict | None:
-        """Атомарно списать grain/goods/might. None если не хватает остатка."""
-        from app.domain.resources import normalize_debit_amounts
-
+        """Атомарно списать ресурсы из реестра. None если не хватает остатка."""
         normalized = normalize_debit_amounts(amounts, **kwargs)
-        sets: list[str] = []
-        set_vals: list[int] = []
-        conds = ["id=%s"]
-        cond_vals: list[int] = [int(fief_id)]
-        for col, amt in normalized.items():
-            sets.append(f"{col} = {col} - %s")
-            set_vals.append(amt)
-            conds.append(f"{col} >= %s")
-            cond_vals.append(amt)
-        sql = (
-            f"UPDATE fiefs SET {', '.join(sets)} "
-            f"WHERE {' AND '.join(conds)} RETURNING *;"
-        )
+        sql, params = build_debit_sql(normalized, fief_id)
         with self.lock:
             try:
-                self.cursor.execute(sql, tuple(set_vals + cond_vals))
+                self.cursor.execute(sql, params)
+                row = self.cursor.fetchone()
+                if not row:
+                    self.commit()
+                    return None
+                cols = [d[0] for d in self.cursor.description]
+                result = self._normalize(dict(zip(cols, row)))
+                self.commit()
+                return result
+            except Exception:
+                self._rollback_outside_tx()
+                raise
+
+    def credit_fief_resources(
+        self,
+        fief_id: int,
+        amounts: Mapping[str, int] | None = None,
+        **kwargs: int,
+    ) -> dict | None:
+        """Атомарно начислить ресурсы из реестра."""
+        normalized = normalize_credit_amounts(amounts, **kwargs)
+        sql, params = build_credit_sql(normalized, fief_id)
+        with self.lock:
+            try:
+                self.cursor.execute(sql, params)
                 row = self.cursor.fetchone()
                 if not row:
                     self.commit()
@@ -1523,13 +1511,20 @@ class Database:
         with self.lock:
             attacker_realm = fields["realm_id"]
             victim_realm = fields.get("victim_realm_id", attacker_realm)
+            loot_defs = raid_lootable_defs()
+            stolen_cols = [r.raid_stolen_column for r in loot_defs if r.raid_stolen_column]
+            stolen_vals = [
+                int(fields.get(col, 0) or 0) for col in stolen_cols
+            ]
+            col_sql = ", ".join(stolen_cols)
+            ph_sql = ", ".join(["%s"] * len(stolen_cols))
             self.cursor.execute(
-                """
+                f"""
                 INSERT INTO raids_log (
                     realm_id, victim_realm_id, attacker_fief_id, victim_fief_id,
-                    success, might_spent, grain_stolen, goods_stolen, public_line,
+                    success, might_spent, {col_sql}, public_line,
                     tick_index
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *;
+                ) VALUES (%s,%s,%s,%s,%s,%s,{ph_sql},%s,%s) RETURNING *;
                 """,
                 (
                     attacker_realm,
@@ -1538,8 +1533,7 @@ class Database:
                     fields["victim_fief_id"],
                     fields["success"],
                     fields["might_spent"],
-                    fields.get("grain_stolen", 0),
-                    fields.get("goods_stolen", 0),
+                    *stolen_vals,
                     fields["public_line"],
                     fields.get("tick_index"),
                 ),

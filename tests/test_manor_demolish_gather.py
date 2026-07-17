@@ -7,13 +7,13 @@ from app.domain.economy import TileView, building_production, fief_daily_product
 
 def test_manor_production_profile():
     p = building_production(B.BLD_MANOR, 1, B.TILE_FIELD)
-    assert p.grain == B.MANOR_GRAIN
-    assert p.goods == B.MANOR_GOODS
-    assert p.might == B.MANOR_MIGHT
+    assert p.resources()[B.RES_GRAIN] == B.MANOR_GRAIN
+    assert p.resources()[B.RES_GOODS] == B.MANOR_GOODS
+    assert p.resources()[B.RES_MIGHT] == B.MANOR_MIGHT
     farm = building_production(B.BLD_FARM, 1, B.TILE_FIELD)
-    assert p.grain < farm.grain
+    assert p.resources()[B.RES_GRAIN] < farm.resources()[B.RES_GRAIN]
     workshop = building_production(B.BLD_WORKSHOP, 1, B.TILE_FOREST)
-    assert p.goods > workshop.goods
+    assert p.resources()[B.RES_GOODS] > workshop.resources()[B.RES_GOODS]
 
 
 def test_manor_might_respects_free_cap():
@@ -29,11 +29,11 @@ def test_manor_might_respects_free_cap():
         )
     ]
     at_cap = fief_daily_production(tiles, current_might=B.MILITIA_FREE)
-    assert at_cap.might == 0.0
+    assert at_cap.resources()[B.RES_MIGHT] == 0.0
     below = fief_daily_production(tiles, current_might=B.MILITIA_FREE - 1)
-    assert below.might == 1.0
+    assert below.resources()[B.RES_MIGHT] == 1.0
     low = fief_daily_production(tiles, current_might=0)
-    assert low.might == float(B.MANOR_MIGHT)
+    assert low.resources()[B.RES_MIGHT] == float(B.MANOR_MIGHT)
 
 
 def test_demolish_refund_includes_upgrades():

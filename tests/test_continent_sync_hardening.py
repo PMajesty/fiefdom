@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from app import balance as B
 from app.engine import Engine
 from app.scheduler import _maybe_post_world_catastrophe
 
@@ -175,8 +176,7 @@ def test_same_realm_raid_appends_pending_line_once():
             public_line="Набег!",
             success=False,
             might_lost=1,
-            grain_stolen=0,
-            goods_stolen=0,
+            stolen={B.RES_GRAIN: 0, B.RES_GOODS: 0},
             intercept_applied=False,
         ),
     ):
@@ -837,8 +837,6 @@ _INCOMPLETE_MSG = "догоняет тик"
 
 def _incomplete_world_db(*, caught_up: bool = False):
     """Две долины одного мира; при caught_up=False экономика отстаёт."""
-    from app import balance as B
-
     db = MagicMock()
     db.transaction.return_value = nullcontext()
     world = _world(tick_index=3)
@@ -1133,8 +1131,7 @@ def test_incomplete_same_realm_raid_skips_foreign_interceptor_spend():
             public_line="Набег!",
             success=False,
             might_lost=1,
-            grain_stolen=0,
-            goods_stolen=0,
+            stolen={B.RES_GRAIN: 0, B.RES_GOODS: 0},
             intercept_applied=False,
         ),
     ) as resolve:
@@ -1251,8 +1248,7 @@ def test_incomplete_same_realm_raid_spends_local_cover_allies_interceptor():
             public_line="Набег!",
             success=False,
             might_lost=1,
-            grain_stolen=0,
-            goods_stolen=0,
+            stolen={B.RES_GRAIN: 0, B.RES_GOODS: 0},
             intercept_applied=True,
         ),
     ) as resolve:

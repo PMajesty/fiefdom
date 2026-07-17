@@ -2,34 +2,29 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any
 
 from app import balance as B
 from app.domain.economy import Production, TileView, fief_daily_production
 from app.domain.resources import (
-    LIVE_RESOURCES,
-    PENDING_COLUMN,
     PendingBag,
     ResourceBag,
-    STASH_CAPPED_RESOURCES,
-    UNCAPPED_RESOURCES,
     apply_production_to_pending,
     fief_balance_columns,
+    live_resource_keys,
     pending_from_row,
+    stash_capped_keys,
     stash_columns,
     stash_from_row,
+    uncapped_keys,
 )
 
 
 @dataclass
 class FiefTickState:
-    grain: int
-    goods: int
-    might: int
-    pending_grain: float
-    pending_goods: float
-    pending_might: float
+    stash: ResourceBag
+    pending: PendingBag
     actions: int
     hungry: bool
     tiles: list[TileView]
@@ -47,15 +42,9 @@ class FiefTickState:
         farm_mult: float = 1.0,
         workshop_mult: float = 1.0,
     ) -> "FiefTickState":
-        stash = stash_from_row(fief)
-        pending = pending_from_row(fief)
         return cls(
-            grain=stash[B.RES_GRAIN],
-            goods=stash[B.RES_GOODS],
-            might=stash[B.RES_MIGHT],
-            pending_grain=pending[B.RES_GRAIN],
-            pending_goods=pending[B.RES_GOODS],
-            pending_might=pending[B.RES_MIGHT],
+            stash=stash_from_row(fief),
+            pending=pending_from_row(fief),
             actions=int(fief["actions"]),
             hungry=bool(fief["hungry"]),
             tiles=tiles,
@@ -65,22 +54,16 @@ class FiefTickState:
         )
 
     def stash_bag(self) -> ResourceBag:
-        return {key: int(getattr(self, key)) for key in LIVE_RESOURCES}
+        return dict(self.stash)
 
     def pending_bag(self) -> PendingBag:
-        return {
-            key: float(getattr(self, PENDING_COLUMN[key])) for key in LIVE_RESOURCES
-        }
+        return dict(self.pending)
 
 
 @dataclass
 class TickOutcome:
-    grain: int
-    goods: int
-    might: int
-    pending_grain: float
-    pending_goods: float
-    pending_might: float
+    stash: ResourceBag
+    pending: PendingBag
     actions: int
     hungry: bool
     land_upkeep: int
@@ -90,13 +73,7 @@ class TickOutcome:
     notes: list[str] = field(default_factory=list)
 
     def balance_columns(self) -> dict[str, int | float]:
-        return fief_balance_columns(
-            {key: int(getattr(self, key)) for key in LIVE_RESOURCES},
-            {
-                key: float(getattr(self, PENDING_COLUMN[key]))
-                for key in LIVE_RESOURCES
-            },
-        )
+        return fief_balance_columns(self.stash, self.pending)
 
 
 def _pay_grain(grain: int, pending: float, amount: int) -> tuple[int, float, int]:
@@ -127,10 +104,12 @@ def apply_fief_tick(state: FiefTickState) -> TickOutcome:
         state.tiles,
         hungry=state.hungry,
         farm_mult=state.farm_mult,
-        current_might=int(state.might),
+        current_might=int(state.stash[B.RES_MIGHT]),
     )
     if state.workshop_mult != 1.0:
-        prod = replace(prod, goods=prod.goods * state.workshop_mult)
+        prod = prod.with_amounts(
+            **{B.RES_GOODS: prod.resources()[B.RES_GOODS] * state.workshop_mult}
+        )
 
     cap_days = B.collect_cap_days(state.barn_level)
     prod_bag = prod.resources()
@@ -142,7 +121,7 @@ def apply_fief_tick(state: FiefTickState) -> TickOutcome:
             if prod_bag[key] > 0
             else pending[key]
         )
-        for key in LIVE_RESOURCES
+        for key in live_resource_keys()
     }
     if prod_bag[B.RES_GRAIN] > 0 and pending[B.RES_GRAIN] + prod_bag[B.RES_GRAIN] > max_by_res[
         B.RES_GRAIN
@@ -155,12 +134,10 @@ def apply_fief_tick(state: FiefTickState) -> TickOutcome:
 
     pending = apply_production_to_pending(pending, prod_bag, cap_days)
 
-    grain = state.grain
-    goods = state.goods
-    might = state.might
+    stash = state.stash_bag()
+    grain = stash[B.RES_GRAIN]
+    might = stash[B.RES_MIGHT]
     pending_grain = pending[B.RES_GRAIN]
-    pending_goods = pending[B.RES_GOODS]
-    pending_might = pending[B.RES_MIGHT]
 
     land = B.land_upkeep(max(1, tiles_count))
     grain, pending_grain, paid_land = _pay_grain(grain, pending_grain, land)
@@ -180,17 +157,15 @@ def apply_fief_tick(state: FiefTickState) -> TickOutcome:
         if disbanded:
             notes.append(f"Нечем кормить дружину - разошлись {disbanded} (−{disbanded} Силы)")
 
-    # Голод снимается только после полного тика с оплаченным land upkeep
-    # (если сейчас оплатили - hungry False)
+    stash[B.RES_GRAIN] = grain
+    stash[B.RES_MIGHT] = might
+    pending[B.RES_GRAIN] = pending_grain
+
     actions = min(B.ACTIONS_BANK_MAX, state.actions + B.ACTIONS_PER_DAY)
 
     return TickOutcome(
-        grain=grain,
-        goods=goods,
-        might=might,
-        pending_grain=pending_grain,
-        pending_goods=pending_goods,
-        pending_might=pending_might,
+        stash=stash_columns(stash),
+        pending={key: float(pending.get(key, 0) or 0) for key in live_resource_keys()},
         actions=actions,
         hungry=hungry,
         land_upkeep=land,
@@ -212,10 +187,10 @@ def collect_pending_bags(
     cap = B.stash_cap(barn_level)
     out_stash = stash_columns(stash)
     out_pending = {
-        key: float(pending.get(key, 0) or 0) for key in LIVE_RESOURCES
+        key: float(pending.get(key, 0) or 0) for key in live_resource_keys()
     }
     truncated = False
-    for key in STASH_CAPPED_RESOURCES:
+    for key in stash_capped_keys():
         add = int(out_pending[key])
         room = max(0, cap - out_stash[key])
         take = min(add, room)
@@ -225,45 +200,9 @@ def collect_pending_bags(
         out_pending[key] = 0.0
     if truncated:
         notes.append("Склад полон - часть урожая не вошла")
-    for key in UNCAPPED_RESOURCES:
+    for key in uncapped_keys():
         if key == B.RES_MIGHT and not include_might:
             continue
         out_stash[key] += int(out_pending[key])
         out_pending[key] = 0.0
     return out_stash, out_pending, notes
-
-
-def collect_pending(
-    grain: int,
-    goods: int,
-    might: int,
-    pending_grain: float,
-    pending_goods: float,
-    pending_might: float,
-    barn_level: int,
-    *,
-    include_might: bool = True,
-) -> tuple[int, int, int, float, float, float, list[str]]:
-    stash, pending, notes = collect_pending_bags(
-        {
-            B.RES_GRAIN: grain,
-            B.RES_GOODS: goods,
-            B.RES_MIGHT: might,
-        },
-        {
-            B.RES_GRAIN: pending_grain,
-            B.RES_GOODS: pending_goods,
-            B.RES_MIGHT: pending_might,
-        },
-        barn_level,
-        include_might=include_might,
-    )
-    return (
-        stash[B.RES_GRAIN],
-        stash[B.RES_GOODS],
-        stash[B.RES_MIGHT],
-        pending[B.RES_GRAIN],
-        pending[B.RES_GOODS],
-        pending[B.RES_MIGHT],
-        notes,
-    )

@@ -352,30 +352,21 @@ def building_types_kb(
 
 
 def gather_resources_kb(fief_id: int) -> InlineKeyboardMarkup:
+    from app.domain.resources import resource_defs
+
     fid = int(fief_id)
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    rows: list[list[InlineKeyboardButton]] = []
+    for rdef in resource_defs():
+        rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"Зерно +{B.GATHER_GRAIN}",
-                    callback_data=f"gth:{fid}:{B.RES_GRAIN}",
+                    text=f"{rdef.name_ru} +{B.gather_amount(rdef.key)}",
+                    callback_data=f"gth:{fid}:{rdef.key}",
                 )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=f"Товары +{B.GATHER_GOODS}",
-                    callback_data=f"gth:{fid}:{B.RES_GOODS}",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text=f"Сила +{B.GATHER_MIGHT}",
-                    callback_data=f"gth:{fid}:{B.RES_MIGHT}",
-                )
-            ],
-            [InlineKeyboardButton(text="< Меню", callback_data=f"st:{fid}")],
-        ]
-    )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="< Меню", callback_data=f"st:{fid}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def demolish_tiles_kb(fief_id: int, tiles: list[dict]) -> InlineKeyboardMarkup:
@@ -1113,39 +1104,44 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
     return False
 
 
-_TRADE_RE = re.compile(
-    r"^(зерно|товары|grain|goods)\s+(\d+)\s+(зерно|товары|grain|goods)\s+(\d+)$",
-    re.IGNORECASE,
-)
+def _tradeable_res_map() -> dict[str, str]:
+    from app.domain.resources import synonym_to_key
 
-_RES_MAP = {
-    "зерно": B.RES_GRAIN,
-    "grain": B.RES_GRAIN,
-    "товары": B.RES_GOODS,
-    "goods": B.RES_GOODS,
-}
+    return synonym_to_key(tradeable_only=True)
+
+
+def _trade_re() -> re.Pattern[str]:
+    from app.domain.resources import tradeable_synonym_alternatives
+
+    alt = tradeable_synonym_alternatives()
+    return re.compile(
+        rf"^({alt})\s+(\d+)\s+({alt})\s+(\d+)$",
+        re.IGNORECASE,
+    )
+
+
+def _send_re() -> re.Pattern[str]:
+    from app.domain.resources import tradeable_synonym_alternatives
+
+    alt = tradeable_synonym_alternatives()
+    return re.compile(rf"^({alt})\s+(\d+)$", re.IGNORECASE)
 
 
 def _parse_trade_line(text: str) -> tuple[str, int, str, int] | None:
-    m = _TRADE_RE.match(text.strip())
+    m = _trade_re().match(text.strip())
     if not m:
         return None
-    give_res = _RES_MAP[m.group(1).lower()]
-    want_res = _RES_MAP[m.group(3).lower()]
+    res_map = _tradeable_res_map()
+    give_res = res_map[m.group(1).lower()]
+    want_res = res_map[m.group(3).lower()]
     return give_res, int(m.group(2)), want_res, int(m.group(4))
 
 
-_SEND_RE = re.compile(
-    r"^(зерно|grain|товары|goods)\s+(\d+)$",
-    re.IGNORECASE,
-)
-
-
 def _parse_send_line(text: str) -> tuple[str, int] | None:
-    m = _SEND_RE.match(text.strip())
+    m = _send_re().match(text.strip())
     if not m:
         return None
-    return _RES_MAP[m.group(1).lower()], int(m.group(2))
+    return _tradeable_res_map()[m.group(1).lower()], int(m.group(2))
 
 
 def _resolve_fief_ref(engine, realm_id: int, text: str) -> dict | None:

@@ -79,11 +79,7 @@ RES_GRAIN = "grain"
 RES_GOODS = "goods"
 RES_MIGHT = "might"
 
-RES_NAMES_RU = {
-    RES_GRAIN: "Зерно",
-    RES_GOODS: "Товары",
-    RES_MIGHT: "Сила",
-}
+# Отображаемые имена и tradeable - в domain.resources (реестр).
 
 DEFAULT_STASH_CAP = 150  # зерно/товары без амбара
 COLLECT_CAP_DAYS_BASE = 3
@@ -94,9 +90,14 @@ STARTING_MIGHT = 5
 STARTING_MANOR_LEVEL = 1
 
 # Разовый сбор ресурса за 1 действие (плоско, без зданий).
-GATHER_GRAIN = 12
-GATHER_GOODS = 10
-GATHER_MIGHT = 2
+GATHER_AMOUNTS: dict[str, int] = {
+    RES_GRAIN: 12,
+    RES_GOODS: 10,
+    RES_MIGHT: 2,
+}
+GATHER_GRAIN = GATHER_AMOUNTS[RES_GRAIN]
+GATHER_GOODS = GATHER_AMOUNTS[RES_GOODS]
+GATHER_MIGHT = GATHER_AMOUNTS[RES_MIGHT]
 
 # Снос: доля возврата от суммы базовых затрат уровней 1..N.
 DEMOLISH_REFUND_FRAC = 0.66
@@ -219,7 +220,7 @@ RUMOR_CATASTROPHE_WARN_TICKS = 4
 
 # --- Торговля ---
 TRADE_EXPIRE_TICKS = 4
-TRADEABLE = (RES_GRAIN, RES_GOODS)
+# TRADEABLE - флаг ResourceDef.tradeable в domain.resources
 
 # --- События ---
 MINOR_EVENT_CHANCE = 1.0
@@ -392,13 +393,10 @@ def min_any_build_action_cost(tiles: list[dict], *, cost_mult: float = 1.0) -> i
 
 
 def gather_amount(resource: str) -> int:
-    if resource == RES_GRAIN:
-        return GATHER_GRAIN
-    if resource == RES_GOODS:
-        return GATHER_GOODS
-    if resource == RES_MIGHT:
-        return GATHER_MIGHT
-    raise ValueError(f"Нельзя собрать: {resource}")
+    try:
+        return GATHER_AMOUNTS[resource]
+    except KeyError as exc:
+        raise ValueError(f"Нельзя собрать: {resource}") from exc
 
 
 def map_target_tiles(player_count: int) -> int:

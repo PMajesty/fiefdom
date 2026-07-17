@@ -4,6 +4,12 @@ from __future__ import annotations
 from app import balance as B
 from app.domain.economy import Production, building_production, tile_passive
 from app.domain.map_gen import coord_label
+from app.domain.resources import (
+    add_bags,
+    format_prod_parts,
+    format_totals_production_line,
+    live_resource_keys,
+)
 
 _LEVEL_ROMAN = {1: "I", 2: "II", 3: "III"}
 
@@ -29,19 +35,6 @@ def manor_might_applied(nominal: float, current_might: int) -> float:
     """Сколько силы двора реально копится при текущей дружине."""
     free_room = max(0, B.MILITIA_FREE - max(0, int(current_might)))
     return min(max(0.0, float(nominal)), float(free_room))
-
-
-def _format_prod_parts(prod: Production) -> list[str]:
-    parts: list[str] = []
-    if prod.grain:
-        parts.append(f"+{prod.grain:.0f} зерна/день")
-    if prod.goods:
-        parts.append(f"+{prod.goods:.0f} товаров/день")
-    if prod.might:
-        parts.append(f"+{prod.might:.0f} силы/день")
-    if prod.defense:
-        parts.append(f"+{prod.defense:.0f} защиты")
-    return parts
 
 
 def _barn_effect_line(level: int) -> str:
@@ -82,34 +75,41 @@ def tile_effect_text(
         barn_line = _barn_effect_line(level)
         if hungry:
             passive = passive.scale(B.HUNGER_PRODUCTION_MULT)
-        extra = _format_prod_parts(passive)
+        extra = format_prod_parts(passive.resources(), defense=passive.defense)
         if extra:
             return f"{barn_line} · {', '.join(extra)}"
         return barn_line
 
     built = building_production(building, level, tile_type)
     manor_note: str | None = None
-    might = passive.might + built.might
-    if building == B.BLD_MANOR and built.might and current_might is not None:
-        applied = manor_might_applied(built.might, current_might)
-        manor_note = _manor_might_note(built.might, applied)
-        might = passive.might + applied
+    total_bag = add_bags(passive.resources(), built.resources())
+    built_might = float(built.resources().get(B.RES_MIGHT, 0) or 0)
+    if building == B.BLD_MANOR and built_might and current_might is not None:
+        applied = manor_might_applied(built_might, current_might)
+        manor_note = _manor_might_note(built_might, applied)
+        total_bag[B.RES_MIGHT] = (
+            float(passive.resources().get(B.RES_MIGHT, 0) or 0) + applied
+        )
 
-    total = Production(
-        grain=passive.grain + built.grain,
-        goods=passive.goods + built.goods,
-        might=might,
-        defense=passive.defense + built.defense,
+    total = Production.from_resources(
+        total_bag, defense=passive.defense + built.defense
     )
     if hungry:
         total = total.scale(B.HUNGER_PRODUCTION_MULT)
 
-    parts = _format_prod_parts(total)
-    if building == B.BLD_MANOR and manor_note and total.might <= 0:
+    parts = format_prod_parts(total.resources(), defense=total.defense)
+    if (
+        building == B.BLD_MANOR
+        and manor_note
+        and total.resources().get(B.RES_MIGHT, 0) <= 0
+    ):
         # Сила отключена потолком - в цифрах её нет, пояснение отдельно.
-        other = _format_prod_parts(
-            Production(grain=total.grain, goods=total.goods, defense=total.defense)
-        )
+        other_bag = {
+            key: total.resources()[key]
+            for key in live_resource_keys()
+            if key != B.RES_MIGHT
+        }
+        other = format_prod_parts(other_bag, defense=total.defense)
         if other:
             return f"{', '.join(other)} · {manor_note}"
         return manor_note
@@ -120,7 +120,7 @@ def tile_effect_text(
     line = ", ".join(parts)
     if manor_note:
         line += f" ({manor_note})"
-    elif building == B.BLD_MANOR and built.might and current_might is None:
+    elif building == B.BLD_MANOR and built_might and current_might is None:
         line += f" (сила двора - пока дружина ниже {B.MILITIA_FREE})"
     return line
 
@@ -180,8 +180,7 @@ def format_holdings(
     if daily is not None:
         lines.append("")
         lines.append(
-            f"Итого: +{daily.grain:.0f} зерна/день, +{daily.goods:.0f} товаров/день, "
-            f"+{daily.might:.0f} силы/день · защита {daily.defense:.0f}"
+            format_totals_production_line(daily.resources(), defense=daily.defense)
         )
 
     return "\n".join(lines).rstrip() + "\n"
