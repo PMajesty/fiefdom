@@ -86,6 +86,11 @@ def test_compose_foreign_rumor_prefixes_valley():
     assert "Пётр" in text
 
 
+def test_fluff_templates_pool_size():
+    assert len(rumors._FLUFF_TEMPLATES) == 48
+    assert all("{name}" in line for line in rumors._FLUFF_TEMPLATES)
+
+
 def test_compose_fluff_named_and_opener():
     text = rumors.compose_fluff_rumor("Кирилл", Random(3))
     assert "Кирилл" in text
