@@ -102,18 +102,22 @@ def test_join_fief_sets_onboard_step_2():
     db = MagicMock()
     db.get_fief_by_user.return_value = None
     db.get_fief_by_user_world.return_value = None
-    db._fetchone.return_value = {
+    tile = {
         "id": 50,
         "x": 1,
         "y": 2,
         "tile_type": B.TILE_FIELD,
         "owner_fief_id": None,
     }
+    db.get_tile_by_id.return_value = tile
     db.get_realm.return_value = {"width": 6, "height": 6, "world_id": 1}
-    db.get_tiles.return_value = [
-        {"id": 50, "x": 1, "y": 2, "tile_type": B.TILE_FIELD, "owner_fief_id": None},
-    ]
+    db.get_tiles.return_value = [tile]
     db.create_fief.return_value = {"id": 7, "name": "Усадьба @ivan"}
+    db.claim_unowned_tile.return_value = {**tile, "owner_fief_id": 7}
+    tx = MagicMock()
+    tx.__enter__ = MagicMock(return_value=None)
+    tx.__exit__ = MagicMock(return_value=False)
+    db.transaction.return_value = tx
     engine = Engine(db)
     engine.maybe_grow_map = MagicMock(return_value=None)  # type: ignore[method-assign]
     user = SimpleNamespace(id=100, full_name="Иван Тестов", first_name="Иван", username="ivan")
@@ -130,6 +134,7 @@ def test_join_fief_sets_onboard_step_2():
     assert "занять" in msg.lower() or "соседн" in msg
     assert str(B.CLAIM_COSTS[2]) in msg
     db.set_fief_names_for_user.assert_called_with(100, "Усадьба @ivan")
+    db.claim_unowned_tile.assert_called_once()
 
 
 def test_join_fief_rejects_ruins_tile():
@@ -137,7 +142,7 @@ def test_join_fief_rejects_ruins_tile():
     db.get_fief_by_user.return_value = None
     db.get_fief_by_user_world.return_value = None
     db.get_realm.return_value = {"width": 6, "height": 6, "world_id": 1}
-    db._fetchone.return_value = {
+    db.get_tile_by_id.return_value = {
         "id": 50,
         "x": 1,
         "y": 2,
@@ -156,7 +161,7 @@ def test_join_fief_rejects_tile_adjacent_to_ruins():
     db = MagicMock()
     db.get_fief_by_user.return_value = None
     db.get_fief_by_user_world.return_value = None
-    db._fetchone.return_value = {
+    db.get_tile_by_id.return_value = {
         "id": 50,
         "x": 1,
         "y": 2,

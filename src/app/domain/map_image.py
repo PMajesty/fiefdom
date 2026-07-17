@@ -148,8 +148,13 @@ def map_fingerprint(
     tiles: list[TileView],
     highlight_fief_id: int | None,
     claimable: set[tuple[int, int]] | None,
+    entity_rows: list | None = None,
 ) -> str:
-    """Отпечаток только того, что влияет на PNG (не подпись)."""
+    """Отпечаток только того, что влияет на PNG (не подпись).
+
+    entity_rows: компактные строки tile_entities; None/[] не попадают в payload
+    (отпечаток совпадает с до-entity эпохой).
+    """
     tile_rows = []
     for t in sorted(tiles, key=lambda item: (item.y, item.x)):
         show_bld = building_visible_on_map(t, highlight_fief_id)
@@ -177,6 +182,8 @@ def map_fingerprint(
         "cell_px": CELL_PX,
         "render_rev": RENDER_REV,
     }
+    if entity_rows:
+        payload["entities"] = entity_rows
     raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
@@ -258,11 +265,13 @@ def render_map_image(
     *,
     highlight_fief_id: int | None = None,
     claimable: set[tuple[int, int]] | None = None,
+    entity_marks: list[tuple[int, int, str]] | None = None,
 ) -> bytes:
     """PNG: заливка + иконка местности, рамки клейма/своих, буква владельца."""
     by_pos = {(t.x, t.y): t for t in tiles}
     fief_ids = sorted({t.owner_fief_id for t in tiles if t.owner_fief_id is not None})
     marks = {fid: owner_mark(i) for i, fid in enumerate(fief_ids)}
+    entity_by_pos = {(x, y): mark for x, y, mark in (entity_marks or ())}
 
     img_w = LABEL_LEFT_PX + width * CELL_PX + PAD_PX
     img_h = LABEL_TOP_PX + height * CELL_PX + PAD_PX
@@ -323,6 +332,24 @@ def render_map_image(
                 border = HIGHLIGHT_BORDER
                 border_w = 3
             draw.rectangle((left, top, right - 1, bottom - 1), outline=border, width=border_w)
+
+            emark = entity_by_pos.get((x, y))
+            if emark:
+                for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                    draw.text(
+                        (left + 4 + dx, top + 2 + dy),
+                        emark,
+                        font=font_building,
+                        fill=OWNER_HALO,
+                        anchor="lt",
+                    )
+                draw.text(
+                    (left + 4, top + 2),
+                    emark,
+                    font=font_building,
+                    fill=OWNER_TEXT,
+                    anchor="lt",
+                )
 
             if not tile or tile.owner_fief_id is None:
                 continue

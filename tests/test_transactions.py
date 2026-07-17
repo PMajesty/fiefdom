@@ -537,7 +537,7 @@ def test_double_spend_action_second_cas_miss():
 def test_engine_double_spend_action_second_cas_miss_no_side_effects():
     """Второй CAS miss по действию: ошибка, без списания товаров и без клетки.
 
-    Snapshot катастроф - до write-tx (мок get_active_events без commit через _fetchall).
+    Snapshot катастроф/entities - до write-tx (моки без commit через _fetchall).
     Проваленная write-tx по-прежнему не коммитит.
     """
     fief = _spender_fief(goods=100, actions=1)
@@ -557,6 +557,7 @@ def test_engine_double_spend_action_second_cas_miss_no_side_effects():
         return_value={"id": 9, "active_minor_key": None, "tick_index": 1}
     )
     db.get_active_events = MagicMock(return_value=[])
+    db.list_active_tile_entities = MagicMock(return_value=[])
     db.spend_fief_action = MagicMock(return_value=None)
     db.debit_fief_resources = MagicMock()
     db.update_tile = MagicMock()
@@ -571,6 +572,7 @@ def test_engine_double_spend_action_second_cas_miss_no_side_effects():
     with pytest.raises(ValueError, match="Нет действий"):
         engine.build_or_upgrade(1, 0, 0, B.BLD_FARM)
     db.get_active_events.assert_called()
+    db.list_active_tile_entities.assert_called()
     db.spend_fief_action.assert_called_once()
     db.debit_fief_resources.assert_not_called()
     db.update_tile.assert_not_called()
@@ -581,7 +583,7 @@ def test_engine_double_spend_action_second_cas_miss_no_side_effects():
 def test_build_aborts_before_tile_when_goods_debit_fails():
     """Spend прошёл, debit CAS miss: rollback транзакции, клетка не меняется.
 
-    Catastrophe snapshot читается до write-tx; сам failed write не коммитит.
+    Catastrophe/entity snapshot читается до write-tx; сам failed write не коммитит.
     """
     fief = _spender_fief(goods=100)
     tile = {
@@ -600,6 +602,7 @@ def test_build_aborts_before_tile_when_goods_debit_fails():
         return_value={"id": 9, "active_minor_key": None, "tick_index": 1}
     )
     db.get_active_events = MagicMock(return_value=[])
+    db.list_active_tile_entities = MagicMock(return_value=[])
     db.spend_fief_action = MagicMock(return_value=dict(fief, actions=1))
     db.debit_fief_resources = MagicMock(return_value=None)
     db.update_tile = MagicMock()
@@ -614,6 +617,7 @@ def test_build_aborts_before_tile_when_goods_debit_fails():
     with pytest.raises(ValueError, match="Нужно"):
         engine.build_or_upgrade(1, 0, 0, B.BLD_FARM)
     db.get_active_events.assert_called()
+    db.list_active_tile_entities.assert_called()
     db.update_tile.assert_not_called()
     db.spend_fief_action.assert_called_once()
     db.debit_fief_resources.assert_called_once()
@@ -622,7 +626,7 @@ def test_build_aborts_before_tile_when_goods_debit_fails():
 
 
 def test_build_reads_catastrophe_snapshot_before_write_transaction():
-    """CRITICAL 1: unified collector; get_active_events до входа в write-tx."""
+    """CRITICAL 1: unified collector; get_active_events/entities до входа в write-tx."""
     fief = _spender_fief(goods=100)
     tile = {
         "id": 50,
@@ -645,11 +649,16 @@ def test_build_reads_catastrophe_snapshot_before_write_transaction():
         order.append("get_active_events")
         return []
 
+    def track_entities(*_a, **_k):
+        order.append("list_active_tile_entities")
+        return []
+
     def track_tx():
         order.append("transaction_enter")
         return nullcontext()
 
     db.get_active_events = MagicMock(side_effect=track_events)
+    db.list_active_tile_entities = MagicMock(side_effect=track_entities)
     db.transaction = track_tx  # type: ignore[method-assign]
     db.spend_fief_action = MagicMock(return_value=dict(fief, actions=1))
     db.debit_fief_resources = MagicMock(return_value=dict(fief, goods=90))
@@ -664,9 +673,10 @@ def test_build_reads_catastrophe_snapshot_before_write_transaction():
     engine._onboard_build = MagicMock()  # type: ignore[method-assign]
 
     engine.build_or_upgrade(1, 0, 0, B.BLD_FARM)
-    assert order[0] == "get_active_events"
+    assert order[0] in ("get_active_events", "list_active_tile_entities")
     assert "transaction_enter" in order
     assert order.index("get_active_events") < order.index("transaction_enter")
+    assert order.index("list_active_tile_entities") < order.index("transaction_enter")
     conn.commit.assert_not_called()
 
 

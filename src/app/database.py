@@ -295,6 +295,20 @@ class Database:
                 );
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS tile_entities (
+                    id BIGSERIAL PRIMARY KEY,
+                    realm_id BIGINT NOT NULL REFERENCES realms(id) ON DELETE CASCADE,
+                    x INT NOT NULL,
+                    y INT NOT NULL,
+                    kind TEXT NOT NULL,
+                    payload JSONB NOT NULL DEFAULT '{}',
+                    status TEXT NOT NULL DEFAULT 'active',
+                    created_tick INT NOT NULL,
+                    expires_tick INT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """,
+                """
                 CREATE INDEX IF NOT EXISTS idx_fiefs_realm ON fiefs(realm_id);
                 CREATE INDEX IF NOT EXISTS idx_tiles_realm ON map_tiles(realm_id);
                 CREATE INDEX IF NOT EXISTS idx_tiles_owner ON map_tiles(owner_fief_id);
@@ -302,6 +316,10 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_trade_realm ON trade_offers(realm_id, status);
                 CREATE INDEX IF NOT EXISTS idx_pact_invites_target
                     ON pact_invites(target_fief_id, status);
+                CREATE INDEX IF NOT EXISTS idx_tile_entities_realm
+                    ON tile_entities(realm_id);
+                CREATE INDEX IF NOT EXISTS idx_tile_entities_realm_xy
+                    ON tile_entities(realm_id, x, y);
                 """,
             ]
             for s in stmts:
@@ -534,6 +552,61 @@ class Database:
             "ALTER TABLE worlds ADD COLUMN IF NOT EXISTS tick_phase "
             "TEXT NOT NULL DEFAULT 'play';"
         )
+        # Сезон - опциональный substrate; NULL = нет сезона (live no-op).
+        self.cursor.execute(
+            "ALTER TABLE worlds ADD COLUMN IF NOT EXISTS season_key TEXT;"
+        )
+        self.cursor.execute(
+            "ALTER TABLE worlds ADD COLUMN IF NOT EXISTS season_tick_start INT;"
+        )
+        self.cursor.execute(
+            "ALTER TABLE worlds ADD COLUMN IF NOT EXISTS season_length_ticks INT;"
+        )
+        # Идентичность миров: continent (live) / instance (будущие temp realms).
+        self.cursor.execute(
+            "ALTER TABLE worlds ADD COLUMN IF NOT EXISTS world_kind "
+            "TEXT NOT NULL DEFAULT 'continent';"
+        )
+        self.cursor.execute(
+            "ALTER TABLE worlds ADD COLUMN IF NOT EXISTS parent_world_id BIGINT "
+            "REFERENCES worlds(id);"
+        )
+        self.cursor.execute(
+            "ALTER TABLE worlds ADD COLUMN IF NOT EXISTS expires_tick INT;"
+        )
+        self.cursor.execute(
+            "ALTER TABLE realms ADD COLUMN IF NOT EXISTS realm_kind "
+            "TEXT NOT NULL DEFAULT 'valley';"
+        )
+        self.cursor.execute(
+            "ALTER TABLE realms ADD COLUMN IF NOT EXISTS expires_tick INT;"
+        )
+        self.cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS action_intents (
+                id BIGSERIAL PRIMARY KEY,
+                world_id BIGINT NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
+                tick_index INT NOT NULL,
+                fief_id BIGINT NOT NULL REFERENCES fiefs(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL,
+                payload JSONB NOT NULL DEFAULT '{}',
+                status TEXT NOT NULL DEFAULT 'open',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+        self.cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_action_intents_world_tick
+            ON action_intents(world_id, tick_index, status);
+            """
+        )
+        self.cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_action_intents_fief
+            ON action_intents(fief_id, status);
+            """
+        )
         self.cursor.execute(
             "ALTER TABLE realms ADD COLUMN IF NOT EXISTS world_id BIGINT "
             "REFERENCES worlds(id);"
@@ -654,6 +727,8 @@ class Database:
                         ("personal_deals", "expires_tick"),
                         ("realm_events", "resolves_tick"),
                         ("raids_log", "tick_index"),
+                        ("tile_entities", "created_tick"),
+                        ("tile_entities", "expires_tick"),
                     ):
                         self.cursor.execute(
                             f"UPDATE {table} SET {col} = {col} + %s "
@@ -782,8 +857,33 @@ class Database:
         with self.lock:
             self.cursor.execute(
                 """
-                INSERT INTO worlds (name) VALUES ('Континент') RETURNING *;
+                INSERT INTO worlds (name, world_kind)
+                VALUES ('Континент', 'continent') RETURNING *;
                 """
+            )
+            cols = [d[0] for d in self.cursor.description]
+            data = dict(zip(cols, self.cursor.fetchone()))
+            self.commit()
+            return data
+
+    def create_instance_world(
+        self,
+        *,
+        name: str,
+        parent_world_id: int,
+        expires_tick: int | None = None,
+        timezone: str = "Europe/Moscow",
+    ) -> dict:
+        """Substrate: отдельный world для temp-realm (не вызывается live-путём)."""
+        with self.lock:
+            self.cursor.execute(
+                """
+                INSERT INTO worlds (
+                    name, world_kind, parent_world_id, expires_tick, timezone
+                ) VALUES (%s, 'instance', %s, %s, %s)
+                RETURNING *;
+                """,
+                (name, int(parent_world_id), expires_tick, timezone),
             )
             cols = [d[0] for d in self.cursor.description]
             data = dict(zip(cols, self.cursor.fetchone()))
@@ -971,6 +1071,9 @@ class Database:
         next_catastrophe_key: str | None = None,
         pending_minor_key: str | None = None,
         active_minor_key: str | None = None,
+        clock_mode: str = "shared",
+        realm_kind: str = "valley",
+        expires_tick: int | None = None,
     ) -> dict:
         with self.lock:
             self.cursor.execute(
@@ -979,10 +1082,12 @@ class Database:
                     chat_id, title, width, height, timezone, tick_hour, tick_minute,
                     feature_flags, next_catastrophe_tick, tick_index, day_number,
                     world_id, chain_index, last_tick_local_date, last_tick_slot,
-                    next_catastrophe_key, pending_minor_key, active_minor_key
+                    next_catastrophe_key, pending_minor_key, active_minor_key,
+                    clock_mode, realm_kind, expires_tick
                 ) VALUES (
                     %s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,
-                    %s,%s,%s,%s,%s,%s,%s
+                    %s,%s,%s,%s,%s,%s,%s,
+                    %s,%s,%s
                 )
                 RETURNING *;
                 """,
@@ -1005,6 +1110,9 @@ class Database:
                     next_catastrophe_key,
                     pending_minor_key,
                     active_minor_key,
+                    clock_mode,
+                    realm_kind,
+                    expires_tick,
                 ),
             )
             row = self.cursor.fetchone()
@@ -1075,8 +1183,40 @@ class Database:
             (realm_id, x, y),
         )
 
+    def get_tile_by_id(self, tile_id: int, realm_id: int) -> dict | None:
+        return self._fetchone(
+            "SELECT * FROM map_tiles WHERE id=%s AND realm_id=%s;",
+            (int(tile_id), int(realm_id)),
+        )
+
     def update_tile(self, tile_id: int, **fields: Any) -> None:
         self._update("map_tiles", tile_id, fields)
+
+    def claim_unowned_tile(self, tile_id: int, realm_id: int, **fields: Any) -> dict | None:
+        """CAS: занять клетку только если owner_fief_id IS NULL. None при гонке."""
+        if not fields:
+            raise ValueError("claim_unowned_tile: нет полей для UPDATE")
+        cols = []
+        vals: list[Any] = []
+        for k, v in fields.items():
+            cols.append(f"{k}=%s")
+            vals.append(v)
+        vals.extend([int(tile_id), int(realm_id)])
+        with self.lock:
+            self.cursor.execute(
+                f"""
+                UPDATE map_tiles SET {', '.join(cols)}
+                WHERE id=%s AND realm_id=%s AND owner_fief_id IS NULL
+                RETURNING *;
+                """,
+                tuple(vals),
+            )
+            row = self.cursor.fetchone()
+            if not row:
+                return None
+            cols_desc = [d[0] for d in self.cursor.description]
+            self.commit()
+            return self._normalize(dict(zip(cols_desc, row)))
 
     def fief_tiles(self, fief_id: int) -> list[dict]:
         return self._fetchall(
@@ -1644,6 +1784,185 @@ class Database:
 
     def get_event(self, event_id: int) -> dict | None:
         return self._fetchone("SELECT * FROM realm_events WHERE id=%s;", (event_id,))
+
+    # --- tile entities ---
+    def create_tile_entity(self, **fields: Any) -> dict:
+        with self.lock:
+            self.cursor.execute(
+                """
+                INSERT INTO tile_entities (
+                    realm_id, x, y, kind, payload, status, created_tick, expires_tick
+                ) VALUES (%s,%s,%s,%s,%s::jsonb,%s,%s,%s) RETURNING *;
+                """,
+                (
+                    fields["realm_id"],
+                    fields["x"],
+                    fields["y"],
+                    fields["kind"],
+                    json.dumps(fields.get("payload") or {}),
+                    fields.get("status", "active"),
+                    fields["created_tick"],
+                    fields.get("expires_tick"),
+                ),
+            )
+            row = self.cursor.fetchone()
+            cols = [d[0] for d in self.cursor.description]
+            self.commit()
+            return self._normalize(dict(zip(cols, row)))
+
+    def list_active_tile_entities(self, realm_id: int) -> list[dict]:
+        return self._fetchall(
+            """
+            SELECT * FROM tile_entities
+            WHERE realm_id=%s AND status='active'
+            ORDER BY y, x, id;
+            """,
+            (realm_id,),
+        )
+
+    def list_tile_entities_at(
+        self,
+        realm_id: int,
+        x: int,
+        y: int,
+        *,
+        active_only: bool = True,
+    ) -> list[dict]:
+        if active_only:
+            return self._fetchall(
+                """
+                SELECT * FROM tile_entities
+                WHERE realm_id=%s AND x=%s AND y=%s AND status='active'
+                ORDER BY id;
+                """,
+                (realm_id, x, y),
+            )
+        return self._fetchall(
+            """
+            SELECT * FROM tile_entities
+            WHERE realm_id=%s AND x=%s AND y=%s
+            ORDER BY id;
+            """,
+            (realm_id, x, y),
+        )
+
+    def update_tile_entity(self, entity_id: int, **fields: Any) -> None:
+        payload = dict(fields)
+        if "payload" in payload and not isinstance(payload["payload"], str):
+            payload["payload"] = json.dumps(payload["payload"])
+            with self.lock:
+                sets = []
+                vals = []
+                for k, v in payload.items():
+                    if k == "payload":
+                        sets.append("payload=%s::jsonb")
+                    else:
+                        sets.append(f"{k}=%s")
+                    vals.append(v)
+                vals.append(entity_id)
+                self.cursor.execute(
+                    f"UPDATE tile_entities SET {', '.join(sets)} WHERE id=%s;",
+                    tuple(vals),
+                )
+                self.commit()
+            return
+        self._update("tile_entities", entity_id, fields)
+
+    def claim_expire_tile_entity(self, entity_id: int) -> dict | None:
+        """Атомарно active→expired. None если строка уже не active."""
+        with self.lock:
+            self.cursor.execute(
+                """
+                UPDATE tile_entities SET status='expired'
+                WHERE id=%s AND status='active'
+                RETURNING *;
+                """,
+                (entity_id,),
+            )
+            row = self.cursor.fetchone()
+            if not row:
+                return None
+            cols = [d[0] for d in self.cursor.description]
+            self.commit()
+            return self._normalize(dict(zip(cols, row)))
+
+    def delete_tile_entity(self, entity_id: int) -> None:
+        with self.lock:
+            self.cursor.execute(
+                "DELETE FROM tile_entities WHERE id=%s;",
+                (entity_id,),
+            )
+            self.commit()
+
+    # --- action intents (substrate: declare-then-resolve; live mutations не пишут сюда) ---
+    def create_action_intent(self, **fields: Any) -> dict:
+        with self.lock:
+            self.cursor.execute(
+                """
+                INSERT INTO action_intents (
+                    world_id, tick_index, fief_id, kind, payload, status
+                ) VALUES (%s,%s,%s,%s,%s::jsonb,%s) RETURNING *;
+                """,
+                (
+                    fields["world_id"],
+                    fields["tick_index"],
+                    fields["fief_id"],
+                    fields["kind"],
+                    json.dumps(fields.get("payload") or {}),
+                    fields.get("status", "open"),
+                ),
+            )
+            row = self.cursor.fetchone()
+            cols = [d[0] for d in self.cursor.description]
+            self.commit()
+            return self._normalize(dict(zip(cols, row)))
+
+    def list_open_action_intents(
+        self, world_id: int, tick_index: int
+    ) -> list[dict]:
+        return self._fetchall(
+            """
+            SELECT * FROM action_intents
+            WHERE world_id=%s AND tick_index=%s AND status='open'
+            ORDER BY id;
+            """,
+            (int(world_id), int(tick_index)),
+        )
+
+    def claim_resolve_action_intent(self, intent_id: int) -> dict | None:
+        """Атомарно open→resolved. None если уже не open."""
+        with self.lock:
+            self.cursor.execute(
+                """
+                UPDATE action_intents SET status='resolved'
+                WHERE id=%s AND status='open'
+                RETURNING *;
+                """,
+                (int(intent_id),),
+            )
+            row = self.cursor.fetchone()
+            if not row:
+                return None
+            cols = [d[0] for d in self.cursor.description]
+            self.commit()
+            return self._normalize(dict(zip(cols, row)))
+
+    def cancel_action_intent(self, intent_id: int) -> dict | None:
+        with self.lock:
+            self.cursor.execute(
+                """
+                UPDATE action_intents SET status='cancelled'
+                WHERE id=%s AND status='open'
+                RETURNING *;
+                """,
+                (int(intent_id),),
+            )
+            row = self.cursor.fetchone()
+            if not row:
+                return None
+            cols = [d[0] for d in self.cursor.description]
+            self.commit()
+            return self._normalize(dict(zip(cols, row)))
 
     def event_actions(self, event_id: int) -> list[dict]:
         return self._fetchall(

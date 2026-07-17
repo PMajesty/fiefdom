@@ -37,6 +37,14 @@ from app.domain.modifiers import (
     RealmModifierCtx,
     collect_active_modifiers,
 )
+from app.domain.tile_entities import (
+    ActiveTileEntityRef,
+    TileEntityResolveCtx,
+    active_tile_entity_ref,
+    entity_fingerprint_rows,
+    entity_map_marks,
+    resolve_realm_tile_entities,
+)
 
 # Kinds, которые Engine читает на live-путях (farm/fog/trade/build/wedding).
 ENGINE_CONSUMED_MODIFIER_KINDS = LIVE_READ_MODIFIER_KINDS
@@ -91,6 +99,11 @@ from app.domain.tick_pipeline import (
     normalize_tick_phase,
     TICK_PHASE_ECONOMY,
     TICK_PHASE_PLAY,
+)
+from app.domain.realm_identity import (
+    CLOCK_MODE_SHARED,
+    REALM_KIND_VALLEY,
+    second_fief_on_world_message,
 )
 from app.domain.tick_schedule import (
     format_next_tick_line,
@@ -328,6 +341,8 @@ class Engine:
                     next_catastrophe_key=world.get("next_catastrophe_key"),
                     pending_minor_key=world.get("pending_minor_key"),
                     active_minor_key=world.get("active_minor_key"),
+                    clock_mode=CLOCK_MODE_SHARED,
+                    realm_kind=REALM_KIND_VALLEY,
                 )
                 self.db.update_realm(int(realm["id"]), last_economy_tick=world_tick)
                 self.db.insert_tiles(
@@ -486,12 +501,9 @@ class Engine:
             raise ValueError("Долина не привязана к континенту")
         owned = self.db.get_fief_by_user_world(user.id, int(realm["world_id"]))
         if owned:
-            raise ValueError(
-                "У вас уже есть усадьба на континенте. "
-                "Вторая усадьба недоступна."
-            )
+            raise ValueError(second_fief_on_world_message())
 
-        tile = self.db._fetchone("SELECT * FROM map_tiles WHERE id=%s AND realm_id=%s;", (tile_id, realm_id))
+        tile = self.db.get_tile_by_id(tile_id, realm_id)
         if not tile or tile["owner_fief_id"] is not None:
             raise ValueError("Клетка недоступна")
         if tile["tile_type"] in (B.TILE_WILDS, B.TILE_ROAD, B.TILE_RIVER, B.TILE_RUINS):
@@ -508,25 +520,29 @@ class Engine:
             raise ValueError("Нельзя начать здесь")
 
         name = fief_name_for_user(user)
-        fief = self.db.create_fief(
-            realm_id,
-            user.id,
-            name,
-            grain=B.STARTING_GRAIN,
-            goods=B.STARTING_GOODS,
-            might=B.STARTING_MIGHT,
-            actions=1,
-            # выбор стартовой клетки уже выполнен - сразу квест на расширение
-            onboard_step=2,
-        )
-        self.db.update_tile(
-            tile["id"],
-            owner_fief_id=fief["id"],
-            building=B.BLD_MANOR,
-            building_level=B.STARTING_MANOR_LEVEL,
-            is_core=True,
-        )
-        self.db.set_last_realm(user.id, realm_id)
+        with self.db.transaction():
+            fief = self.db.create_fief(
+                realm_id,
+                user.id,
+                name,
+                grain=B.STARTING_GRAIN,
+                goods=B.STARTING_GOODS,
+                might=B.STARTING_MIGHT,
+                actions=1,
+                # выбор стартовой клетки уже выполнен - сразу квест на расширение
+                onboard_step=2,
+            )
+            claimed = self.db.claim_unowned_tile(
+                int(tile["id"]),
+                int(realm_id),
+                owner_fief_id=fief["id"],
+                building=B.BLD_MANOR,
+                building_level=B.STARTING_MANOR_LEVEL,
+                is_core=True,
+            )
+            if claimed is None:
+                raise ValueError("Клетка недоступна")
+            self.db.set_last_realm(user.id, realm_id)
         self.maybe_grow_map(realm_id)
         return fief, (
             f"🏡 {name} основана на {coord_label(tile['x'], tile['y'])} "
@@ -778,6 +794,9 @@ class Engine:
             highlight_fief_id=highlight_fief_id,
             claimable=claimable,
         )
+        entity_rows = self.db.list_active_tile_entities(int(realm["id"]))
+        fp_entities = entity_fingerprint_rows(entity_rows)
+        mark_entities = entity_map_marks(entity_rows)
         fingerprint = map_fingerprint(
             realm_id=int(realm["id"]),
             width=int(realm["width"]),
@@ -785,6 +804,7 @@ class Engine:
             tiles=views,
             highlight_fief_id=highlight_fief_id,
             claimable=claimable,
+            entity_rows=fp_entities or None,
         )
         caption, caption_extra = build_map_caption(
             title=str(realm["title"]),
@@ -806,6 +826,7 @@ class Engine:
             views,
             highlight_fief_id=highlight_fief_id,
             claimable=claimable,
+            entity_marks=mark_entities or None,
         )
         self._map_image_cache.put_png(fingerprint, png_bytes)
         return MapPhoto(
@@ -2119,10 +2140,15 @@ class Engine:
         self.apply_absence(realm_id)
         for t in self.db.list_expired_open_trades(realm_id, tick_index):
             self._refund_trade(t)
+        entity_digest_lines, entity_refs = self._resolve_tile_entities(
+            realm_id, tick_index
+        )
 
         event_line = self._prepare_tick_minor(realm_id, consume_pending=False)
         realm = self.db.get_realm(realm_id) or realm
-        base_farm_mult = self._realm_farm_mult(realm)
+        base_farm_mult = self.realm_modifiers(
+            realm, tile_entities=entity_refs
+        ).farm_mult()
 
         outcomes = []
         for fief in self.db.list_fiefs(realm_id):
@@ -2215,6 +2241,8 @@ class Engine:
         )
         if grow_msg:
             digest += f"\n📜 {grow_msg}"
+        if entity_digest_lines:
+            digest += "\n" + "\n".join(entity_digest_lines)
 
         self.db.update_realm(
             realm_id,
@@ -2308,21 +2336,62 @@ class Engine:
             )
         return tuple(refs)
 
+    def _active_tile_entity_refs(self, realm: dict) -> tuple[ActiveTileEntityRef, ...]:
+        """Активные tile_entities долины (presence = status active)."""
+        return tuple(
+            active_tile_entity_ref(row)
+            for row in self.db.list_active_tile_entities(int(realm["id"]))
+        )
+
+    def _resolve_tile_entities(
+        self, realm_id: int, tick_index: int
+    ) -> tuple[list[str], tuple[ActiveTileEntityRef, ...]]:
+        """Один SELECT на долину за тик; без строк - ([], ()) и digest не трогаем."""
+        rows = self.db.list_active_tile_entities(realm_id)
+        if not rows:
+            return [], ()
+
+        def update_entity(entity_id: int, **fields: Any) -> None:
+            self.db.update_tile_entity(entity_id, **fields)
+            for row in rows:
+                if int(row["id"]) == int(entity_id):
+                    row.update(fields)
+
+        lines = resolve_realm_tile_entities(
+            TileEntityResolveCtx(
+                tick_index=tick_index,
+                list_active=lambda: rows,
+                expire_entity=self.db.claim_expire_tile_entity,
+                update_entity=update_entity,
+            )
+        )
+        surviving = tuple(
+            active_tile_entity_ref(row)
+            for row in rows
+            if row.get("expires_tick") is None
+            or int(row["expires_tick"]) > int(tick_index)
+        )
+        return lines, surviving
+
     def realm_modifiers(
         self,
         realm: dict | None,
         *,
         catastrophes: Sequence[ActiveCatastropheRef] | None = None,
+        tile_entities: Sequence[ActiveTileEntityRef] | None = None,
     ) -> ModifierSet:
-        """Минор + катастрофы. Snapshot катастроф - до write-tx, collect чистый."""
+        """Минор + катастрофы + tile_entities. Snapshot - до write-tx, collect чистый."""
         if not realm:
             return collect_active_modifiers(RealmModifierCtx())
         if catastrophes is None:
             catastrophes = self._active_catastrophe_refs(realm)
+        if tile_entities is None:
+            tile_entities = self._active_tile_entity_refs(realm)
         return collect_active_modifiers(
             RealmModifierCtx(
                 active_minor_key=realm.get("active_minor_key"),
                 active_catastrophes=catastrophes,
+                active_tile_entities=tile_entities,
                 tick_index=int(realm.get("tick_index") or 0),
             )
         )

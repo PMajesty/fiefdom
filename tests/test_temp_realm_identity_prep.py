@@ -16,23 +16,33 @@ def _join_ready_db(*, world_id: int = 1, owned_world_fief=None):
     db = MagicMock()
     db.get_fief_by_user.return_value = None
     db.get_fief_by_user_world.return_value = owned_world_fief
-    db._fetchone.return_value = {
+    tile = {
         "id": 50,
         "x": 1,
         "y": 2,
         "tile_type": B.TILE_FIELD,
         "owner_fief_id": None,
     }
+    db.get_tile_by_id.return_value = tile
     db.get_realm.return_value = {
         "id": 2,
         "width": 6,
         "height": 6,
         "world_id": world_id,
     }
-    db.get_tiles.return_value = [
-        {"id": 50, "x": 1, "y": 2, "tile_type": B.TILE_FIELD, "owner_fief_id": None},
-    ]
+    db.get_tiles.return_value = [tile]
     db.create_fief.return_value = {"id": 7, "name": "Усадьба @ivan", "world_id": world_id}
+    db.claim_unowned_tile.return_value = {
+        **tile,
+        "owner_fief_id": 7,
+        "building": B.BLD_MANOR,
+        "building_level": B.STARTING_MANOR_LEVEL,
+        "is_core": True,
+    }
+    tx = MagicMock()
+    tx.__enter__ = MagicMock(return_value=None)
+    tx.__exit__ = MagicMock(return_value=False)
+    db.transaction.return_value = tx
     return db
 
 
