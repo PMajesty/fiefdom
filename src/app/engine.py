@@ -5,7 +5,7 @@ import logging
 import random
 import secrets
 from datetime import date, datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Sequence
 from zoneinfo import ZoneInfo
 
 from app import balance as B
@@ -29,15 +29,17 @@ from app.domain.map_image import (
     map_fingerprint,
     render_map_image,
 )
-from app.domain.event_apply import (
-    InstantMinorCtx,
-    apply_instant_minor,
-    minor_fog_ignores_patrol,
-    minor_trade_bonus_frac,
-    minor_upgrade_cost_mult,
-    minor_wedding_gift_grain,
-    realm_farm_mult,
+from app.domain.event_apply import InstantMinorCtx, apply_instant_minor
+from app.domain.modifiers import (
+    LIVE_READ_MODIFIER_KINDS,
+    ActiveCatastropheRef,
+    ModifierSet,
+    RealmModifierCtx,
+    collect_active_modifiers,
 )
+
+# Kinds, которые Engine читает на live-путях (farm/fog/trade/build/wedding).
+ENGINE_CONSUMED_MODIFIER_KINDS = LIVE_READ_MODIFIER_KINDS
 from app.domain.events import (
     CATASTROPHES,
     MINOR_EVENTS,
@@ -670,7 +672,7 @@ class Engine:
             watch_defense=prod.defense,
             victim_might=int(fief.get("might") or 0),
             patrol_active=tick_active(fief.get("patrol_until_tick"), tick_index),
-            fog_ignores_patrol=minor_fog_ignores_patrol(realm.get("active_minor_key")),
+            fog_ignores_patrol=self.realm_modifiers(realm).fog_ignores_patrol(),
         )
         lines.extend(
             [
@@ -1012,9 +1014,9 @@ class Engine:
         # если damaged сбросили выше; апгрейд
         cost = B.building_upgrade_cost(building, target_level)
         realm = self.db.get_realm(fief["realm_id"])
-        cost = B.scaled_building_cost(
-            cost, minor_upgrade_cost_mult(realm.get("active_minor_key"))
-        )
+        # Снимок катастроф до write-транзакции: collect чистый, без commit внутри tx.
+        build_mods = self.realm_modifiers(realm)
+        cost = B.scaled_building_cost(cost, build_mods.upgrade_cost_mult())
         if fief["goods"] < cost:
             raise ValueError(f"Нужно {cost} товаров")
         with self.db.transaction():
@@ -1219,8 +1221,8 @@ class Engine:
         atk = self.db.get_fief(attacker_id)
         vic = self.db.get_fief(victim_id)
 
-        fog = minor_fog_ignores_patrol(realm.get("active_minor_key")) or (
-            minor_fog_ignores_patrol(vic_realm.get("active_minor_key"))
+        fog = self.realm_modifiers(realm).fog_ignores_patrol() or (
+            self.realm_modifiers(vic_realm).fog_ignores_patrol()
         )
         watch_def = self.fief_prod(vic).defense
         patrol = tick_active(vic.get("patrol_until_tick"), tick_index)
@@ -1460,8 +1462,10 @@ class Engine:
 
         realm = self.db.get_realm(buyer["realm_id"])
         tick_index = int(realm.get("tick_index") or 0)
-        bonus = minor_trade_bonus_frac(realm.get("active_minor_key"))
-        wedding_gift = minor_wedding_gift_grain(realm.get("active_minor_key"))
+        # Модификаторы до write-транзакции (catastrophe snapshot без commit внутри tx).
+        trade_mods = self.realm_modifiers(realm)
+        bonus = trade_mods.trade_bonus_frac()
+        wedding_gift = trade_mods.trade_gift_grain()
 
         with self.db.transaction():
             live = self.db.get_trade(trade_id)
@@ -2288,16 +2292,43 @@ class Engine:
         )
         return event_line
 
-    def _realm_farm_mult(self, realm: dict) -> float:
-        cat_keys = [
-            str(ev["event_key"])
-            for ev in self.db.get_active_events(int(realm["id"]), kind="catastrophe")
-            if ev.get("event_key")
-        ]
-        return realm_farm_mult(
-            active_minor_key=realm.get("active_minor_key"),
-            active_catastrophe_keys=cat_keys,
+    def _active_catastrophe_refs(self, realm: dict) -> tuple[ActiveCatastropheRef, ...]:
+        """Читает активные catastrophe-строки. Вызывать вне тел write-транзакций."""
+        refs: list[ActiveCatastropheRef] = []
+        for ev in self.db.get_active_events(int(realm["id"]), kind="catastrophe"):
+            key = ev.get("event_key")
+            if not key:
+                continue
+            resolves = ev.get("resolves_tick")
+            refs.append(
+                ActiveCatastropheRef(
+                    key=str(key),
+                    resolves_tick=None if resolves is None else int(resolves),
+                )
+            )
+        return tuple(refs)
+
+    def realm_modifiers(
+        self,
+        realm: dict | None,
+        *,
+        catastrophes: Sequence[ActiveCatastropheRef] | None = None,
+    ) -> ModifierSet:
+        """Минор + катастрофы. Snapshot катастроф - до write-tx, collect чистый."""
+        if not realm:
+            return collect_active_modifiers(RealmModifierCtx())
+        if catastrophes is None:
+            catastrophes = self._active_catastrophe_refs(realm)
+        return collect_active_modifiers(
+            RealmModifierCtx(
+                active_minor_key=realm.get("active_minor_key"),
+                active_catastrophes=catastrophes,
+                tick_index=int(realm.get("tick_index") or 0),
+            )
         )
+
+    def _realm_farm_mult(self, realm: dict) -> float:
+        return self.realm_modifiers(realm).farm_mult()
 
     def _active_cattle_plague(self, realm_id: int) -> dict | None:
         for ev in self.db.get_active_events(realm_id, kind="catastrophe"):

@@ -324,8 +324,6 @@ _CATASTROPHE_EFFECTS: dict[str, dict[str, Any]] = {
         "might_per_player": B.BANDIT_NIGHT_MIGHT_PER_PLAYER,
         "loot_goods_per_player": B.BANDIT_NIGHT_LOOT_PER_PLAYER,
         "fail_unprot_grain_frac": B.BANDIT_NIGHT_FAIL_GRAIN_FRAC,
-        "fail_lowest_defense_count": 2,
-        "fail_worst_building_delta": -1,
     },
     "flood": {
         "targets": "river_and_orthogonal_neighbors",

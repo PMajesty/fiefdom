@@ -1,13 +1,21 @@
 """Диспетчер эффектов мелких событий и катастроф (без доступа к БД)."""
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from random import Random
 from typing import Any, Callable
 
 from app import balance as B
-from app.domain.events import CATASTROPHES, catastrophe_effect, minor_effect
+from app.domain.events import (
+    CATASTROPHES,
+    SHIPPED_CATASTROPHE_KEYS,
+    catastrophe_effect,
+    minor_effect,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -32,81 +40,6 @@ class CatastropheResolveCtx:
     get_fief: Callable[[int], dict[str, Any] | None]
     update_fief: Callable[..., None]
     update_event: Callable[..., None]
-
-
-def minor_farm_mult(key: str | None) -> float:
-    """Множитель ферм от активного минора (1.0 если нет farm_mult)."""
-    if not key:
-        return 1.0
-    try:
-        eff = minor_effect(key)
-    except KeyError:
-        return 1.0
-    if "farm_mult" not in eff:
-        return 1.0
-    return float(eff["farm_mult"])
-
-
-def catastrophe_farm_mult(key: str | None) -> float:
-    """Множитель ферм от активной катастрофы (1.0 если нет farm_mult)."""
-    if not key:
-        return 1.0
-    try:
-        eff = catastrophe_effect(key)
-    except KeyError:
-        return 1.0
-    if "farm_mult" not in eff:
-        return 1.0
-    return float(eff["farm_mult"])
-
-
-def realm_farm_mult(
-    *,
-    active_minor_key: str | None,
-    active_catastrophe_keys: list[str] | tuple[str, ...] = (),
-) -> float:
-    """Составной множитель ферм: минор × все катастрофы с farm_mult."""
-    mult = minor_farm_mult(active_minor_key)
-    for key in active_catastrophe_keys:
-        mult *= catastrophe_farm_mult(key)
-    return mult
-
-
-def minor_upgrade_cost_mult(key: str | None) -> float:
-    if not key:
-        return 1.0
-    try:
-        return float(minor_effect(key).get("upgrade_cost_mult", 1.0))
-    except KeyError:
-        return 1.0
-
-
-def minor_trade_bonus_frac(key: str | None) -> float:
-    if not key:
-        return 0.0
-    try:
-        return float(minor_effect(key).get("trade_bonus_frac") or 0.0)
-    except KeyError:
-        return 0.0
-
-
-def minor_fog_ignores_patrol(key: str | None) -> bool:
-    if not key:
-        return False
-    try:
-        return bool(minor_effect(key).get("raids_ignore_patrol"))
-    except KeyError:
-        return False
-
-
-def minor_wedding_gift_grain(key: str | None) -> int:
-    """Зерно \"на свадьбу\" при завершении обмена; 0 если событие не wedding."""
-    if not key:
-        return 0
-    try:
-        return int(minor_effect(key).get("trade_gift_grain") or 0)
-    except KeyError:
-        return 0
 
 
 def _apply_rats(eff: dict[str, Any], ctx: InstantMinorCtx) -> None:
@@ -174,6 +107,8 @@ _INSTANT_MINOR_HANDLERS: dict[str, Callable[[dict[str, Any], InstantMinorCtx], N
     "fire": _apply_fire,
 }
 
+INSTANT_MINOR_HANDLER_KEYS: frozenset[str] = frozenset(_INSTANT_MINOR_HANDLERS)
+
 
 def apply_instant_minor(key: str, ctx: InstantMinorCtx) -> None:
     """Применяет мгновенный эффект отгруженного минора; no-op для флагов/omen."""
@@ -238,11 +173,24 @@ _CATASTROPHE_RESOLVE_HANDLERS: dict[
     "cattle_plague": _resolve_cattle_plague,
 }
 
+RESOLVE_CATASTROPHE_HANDLER_KEYS: frozenset[str] = frozenset(
+    _CATASTROPHE_RESOLVE_HANDLERS
+)
+
 
 def resolve_catastrophe(key: str, ctx: CatastropheResolveCtx) -> str:
-    """Resolve отгруженной катастрофы; неизвестный ключ - мягкое закрытие."""
+    """Resolve катастрофы; отгруженный ключ без handler - ошибка; legacy - мягкое закрытие."""
     handler = _CATASTROPHE_RESOLVE_HANDLERS.get(key)
     if handler is None:
+        if key in SHIPPED_CATASTROPHE_KEYS:
+            logger.error(
+                "shipped catastrophe missing resolve handler key=%s event_id=%s",
+                key,
+                ctx.event_id,
+            )
+            raise RuntimeError(
+                f"Отгруженная катастрофа без resolve handler: {key}"
+            )
         ctx.update_event(ctx.event_id, status="resolved")
         meta = CATASTROPHES.get(key) or {}
         name = meta.get("name_ru", key)

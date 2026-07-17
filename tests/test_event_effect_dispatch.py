@@ -11,13 +11,6 @@ from app.domain.event_apply import (
     CatastropheResolveCtx,
     InstantMinorCtx,
     apply_instant_minor,
-    catastrophe_farm_mult,
-    minor_farm_mult,
-    minor_fog_ignores_patrol,
-    minor_trade_bonus_frac,
-    minor_upgrade_cost_mult,
-    minor_wedding_gift_grain,
-    realm_farm_mult,
     resolve_catastrophe,
 )
 from app.domain.events import (
@@ -26,6 +19,7 @@ from app.domain.events import (
     catastrophe_effect,
     minor_effect,
 )
+from app.domain.modifiers import ActiveCatastropheRef, RealmModifierCtx, collect_active_modifiers
 from app.engine import Engine
 
 
@@ -88,71 +82,73 @@ def test_unshipped_catastrophes_stay_out_of_live_pool():
     assert SHIPPED_CATASTROPHE_KEYS == frozenset({"bandit_night", "cattle_plague"})
 
 
-def test_flag_minors_read_effect_tables():
-    assert minor_farm_mult("harvest") == float(minor_effect("harvest")["farm_mult"])
-    assert minor_farm_mult("harvest") == 1.15
-    assert minor_farm_mult("drought") == float(minor_effect("drought")["farm_mult"])
-    assert minor_farm_mult("fog") == 1.0
-    assert minor_farm_mult("omen") == 1.0
-    assert minor_farm_mult(None) == 1.0
+def _mods(*, minor: str | None = None, cats: list[str] | None = None):
+    return collect_active_modifiers(
+        RealmModifierCtx(
+            active_minor_key=minor,
+            active_catastrophes=tuple(
+                ActiveCatastropheRef(key=k) for k in (cats or ())
+            ),
+        )
+    )
 
-    assert minor_upgrade_cost_mult("good_stone") == float(
+
+def test_flag_minors_read_effect_tables():
+    assert _mods(minor="harvest").farm_mult() == float(
+        minor_effect("harvest")["farm_mult"]
+    )
+    assert _mods(minor="harvest").farm_mult() == 1.15
+    assert _mods(minor="drought").farm_mult() == float(
+        minor_effect("drought")["farm_mult"]
+    )
+    assert _mods(minor="fog").farm_mult() == 1.0
+    assert _mods(minor="omen").farm_mult() == 1.0
+    assert _mods(minor=None).farm_mult() == 1.0
+
+    assert _mods(minor="good_stone").upgrade_cost_mult() == float(
         minor_effect("good_stone")["upgrade_cost_mult"]
     )
-    assert minor_upgrade_cost_mult("good_stone") == 0.75
-    assert minor_upgrade_cost_mult("harvest") == 1.0
+    assert _mods(minor="good_stone").upgrade_cost_mult() == 0.75
+    assert _mods(minor="harvest").upgrade_cost_mult() == 1.0
 
-    assert minor_trade_bonus_frac("fair") == float(
+    assert _mods(minor="fair").trade_bonus_frac() == float(
         minor_effect("fair")["trade_bonus_frac"]
     )
-    assert minor_trade_bonus_frac("fair") == 0.05
-    assert minor_trade_bonus_frac("fog") == 0.0
+    assert _mods(minor="fair").trade_bonus_frac() == 0.05
+    assert _mods(minor="fog").trade_bonus_frac() == 0.0
 
-    assert minor_fog_ignores_patrol("fog") is True
-    assert minor_fog_ignores_patrol("harvest") is False
+    assert _mods(minor="fog").fog_ignores_patrol() is True
+    assert _mods(minor="harvest").fog_ignores_patrol() is False
 
-    assert minor_wedding_gift_grain("wedding") == int(
+    assert _mods(minor="wedding").trade_gift_grain() == int(
         minor_effect("wedding")["trade_gift_grain"]
     )
-    assert minor_wedding_gift_grain("wedding") == 5
-    assert minor_wedding_gift_grain("fair") == 0
+    assert _mods(minor="wedding").trade_gift_grain() == 5
+    assert _mods(minor="fair").trade_gift_grain() == 0
 
-    assert catastrophe_farm_mult("cattle_plague") == float(
+    assert _mods(cats=["cattle_plague"]).farm_mult() == float(
         catastrophe_effect("cattle_plague")["farm_mult"]
     )
-    assert catastrophe_farm_mult("cattle_plague") == 0.375
-    assert catastrophe_farm_mult("bandit_night") == 1.0
+    assert _mods(cats=["cattle_plague"]).farm_mult() == 0.375
+    assert _mods(cats=["bandit_night"]).farm_mult() == 1.0
 
     bandit = catastrophe_effect("bandit_night")
     assert float(bandit["might_per_player"]) == 3.0
     assert int(bandit["loot_goods_per_player"]) == 12
     assert float(bandit["might_per_player"]) == B.BANDIT_NIGHT_MIGHT_PER_PLAYER
     assert int(bandit["loot_goods_per_player"]) == B.BANDIT_NIGHT_LOOT_PER_PLAYER
+    assert "fail_lowest_defense_count" not in bandit
+    assert "fail_worst_building_delta" not in bandit
 
 
 def test_realm_farm_mult_stacks_like_engine():
     plague = float(catastrophe_effect("cattle_plague")["farm_mult"])
     drought = float(minor_effect("drought")["farm_mult"])
     harvest = float(minor_effect("harvest")["farm_mult"])
-    assert realm_farm_mult(active_minor_key=None, active_catastrophe_keys=[]) == 1.0
-    assert (
-        realm_farm_mult(
-            active_minor_key=None, active_catastrophe_keys=["cattle_plague"]
-        )
-        == plague
-    )
-    assert (
-        realm_farm_mult(
-            active_minor_key="drought", active_catastrophe_keys=["cattle_plague"]
-        )
-        == drought * plague
-    )
-    assert (
-        realm_farm_mult(
-            active_minor_key="harvest", active_catastrophe_keys=["cattle_plague"]
-        )
-        == harvest * plague
-    )
+    assert _mods().farm_mult() == 1.0
+    assert _mods(cats=["cattle_plague"]).farm_mult() == plague
+    assert _mods(minor="drought", cats=["cattle_plague"]).farm_mult() == drought * plague
+    assert _mods(minor="harvest", cats=["cattle_plague"]).farm_mult() == harvest * plague
 
 
 def test_idle_flag_minors_do_not_mutate_resources():

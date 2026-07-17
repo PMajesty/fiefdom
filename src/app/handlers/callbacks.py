@@ -556,7 +556,7 @@ async def cb_build(callback: CallbackQuery) -> None:
                 if not t.get("is_overgrown")
             ]
             realm = engine.db.get_realm(fief["realm_id"])
-            cost_mult = realm_upgrade_cost_mult(realm)
+            cost_mult = realm_upgrade_cost_mult(engine, realm)
             await _ok(callback)
             await answer_html(
                 callback.message,
@@ -579,7 +579,7 @@ async def cb_build(callback: CallbackQuery) -> None:
                 if not t.get("is_overgrown")
             ]
             realm = engine.db.get_realm(fief["realm_id"])
-            cost_mult = realm_upgrade_cost_mult(realm)
+            cost_mult = realm_upgrade_cost_mult(engine, realm)
             await _ok(callback)
             await answer_html(
                 callback.message,

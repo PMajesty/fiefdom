@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
 from typing import Any
 
 from aiogram.enums import ParseMode
@@ -13,7 +12,6 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from app import balance as B
 from app.config import ADMIN_USER_ID
 from app.database import get_db
-from app.domain.events import minor_effect
 from app.engine import (
     Engine,
     raid_pact_lock_hint,
@@ -43,18 +41,11 @@ def get_engine() -> Engine:
     return _engine
 
 
-def realm_upgrade_cost_mult(realm: dict | None, *, now: datetime | None = None) -> float:
-    """Множитель стоимости стройки/апгрейда по активному мелкому событию."""
-    del now  # совместимость вызовов; срок минора - тиковый
+def realm_upgrade_cost_mult(engine: Engine, realm: dict | None) -> float:
+    """Множитель стоимости стройки/апгрейда (минор + активные катастрофы)."""
     if not realm:
         return 1.0
-    key = realm.get("active_minor_key")
-    if not key:
-        return 1.0
-    try:
-        return float(minor_effect(key).get("upgrade_cost_mult", 1.0))
-    except KeyError:
-        return 1.0
+    return engine.realm_modifiers(realm).upgrade_cost_mult()
 
 
 def is_admin(user_id: int | None) -> bool:
@@ -628,7 +619,7 @@ def fief_home_kb(engine: Engine, fief_id: int) -> InlineKeyboardMarkup:
     n = len(active)
     realm = engine.db.get_realm(fief["realm_id"])
     day_number = int(realm["day_number"]) if realm else 1
-    cost_mult = realm_upgrade_cost_mult(realm)
+    cost_mult = realm_upgrade_cost_mult(engine, realm)
     min_build = B.min_any_build_action_cost(active, cost_mult=cost_mult)
     next_claim = None
     if n < B.TILE_HARD_CAP:

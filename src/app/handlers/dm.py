@@ -752,7 +752,7 @@ async def dm_text(message: Message) -> None:
                 if not t.get("is_overgrown")
             ]
             realm = engine.db.get_realm(fief["realm_id"])
-            cost_mult = realm_upgrade_cost_mult(realm)
+            cost_mult = realm_upgrade_cost_mult(engine, realm)
             await answer_html(
                 message,
                 "Выберите здание:",

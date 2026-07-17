@@ -535,7 +535,11 @@ def test_double_spend_action_second_cas_miss():
 
 
 def test_engine_double_spend_action_second_cas_miss_no_side_effects():
-    """Второй CAS miss по действию: ошибка, без списания товаров и без клетки."""
+    """Второй CAS miss по действию: ошибка, без списания товаров и без клетки.
+
+    Snapshot катастроф - до write-tx (мок get_active_events без commit через _fetchall).
+    Проваленная write-tx по-прежнему не коммитит.
+    """
     fief = _spender_fief(goods=100, actions=1)
     tile = {
         "id": 50,
@@ -552,6 +556,7 @@ def test_engine_double_spend_action_second_cas_miss_no_side_effects():
     db.get_realm = MagicMock(
         return_value={"id": 9, "active_minor_key": None, "tick_index": 1}
     )
+    db.get_active_events = MagicMock(return_value=[])
     db.spend_fief_action = MagicMock(return_value=None)
     db.debit_fief_resources = MagicMock()
     db.update_tile = MagicMock()
@@ -565,6 +570,7 @@ def test_engine_double_spend_action_second_cas_miss_no_side_effects():
 
     with pytest.raises(ValueError, match="Нет действий"):
         engine.build_or_upgrade(1, 0, 0, B.BLD_FARM)
+    db.get_active_events.assert_called()
     db.spend_fief_action.assert_called_once()
     db.debit_fief_resources.assert_not_called()
     db.update_tile.assert_not_called()
@@ -573,7 +579,10 @@ def test_engine_double_spend_action_second_cas_miss_no_side_effects():
 
 
 def test_build_aborts_before_tile_when_goods_debit_fails():
-    """Spend прошёл, debit CAS miss: rollback транзакции, клетка не меняется."""
+    """Spend прошёл, debit CAS miss: rollback транзакции, клетка не меняется.
+
+    Catastrophe snapshot читается до write-tx; сам failed write не коммитит.
+    """
     fief = _spender_fief(goods=100)
     tile = {
         "id": 50,
@@ -590,6 +599,7 @@ def test_build_aborts_before_tile_when_goods_debit_fails():
     db.get_realm = MagicMock(
         return_value={"id": 9, "active_minor_key": None, "tick_index": 1}
     )
+    db.get_active_events = MagicMock(return_value=[])
     db.spend_fief_action = MagicMock(return_value=dict(fief, actions=1))
     db.debit_fief_resources = MagicMock(return_value=None)
     db.update_tile = MagicMock()
@@ -603,10 +613,60 @@ def test_build_aborts_before_tile_when_goods_debit_fails():
 
     with pytest.raises(ValueError, match="Нужно"):
         engine.build_or_upgrade(1, 0, 0, B.BLD_FARM)
+    db.get_active_events.assert_called()
     db.update_tile.assert_not_called()
     db.spend_fief_action.assert_called_once()
     db.debit_fief_resources.assert_called_once()
     conn.rollback.assert_called_once()
+    conn.commit.assert_not_called()
+
+
+def test_build_reads_catastrophe_snapshot_before_write_transaction():
+    """CRITICAL 1: unified collector; get_active_events до входа в write-tx."""
+    fief = _spender_fief(goods=100)
+    tile = {
+        "id": 50,
+        "owner_fief_id": 1,
+        "is_overgrown": False,
+        "tile_type": B.TILE_FIELD,
+        "building": None,
+        "building_level": 0,
+        "damaged": False,
+    }
+    db, conn = _db_with_mock_conn()
+    db.get_fief = MagicMock(return_value=dict(fief))
+    db.get_tile = MagicMock(return_value=tile)
+    db.get_realm = MagicMock(
+        return_value={"id": 9, "active_minor_key": None, "tick_index": 1}
+    )
+    order: list[str] = []
+
+    def track_events(*_a, **_k):
+        order.append("get_active_events")
+        return []
+
+    def track_tx():
+        order.append("transaction_enter")
+        return nullcontext()
+
+    db.get_active_events = MagicMock(side_effect=track_events)
+    db.transaction = track_tx  # type: ignore[method-assign]
+    db.spend_fief_action = MagicMock(return_value=dict(fief, actions=1))
+    db.debit_fief_resources = MagicMock(return_value=dict(fief, goods=90))
+    db.update_tile = MagicMock()
+    db.get_user = MagicMock(return_value={"last_realm_id": 9})
+    db.list_fiefs_by_user = MagicMock(return_value=[dict(fief)])
+    _allow_play(db)
+
+    engine = Engine(db)
+    engine.collect_for_fief = MagicMock(return_value=[])  # type: ignore[method-assign]
+    engine.fief_is_active_play = MagicMock(return_value=True)  # type: ignore[method-assign]
+    engine._onboard_build = MagicMock()  # type: ignore[method-assign]
+
+    engine.build_or_upgrade(1, 0, 0, B.BLD_FARM)
+    assert order[0] == "get_active_events"
+    assert "transaction_enter" in order
+    assert order.index("get_active_events") < order.index("transaction_enter")
     conn.commit.assert_not_called()
 
 
