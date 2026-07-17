@@ -122,10 +122,17 @@ async def _scheduler_tick(bot: Bot) -> None:
     # economy/resolve без incomplete: добить после crash, не открывая новый слот.
     phase_economy = needs_economy_wake(world)
     phase_resolve = needs_resolve_wake(world)
-    # Mid-play: half-tick lock заявок набега (лаг опроса до 30с допустим).
-    if not incomplete and not phase_economy and not phase_resolve:
+    # Mid-play: half-tick lock заявок набега + капельные слухи.
+    # slot_index is not None: тик уже due - слухи не мешаем в тот же poll.
+    if (
+        not incomplete
+        and not phase_economy
+        and not phase_resolve
+        and slot_index is None
+    ):
         try:
             engine.ensure_play_opened_at(int(world["id"]))
+            engine.ensure_rumor_queues_planned(int(world["id"]))
             locked = engine.maybe_lock_raids_at_midpoint(int(world["id"]))
             if locked:
                 logger.info(
@@ -135,6 +142,22 @@ async def _scheduler_tick(bot: Bot) -> None:
                 )
         except Exception:
             logger.exception("raid midpoint lock failed")
+        try:
+            for item in engine.maybe_due_rumors(int(world["id"]), local_now):
+                text = item.get("text")
+                if not text:
+                    continue
+                ok = await post_realm_public(
+                    bot, int(item["realm_id"]), str(text)
+                )
+                if ok:
+                    engine.acknowledge_rumor_posted(
+                        int(item["realm_id"]),
+                        str(item["due"]),
+                        str(text),
+                    )
+        except Exception:
+            logger.exception("rumor drip failed")
 
     if incomplete or phase_economy or phase_resolve or slot_index is not None:
         # incomplete/economy/resolve: догоняем/закрываем без нового слота; иначе due.

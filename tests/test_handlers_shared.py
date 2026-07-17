@@ -239,7 +239,7 @@ def test_valley_hub_kb_unlocked_pact():
         for btn in row
     }
     assert by_data["pct:9"] == "Пакт (союз)"
-    assert by_data["rum:9"] == "Слухи (сводка)"
+    assert by_data["rum:9"] == "Слухи"
     assert "lock:pct:9" not in by_data
 
 

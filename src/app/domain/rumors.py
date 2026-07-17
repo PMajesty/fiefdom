@@ -1,7 +1,8 @@
-"""Слухи долины: сплетни рынка с шансом лжи (чистые функции, без БД)."""
+"""Слухи долины: капельные сплетни между тиками (чистые функции, без БД)."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from random import Random
 from typing import Any, Sequence
 
@@ -23,11 +24,37 @@ TRUTH_FULL = "full"
 TRUTH_FUZZY = "fuzzy"
 TRUTH_FALSE = "false"
 
-RUMOR_SECTION_HEADER = "👂 Слухи рынка:"
-RUMOR_FOREIGN_SECTION_HEADER = "🗺 Из других долин:"
 RUMOR_EMPTY_PULL = (
-    "👂 Слухи рынка. Сегодня площадь молчит.\n"
-    "Новые строки появляются в утренней сводке группы."
+    "👂 Слухи рынка. Пока площадь молчит.\n"
+    "Новые строки выходят днём в групповом чате долины."
+)
+
+RUMOR_OPENERS = (
+    "Говорят...",
+    "Слыхали...",
+    "На рынке шепчут...",
+    "В пивной бормочут...",
+    "Бабы у колодца судачат...",
+)
+
+# Пьяная болтовня площади: смешно и грубо, без админского яда.
+_FLUFF_TEMPLATES = (
+    "у {name} пиво кончилось раньше зарплаты дружины.",
+    "у {name} копьё мягче редьки, а язык длиннее обоза.",
+    "у {name} амбар гудит пустотой - мыши съезд созвали.",
+    "у {name} пахнет так, что козы в лес просятся.",
+    "у {name} лень встала раньше солнца и села на порог.",
+    "у {name} жадность зерно считает во сне и просыпается злее.",
+    "у {name} удача убежала через дыру в штанах.",
+    "у {name} дружина храбрая только до первой кружки.",
+    "у {name} в кабаке хвастают силой, а в поле - мозолями на языке.",
+    "у {name} корова доит лучше хозяина, да стыдливее.",
+    "у {name} ворота скрипят громче, чем хозяин работает.",
+    "у {name} в закромах мышь богаче князя.",
+    "про {name} говорят: нос в чужой амбар - руки в свой карман.",
+    "у {name} копьё в бою дрожит, а кружка - никогда.",
+    "у {name} двор широкий, а дела узкие, как щель в заборе.",
+    "у {name} хвалят щедрость - пока не спросят взаймы.",
 )
 
 _MIGHT_SOFT_LABELS = ("тонкая", "крепкая", "толпа")
@@ -53,47 +80,55 @@ class UpcomingEventHint:
     key: str
 
 
-@dataclass(frozen=True)
-class DailyRumorBundle:
-    """Местные слухи + сплетни с других долин континента."""
-
-    local: list[str] = field(default_factory=list)
-    foreign: list[str] = field(default_factory=list)
-
-    def as_storage(self) -> dict[str, list[str]]:
-        return {"local": list(self.local), "foreign": list(self.foreign)}
-
-
-def rumor_local_max_lines(player_count: int) -> int:
-    """Потолок местных строк (без учёта предвестий событий)."""
-    n = max(0, int(player_count))
-    if n <= 0:
-        return 0
-    extra = (n - 1) // max(1, int(B.RUMOR_PLAYERS_PER_EXTRA_LINE))
-    return min(int(B.RUMOR_MAX_CAP), int(B.RUMOR_MAX_PER_DAY) + extra)
-
-
-def rumor_foreign_max_lines(foreign_player_count: int) -> int:
-    """Потолок чужих строк - тот же масштаб, что у местных."""
-    n = max(0, int(foreign_player_count))
-    if n <= 0:
-        return 0
-    extra = (n - 1) // max(1, int(B.RUMOR_PLAYERS_PER_EXTRA_LINE))
-    return min(int(B.RUMOR_FOREIGN_MAX_CAP), int(B.RUMOR_MAX_PER_DAY) + extra)
-
-
-def parse_stored_rumors(raw: Any) -> DailyRumorBundle:
-    """Читает last_rumor_lines: dict {local, foreign} или старый list."""
+def parse_stored_rumors(raw: Any) -> list[str]:
+    """Читает архив last_rumor_lines: плоский list или legacy {local, foreign}."""
+    if isinstance(raw, list):
+        return [str(x) for x in raw if str(x).strip()]
     if isinstance(raw, dict):
         local = raw.get("local") or []
         foreign = raw.get("foreign") or []
-        return DailyRumorBundle(
-            local=[str(x) for x in local],
-            foreign=[str(x) for x in foreign],
-        )
-    if isinstance(raw, list):
-        return DailyRumorBundle(local=[str(x) for x in raw], foreign=[])
-    return DailyRumorBundle()
+        return [str(x) for x in list(local) + list(foreign) if str(x).strip()]
+    return []
+
+
+def parse_rumor_queue(raw: Any) -> list[datetime]:
+    """Очередь due-времён: list ISO-строк или datetime."""
+    if not isinstance(raw, list):
+        return []
+    out: list[datetime] = []
+    for item in raw:
+        if isinstance(item, datetime):
+            out.append(item)
+            continue
+        if isinstance(item, dict):
+            item = item.get("due")
+        if not item:
+            continue
+        try:
+            out.append(datetime.fromisoformat(str(item)))
+        except ValueError:
+            continue
+    return out
+
+
+def rumor_queue_storage(dues: Sequence[datetime]) -> list[str]:
+    return [d.isoformat() for d in dues]
+
+
+def append_rumor_archive(
+    archive: Sequence[str],
+    line: str,
+    *,
+    max_lines: int | None = None,
+) -> list[str]:
+    cap = int(B.RUMOR_ARCHIVE_MAX if max_lines is None else max_lines)
+    lines = [str(x) for x in archive if str(x).strip()]
+    text = str(line).strip()
+    if text:
+        lines.append(text)
+    if cap > 0:
+        lines = lines[-cap:]
+    return lines
 
 
 def wealth_total(grain: int, goods: int) -> int:
@@ -256,6 +291,13 @@ def compose_foreign_rumor_text(
     return f"Из долины {title}: {body}"
 
 
+def compose_fluff_rumor(name: str, rng: Random) -> str:
+    """Именная кабацкая болтовня с открывалкой."""
+    opener = rng.choice(RUMOR_OPENERS)
+    body = rng.choice(_FLUFF_TEMPLATES).format(name=name)
+    return f"{opener} {body}"
+
+
 def _eligible_fact_types(snap: FiefRumorSnapshot) -> list[str]:
     types = [FACT_WEALTH, FACT_MIGHT, FACT_PATROL]
     if snap.buildings:
@@ -291,138 +333,189 @@ def compose_event_rumor(
     return f"Говорят, завтра долина встретит: {title}."
 
 
-def roll_event_rumor_lines(
-    hints: Sequence[UpcomingEventHint],
+def _compose_intel_line(
+    snap: FiefRumorSnapshot,
     rng: Random,
     *,
-    line_chance: float | None = None,
-) -> list[str]:
-    """До 1 строки-предвестия из доступных подсказок."""
-    rng = rng or Random()
-    if not hints:
-        return []
-    line_chance = B.RUMOR_EVENT_LINE_CHANCE if line_chance is None else line_chance
-    if rng.random() >= line_chance:
-        return []
-    hint = rng.choice(list(hints))
-    return [compose_event_rumor(hint, rng)]
-
-
-def _roll_fief_rumor_lines(
-    fiefs: Sequence[FiefRumorSnapshot],
-    rng: Random,
-    *,
-    max_lines: int,
-    line_chance: float,
     foreign: bool,
-) -> list[str]:
-    if max_lines <= 0 or not fiefs:
-        return []
-    used: set[tuple[int, str]] = set()
-    lines: list[str] = []
-    for _ in range(max_lines):
-        if rng.random() >= line_chance:
-            continue
-        pool = list(fiefs)
-        rng.shuffle(pool)
-        placed = False
-        for snap in pool:
-            fact_pool = [
-                f for f in _eligible_fact_types(snap) if (snap.fief_id, f) not in used
-            ]
-            if not fact_pool:
-                continue
-            fact = rng.choice(fact_pool)
-            truth = _pick_truth(rng)
-            if foreign:
-                text = compose_foreign_rumor_text(snap, fact, truth, rng)
-            else:
-                text = compose_rumor_text(snap, fact, truth, rng)
-            used.add((snap.fief_id, fact))
-            lines.append(text)
-            placed = True
-            break
-        if not placed:
-            break
-    return lines
-
-
-def roll_daily_rumors(
-    fiefs: Sequence[FiefRumorSnapshot],
-    rng: Random | None = None,
-    *,
-    max_lines: int | None = None,
-    line_chance: float | None = None,
-    event_hints: Sequence[UpcomingEventHint] | None = None,
-) -> list[str]:
-    """Ролл местных слухов дня (список строк). Пустой = секцию не добавляем."""
-    rng = rng or Random()
-    event_lines = roll_event_rumor_lines(event_hints or (), rng)
-    if max_lines is None:
-        max_lines = rumor_local_max_lines(len(fiefs))
-    line_chance = B.RUMOR_LINE_CHANCE if line_chance is None else line_chance
-    fief_slots = max(0, int(max_lines) - len(event_lines))
-    fief_lines = _roll_fief_rumor_lines(
-        fiefs,
-        rng,
-        max_lines=fief_slots,
-        line_chance=line_chance,
-        foreign=False,
-    )
-    return list(event_lines) + fief_lines
-
-
-def roll_valley_day_rumors(
-    local_fiefs: Sequence[FiefRumorSnapshot],
-    foreign_fiefs: Sequence[FiefRumorSnapshot],
-    rng: Random | None = None,
-    *,
-    event_hints: Sequence[UpcomingEventHint] | None = None,
-) -> DailyRumorBundle:
-    """Местные слухи и чужой блок - один масштаб от числа усадеб."""
-    rng = rng or Random()
-    local = roll_daily_rumors(
-        local_fiefs,
-        rng,
-        max_lines=rumor_local_max_lines(len(local_fiefs)),
-        event_hints=event_hints,
-    )
-    foreign = _roll_fief_rumor_lines(
-        foreign_fiefs,
-        rng,
-        max_lines=rumor_foreign_max_lines(len(foreign_fiefs)),
-        line_chance=float(B.RUMOR_FOREIGN_LINE_CHANCE),
-        foreign=True,
-    )
-    return DailyRumorBundle(local=local, foreign=foreign)
-
-
-def format_rumor_section(
-    lines: Sequence[str],
-    *,
-    foreign_lines: Sequence[str] | None = None,
-) -> str | None:
-    parts: list[str] = []
-    if lines:
-        body = "\n".join(f"• {line}" for line in lines)
-        parts.append(f"{RUMOR_SECTION_HEADER}\n{body}")
-    if foreign_lines:
-        body = "\n".join(f"• {line}" for line in foreign_lines)
-        parts.append(f"{RUMOR_FOREIGN_SECTION_HEADER}\n{body}")
-    if not parts:
-        return None
-    return "\n\n".join(parts)
-
-
-def format_rumors_pull(
-    lines: Sequence[str],
-    *,
-    foreign_lines: Sequence[str] | None = None,
 ) -> str:
-    section = format_rumor_section(lines, foreign_lines=foreign_lines)
-    if not section:
+    facts = _eligible_fact_types(snap)
+    fact = rng.choice(facts)
+    truth = _pick_truth(rng)
+    if foreign:
+        return compose_foreign_rumor_text(snap, fact, truth, rng)
+    return compose_rumor_text(snap, fact, truth, rng)
+
+
+def roll_rumor_line(
+    local_snaps: Sequence[FiefRumorSnapshot],
+    foreign_snaps: Sequence[FiefRumorSnapshot],
+    event_hints: Sequence[UpcomingEventHint],
+    rng: Random | None = None,
+) -> str | None:
+    """Одна строка смешанного пула: 25% fluff, иначе intel (+ редко предвестие)."""
+    rng = rng or Random()
+    local = list(local_snaps)
+    foreign = list(foreign_snaps)
+    named = [s for s in local + foreign if (s.name or "").strip()]
+    fluff_chance = float(B.RUMOR_FLUFF_CHANCE)
+    if named and rng.random() < fluff_chance:
+        return compose_fluff_rumor(rng.choice(named).name, rng)
+
+    hints = list(event_hints or ())
+    if hints and rng.random() < float(B.RUMOR_EVENT_LINE_CHANCE):
+        return compose_event_rumor(rng.choice(hints), rng)
+
+    pool: list[tuple[FiefRumorSnapshot, bool]] = (
+        [(s, False) for s in local] + [(s, True) for s in foreign]
+    )
+    if not pool:
+        if named:
+            return compose_fluff_rumor(rng.choice(named).name, rng)
+        return None
+    snap, foreign_flag = rng.choice(pool)
+    return _compose_intel_line(snap, rng, foreign=foreign_flag)
+
+
+def in_rumor_quiet_hours(
+    local_now: datetime,
+    *,
+    quiet_start: int | None = None,
+    quiet_end: int | None = None,
+) -> bool:
+    """Тишина рынка: [quiet_start, 24) U [0, quiet_end)."""
+    start = int(B.RUMOR_QUIET_START_HOUR if quiet_start is None else quiet_start)
+    end = int(B.RUMOR_QUIET_END_HOUR if quiet_end is None else quiet_end)
+    hour = int(local_now.hour)
+    return hour >= start or hour < end
+
+
+def rumor_count_for_window(rng: Random | None = None) -> int:
+    """1 часто / 2 иногда. Никогда 3."""
+    rng = rng or Random()
+    weights = tuple(B.RUMOR_WINDOW_COUNT_WEIGHTS)
+    one_w = float(weights[0]) if weights else 0.7
+    return 1 if rng.random() < one_w else 2
+
+
+def _segment_non_quiet(
+    day_start: datetime,
+    day_end: datetime,
+    quiet_start: int,
+    quiet_end: int,
+) -> list[tuple[datetime, datetime]]:
+    """Непересекающиеся куски одного календарного дня вне тихих часов."""
+    if day_end <= day_start:
+        return []
+    day = day_start.date()
+    tz = day_start.tzinfo
+    quiet_from = datetime(day.year, day.month, day.day, quiet_start, 0, tzinfo=tz)
+    quiet_to = datetime(day.year, day.month, day.day, quiet_end, 0, tzinfo=tz)
+    # Тишина: [0, quiet_end) и [quiet_start, 24).
+    allowed = [
+        (
+            datetime(day.year, day.month, day.day, quiet_end, 0, tzinfo=tz),
+            quiet_from,
+        )
+    ]
+    out: list[tuple[datetime, datetime]] = []
+    for seg_a, seg_b in allowed:
+        a = max(day_start, seg_a)
+        b = min(day_end, seg_b)
+        if b > a:
+            out.append((a, b))
+    return out
+
+
+def allowed_rumor_segments(
+    window_start: datetime,
+    window_end: datetime,
+    *,
+    quiet_start: int | None = None,
+    quiet_end: int | None = None,
+) -> list[tuple[datetime, datetime]]:
+    """Допустимые отрезки окна. Через ночную тишину - только утренний хвост."""
+    start_h = int(B.RUMOR_QUIET_START_HOUR if quiet_start is None else quiet_start)
+    end_h = int(B.RUMOR_QUIET_END_HOUR if quiet_end is None else quiet_end)
+    if window_end <= window_start:
+        return []
+    segments: list[tuple[datetime, datetime]] = []
+    cursor = window_start
+    while cursor.date() <= window_end.date():
+        day = cursor.date()
+        day_start = datetime(day.year, day.month, day.day, 0, 0, tzinfo=cursor.tzinfo)
+        day_end = day_start + timedelta(days=1)
+        slice_start = max(window_start, day_start)
+        slice_end = min(window_end, day_end)
+        segments.extend(_segment_non_quiet(slice_start, slice_end, start_h, end_h))
+        cursor = day_end
+        if cursor >= window_end:
+            break
+    if len(segments) >= 2:
+        # Окно через ночь: не копим вечерний обрубок, только утро до тика.
+        return [segments[-1]]
+    return segments
+
+
+def plan_rumor_due_times(
+    window_start: datetime,
+    window_end: datetime,
+    count: int,
+    *,
+    quiet_start: int | None = None,
+    quiet_end: int | None = None,
+    rng: Random | None = None,
+) -> list[datetime]:
+    """Случайные due внутри дневных щелей окна. Без тихих часов."""
+    rng = rng or Random()
+    n = max(0, min(2, int(count)))
+    if n <= 0:
+        return []
+    segments = allowed_rumor_segments(
+        window_start,
+        window_end,
+        quiet_start=quiet_start,
+        quiet_end=quiet_end,
+    )
+    if not segments:
+        return []
+    total_sec = sum((b - a).total_seconds() for a, b in segments)
+    if total_sec <= 0:
+        return []
+
+    def _pick() -> datetime:
+        target = rng.random() * total_sec
+        acc = 0.0
+        for a, b in segments:
+            span = (b - a).total_seconds()
+            if acc + span >= target:
+                return a + timedelta(seconds=target - acc)
+            acc += span
+        return segments[-1][0]
+
+    dues = sorted(_pick() for _ in range(n))
+    if n == 2 and dues[0] == dues[1] and total_sec >= 2:
+        # Чуть разводим совпавшие броски.
+        dues[1] = min(segments[-1][1] - timedelta(seconds=1), dues[0] + timedelta(minutes=1))
+        if dues[1] <= dues[0]:
+            dues = [dues[0]]
+    # Страховка: ничего в тишине.
+    dues = [
+        d
+        for d in dues
+        if not in_rumor_quiet_hours(d, quiet_start=quiet_start, quiet_end=quiet_end)
+        and window_start <= d < window_end
+    ]
+    return dues[:n]
+
+
+def format_rumors_pull(lines: Sequence[str]) -> str:
+    """DM catch-up: недавний архив, не свежий ролл."""
+    clean = [str(x) for x in lines if str(x).strip()]
+    if not clean:
         return RUMOR_EMPTY_PULL
+    body = "\n".join(f"• {line}" for line in clean)
     return (
-        f"{section}\n\n"
-        "<i>Сплетни площади - кто во что верит.</i>"
+        f"👂 Недавний шёпот площади:\n{body}\n\n"
+        "<i>Сплетни рынка - кто во что верит. Новые выходят днём в группе.</i>"
     )

@@ -534,7 +534,7 @@ def valley_hub_kb(
                 pact_btn,
             ],
             [
-                InlineKeyboardButton(text="Слухи (сводка)", callback_data=f"rum:{fid}"),
+                InlineKeyboardButton(text="Слухи", callback_data=f"rum:{fid}"),
             ],
             [InlineKeyboardButton(text="< Меню", callback_data=f"home:{fid}")],
         ]

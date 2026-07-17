@@ -138,6 +138,7 @@ class Database:
                     pending_raid_lines JSONB NOT NULL DEFAULT '[]',
                     last_digest_text TEXT,
                     last_rumor_lines JSONB NOT NULL DEFAULT '[]',
+                    rumor_queue JSONB NOT NULL DEFAULT '[]',
                     wipe_confirm_code TEXT,
                     wipe_confirm_until TIMESTAMPTZ,
                     forced_tick_count INT NOT NULL DEFAULT 0,
@@ -347,6 +348,10 @@ class Database:
             )
             self.cursor.execute(
                 "ALTER TABLE realms ADD COLUMN IF NOT EXISTS last_rumor_lines "
+                "JSONB NOT NULL DEFAULT '[]';"
+            )
+            self.cursor.execute(
+                "ALTER TABLE realms ADD COLUMN IF NOT EXISTS rumor_queue "
                 "JSONB NOT NULL DEFAULT '[]';"
             )
             self.cursor.execute(
@@ -577,6 +582,11 @@ class Database:
         # Окно play для half-tick lock заявок набега; resolve_tick_index - bookmark crash.
         self.cursor.execute(
             "ALTER TABLE worlds ADD COLUMN IF NOT EXISTS play_opened_at TIMESTAMPTZ;"
+        )
+        # Какой play_opened_at уже получил rumor_queue (не путать с drained []).
+        self.cursor.execute(
+            "ALTER TABLE worlds ADD COLUMN IF NOT EXISTS "
+            "rumor_plan_play_opened_at TIMESTAMPTZ;"
         )
         self.cursor.execute(
             "ALTER TABLE worlds ADD COLUMN IF NOT EXISTS resolve_tick_index INT;"
@@ -1138,6 +1148,7 @@ class Database:
                 "balance_overrides",
                 "pending_raid_lines",
                 "last_rumor_lines",
+                "rumor_queue",
             ) and not isinstance(v, str):
                 v = json.dumps(v)
                 cols.append(f"{k}=%s::jsonb")
@@ -2163,6 +2174,7 @@ class Database:
                 "balance_overrides",
                 "pending_raid_lines",
                 "last_rumor_lines",
+                "rumor_queue",
                 "payload",
             ):
                 try:

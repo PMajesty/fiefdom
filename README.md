@@ -60,7 +60,8 @@ Service: `fiefdom` at `/opt/fiefdom`.
 
 ## Continent, wipe
 
-- All valleys share one **continent clock** (ticks and events together). Rumors stay local.
+- All valleys share one **continent clock** (ticks and events together).
+- Rumors drip into the valley group chat between ticks (1-2 lines, quiet hours 21:00-08:00); not in the tick digest. DM "слухи" re-reads the recent archive.
 - `/вотчина` in a new group creates a valley on the current continent day. All valleys on the continent are one play space (raid, caravan, pacts).
 - Each valley keeps its own land map; players can open other valley maps from the DM menu.
 - A player may own only **one** estate on the continent.

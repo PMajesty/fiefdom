@@ -1,10 +1,14 @@
-"""Тесты слухов долины: бенды, ложь, сводка, pull, чужие долины."""
+"""Тесты капельных слухов: микс, cadence, тишина, архив, digest без слухов."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from random import Random
+from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 from app import balance as B
 from app.domain import digest, rumors
+from app.engine import Engine
 
 
 def _snap(**kwargs) -> rumors.FiefRumorSnapshot:
@@ -46,30 +50,8 @@ def test_might_soft_label_hides_number():
     assert rumors.might_soft_label(99) == "толпа"
 
 
-def test_rumor_local_max_scales_with_players():
-    assert rumors.rumor_local_max_lines(0) == 0
-    assert rumors.rumor_local_max_lines(1) == B.RUMOR_MAX_PER_DAY
-    assert rumors.rumor_local_max_lines(2) == B.RUMOR_MAX_PER_DAY
-    assert rumors.rumor_local_max_lines(3) == B.RUMOR_MAX_PER_DAY + 1
-    assert rumors.rumor_local_max_lines(5) == B.RUMOR_MAX_PER_DAY + 2
-    assert rumors.rumor_local_max_lines(100) == B.RUMOR_MAX_CAP
-
-
-def test_rumor_foreign_max_lines_matches_local_scale():
-    assert rumors.rumor_foreign_max_lines(0) == 0
-    assert rumors.rumor_foreign_max_lines(1) == B.RUMOR_MAX_PER_DAY
-    assert rumors.rumor_foreign_max_lines(2) == B.RUMOR_MAX_PER_DAY
-    assert rumors.rumor_foreign_max_lines(3) == B.RUMOR_MAX_PER_DAY + 1
-    assert rumors.rumor_foreign_max_lines(5) == B.RUMOR_MAX_PER_DAY + 2
-    assert rumors.rumor_foreign_max_lines(99) == B.RUMOR_FOREIGN_MAX_CAP
-    assert B.RUMOR_FOREIGN_LINE_CHANCE == B.RUMOR_LINE_CHANCE
-    assert B.RUMOR_FOREIGN_MAX_CAP == B.RUMOR_MAX_CAP
-    for n in range(0, 20):
-        assert rumors.rumor_foreign_max_lines(n) == rumors.rumor_local_max_lines(n)
-
-
 def test_compose_full_wealth_uses_true_band():
-    snap = _snap(grain=10, goods=5)  # total 15 -> band 0
+    snap = _snap(grain=10, goods=5)
     text = rumors.compose_rumor_text(snap, rumors.FACT_WEALTH, rumors.TRUTH_FULL, Random(1))
     assert "Иван" in text
     assert "тощая" in text
@@ -104,134 +86,142 @@ def test_compose_foreign_rumor_prefixes_valley():
     assert "Пётр" in text
 
 
-def test_roll_daily_rumors_bounded_and_seeded():
-    fiefs = [
-        _snap(fief_id=1, name="А"),
-        _snap(fief_id=2, name="Б", grain=200, goods=200, might=30),
-    ]
-    lines = rumors.roll_daily_rumors(fiefs, Random(42))
-    assert 0 <= len(lines) <= rumors.rumor_local_max_lines(len(fiefs))
-    for line in lines:
-        assert line.endswith(".")
-        assert "говорят" in line or "шепчут" in line
+def test_compose_fluff_named_and_opener():
+    text = rumors.compose_fluff_rumor("Кирилл", Random(3))
+    assert "Кирилл" in text
+    assert any(text.startswith(op) for op in rumors.RUMOR_OPENERS)
 
 
-def test_roll_daily_rumors_more_slots_with_more_players():
-    many = [
-        _snap(fief_id=i, name=f"Игрок{i}", grain=10 + i, goods=10, might=5 + i)
-        for i in range(1, 8)
-    ]
-    cap = rumors.rumor_local_max_lines(len(many))
-    assert cap > B.RUMOR_MAX_PER_DAY
-    hit_high = False
-    for seed in range(40):
-        lines = rumors.roll_daily_rumors(many, Random(seed), line_chance=1.0)
-        assert len(lines) <= cap
-        if len(lines) > B.RUMOR_MAX_PER_DAY:
-            hit_high = True
-            break
-    assert hit_high
-
-
-def test_roll_daily_rumors_empty_realm():
-    assert rumors.roll_daily_rumors([], Random(1)) == []
-
-
-def test_roll_valley_day_rumors_foreign_section():
+def test_roll_rumor_line_fluff_rate_near_quarter():
     local = [_snap(fief_id=1, name="А")]
+    foreign = [_snap(fief_id=2, name="Б", realm_title="Юг")]
+    fluff = 0
+    n = 800
+    for seed in range(n):
+        line = rumors.roll_rumor_line(local, foreign, (), Random(seed))
+        assert line
+        if any(line.startswith(op) for op in rumors.RUMOR_OPENERS):
+            fluff += 1
+    rate = fluff / n
+    assert 0.18 <= rate <= 0.32
+
+
+def test_roll_rumor_line_mixed_pool_can_foreign():
+    local = [_snap(fief_id=1, name="Местный")]
     foreign = [
-        _snap(fief_id=10, name="Чужак", realm_title="Юг", might=25),
-        _snap(fief_id=11, name="Гость", realm_title="Юг", might=3),
+        _snap(fief_id=9, name="Чужак", realm_title="Юг", might=40, grain=200, goods=200)
     ]
     found = False
-    for seed in range(60):
-        bundle = rumors.roll_valley_day_rumors(
-            local, foreign, Random(seed)
-        )
-        assert isinstance(bundle.local, list)
-        assert isinstance(bundle.foreign, list)
-        assert len(bundle.foreign) <= rumors.rumor_foreign_max_lines(len(foreign))
-        if bundle.foreign:
-            assert all(line.startswith("Из долины ") for line in bundle.foreign)
+    for seed in range(120):
+        line = rumors.roll_rumor_line(local, foreign, (), Random(seed))
+        if line and line.startswith("Из долины Юг:"):
             found = True
             break
     assert found
 
 
-def test_parse_stored_rumors_legacy_list():
-    bundle = rumors.parse_stored_rumors(["У А, говорят, дружина тонка."])
-    assert bundle.local == ["У А, говорят, дружина тонка."]
-    assert bundle.foreign == []
+def test_roll_rumor_line_can_event_hint():
+    local = [_snap(fief_id=1, name="А")]
+    hints = [rumors.UpcomingEventHint(kind="catastrophe", key="bandit_night")]
+    found = False
+    for seed in range(100):
+        line = rumors.roll_rumor_line(local, (), hints, Random(seed))
+        if line and ("Ночь бандитов" in line or "близится беда" in line):
+            found = True
+            break
+    assert found
 
 
-def test_parse_stored_rumors_dict():
-    bundle = rumors.parse_stored_rumors(
-        {
-            "local": ["местная"],
-            "foreign": ["Из долины Юг: чужая."],
-        }
-    )
-    assert bundle.local == ["местная"]
-    assert bundle.foreign == ["Из долины Юг: чужая."]
+def test_rumor_count_for_window_weights():
+    ones = sum(1 for s in range(500) if rumors.rumor_count_for_window(Random(s)) == 1)
+    twos = 500 - ones
+    assert ones > twos
+    assert 0.60 <= ones / 500 <= 0.80
+    assert all(rumors.rumor_count_for_window(Random(s)) in (1, 2) for s in range(100))
 
 
-def test_format_rumor_section_header_soft():
-    section = rumors.format_rumor_section(["У Ивана, говорят, дружина тонка."])
-    assert section is not None
-    assert "не факты" not in section
-    assert "базар может врать" not in section
-    assert "Слухи рынка" in section
-    assert "• У Ивана" in section
+def test_in_rumor_quiet_hours():
+    tz = ZoneInfo("Europe/Moscow")
+    assert rumors.in_rumor_quiet_hours(datetime(2026, 7, 17, 21, 0, tzinfo=tz))
+    assert rumors.in_rumor_quiet_hours(datetime(2026, 7, 17, 23, 30, tzinfo=tz))
+    assert rumors.in_rumor_quiet_hours(datetime(2026, 7, 18, 0, 0, tzinfo=tz))
+    assert rumors.in_rumor_quiet_hours(datetime(2026, 7, 18, 7, 59, tzinfo=tz))
+    assert not rumors.in_rumor_quiet_hours(datetime(2026, 7, 18, 8, 0, tzinfo=tz))
+    assert not rumors.in_rumor_quiet_hours(datetime(2026, 7, 17, 12, 0, tzinfo=tz))
+    assert not rumors.in_rumor_quiet_hours(datetime(2026, 7, 17, 20, 59, tzinfo=tz))
 
 
-def test_format_rumor_section_with_foreign():
-    section = rumors.format_rumor_section(
-        ["У Ивана, говорят, дружина тонка."],
-        foreign_lines=["Из долины Юг: У Петра, говорят, дружина крепкая."],
-    )
-    assert section is not None
-    assert "Слухи рынка" in section
-    assert "Из других долин" in section
-    assert "Петра" in section
-    assert "\n\n🗺 Из других долин:" in section
+def test_plan_due_times_daytime_window_inside_bounds():
+    tz = ZoneInfo("Europe/Moscow")
+    start = datetime(2026, 7, 17, 10, 0, tzinfo=tz)
+    end = datetime(2026, 7, 17, 13, 0, tzinfo=tz)
+    dues = rumors.plan_rumor_due_times(start, end, 2, rng=Random(11))
+    assert 1 <= len(dues) <= 2
+    for due in dues:
+        assert start <= due < end
+        assert not rumors.in_rumor_quiet_hours(due)
+
+
+def test_plan_due_times_overnight_only_morning_slice():
+    tz = ZoneInfo("Europe/Moscow")
+    start = datetime(2026, 7, 17, 19, 0, tzinfo=tz)
+    end = datetime(2026, 7, 18, 10, 0, tzinfo=tz)
+    for seed in range(40):
+        dues = rumors.plan_rumor_due_times(start, end, 2, rng=Random(seed))
+        assert dues
+        for due in dues:
+            assert due.date() == end.date()
+            assert due.hour >= 8
+            assert due < end
+            assert not rumors.in_rumor_quiet_hours(due)
+            assert due >= datetime(2026, 7, 18, 8, 0, tzinfo=tz)
+
+
+def test_plan_due_times_never_in_quiet():
+    tz = ZoneInfo("Europe/Moscow")
+    start = datetime(2026, 7, 17, 16, 0, tzinfo=tz)
+    end = datetime(2026, 7, 18, 10, 0, tzinfo=tz)
+    for seed in range(30):
+        for due in rumors.plan_rumor_due_times(start, end, 2, rng=Random(seed)):
+            assert not rumors.in_rumor_quiet_hours(due)
+
+
+def test_parse_stored_rumors_flat_and_legacy():
+    assert rumors.parse_stored_rumors(["а", "б"]) == ["а", "б"]
+    assert rumors.parse_stored_rumors(
+        {"local": ["местная"], "foreign": ["Из долины Юг: чужая."]}
+    ) == ["местная", "Из долины Юг: чужая."]
+    assert rumors.parse_stored_rumors(None) == []
+    assert rumors.parse_stored_rumors({}) == []
+
+
+def test_format_rumors_pull_archive_note():
+    text = rumors.format_rumors_pull(["У Ивана, говорят, дружина тонка."])
+    assert "Недавний шёпот" in text
+    assert "У Ивана" in text
+    assert "днём в группе" in text
+    assert "Слухи рынка:" not in text
+    assert "Из других долин" not in text
 
 
 def test_format_rumors_pull_empty_explains():
     text = rumors.format_rumors_pull([])
     assert "молчит" in text
-    assert "не факты" not in text
+    assert "групповом чате" in text
 
 
-def test_format_digest_includes_rumor_section():
+def test_format_digest_omits_rumors():
     text = digest.format_digest(
         realm_title="Долина",
         day=5,
         night_lines=[],
         event_line=None,
         feud_lines=[],
-        sunday_extra=None,
-        rumor_lines=["У Кирилла, говорят, амбар ломится."],
+        sunday_extra="🏅 Титулы: тест.",
     )
-    assert "👂 Слухи рынка:" in text
-    assert "• У Кирилла, говорят, амбар ломится." in text
-    assert text.index("Слухи") < text.index("Кирилла")
-
-
-def test_format_digest_includes_foreign_rumors():
-    text = digest.format_digest(
-        realm_title="Долина",
-        day=5,
-        night_lines=[],
-        event_line=None,
-        feud_lines=[],
-        sunday_extra=None,
-        rumor_lines=["У Кирилла, говорят, амбар ломится."],
-        foreign_rumor_lines=["Из долины Юг: У Олега, говорят, дружина тонка."],
-    )
-    assert "Из других долин" in text
-    assert "Олега" in text
-    assert "\n\n👂 Слухи рынка:" in text
-    assert "\n\n🗺 Из других долин:" in text
+    assert "Слухи" not in text
+    assert "👂" not in text
+    assert "🏅 Титулы: тест." in text
 
 
 def test_compose_event_rumor_accuracy():
@@ -245,36 +235,6 @@ def test_compose_event_rumor_accuracy():
     assert 0.50 <= truths / 200 <= 0.80
 
 
-def test_roll_daily_rumors_can_include_event_hint():
-    fiefs = [_snap(fief_id=1, name="А")]
-    hints = [rumors.UpcomingEventHint(kind="catastrophe", key="bandit_night")]
-    found = False
-    for seed in range(80):
-        lines = rumors.roll_daily_rumors(
-            fiefs,
-            Random(seed),
-            event_hints=hints,
-        )
-        if any("Ночь бандитов" in ln or "близится беда" in ln for ln in lines):
-            found = True
-            break
-    assert found
-
-
-def test_format_digest_omits_rumors_when_empty():
-    text = digest.format_digest(
-        realm_title="Долина",
-        day=5,
-        night_lines=[],
-        event_line=None,
-        feud_lines=[],
-        sunday_extra="🏅 Титулы: тест.",
-        rumor_lines=[],
-    )
-    assert "Слухи" not in text
-    assert "🏅 Титулы: тест." in text
-
-
 def test_truth_weights_cover_falsehood():
     assert 0 < B.RUMOR_TRUTH_FULL < 1
     assert 0 < B.RUMOR_TRUTH_FUZZY < 1
@@ -283,111 +243,151 @@ def test_truth_weights_cover_falsehood():
     assert 0.05 <= false_rate <= 0.30
 
 
-def test_roll_day_rumors_local_live_foreign_cached():
-    """Местные слухи - после экономики; чужие - из снимка старта тика."""
-    from unittest.mock import MagicMock
+def test_append_rumor_archive_trims():
+    lines = [f"l{i}" for i in range(20)]
+    out = rumors.append_rumor_archive(lines[:-1], "l19", max_lines=12)
+    assert len(out) == 12
+    assert out[0] == "l8"
+    assert out[-1] == "l19"
 
-    from app.engine import Engine
 
+def test_maybe_due_rumors_and_ack_idempotent():
+    tz = ZoneInfo("Europe/Moscow")
+    local_now = datetime(2026, 7, 17, 12, 0, tzinfo=tz)
+    due = datetime(2026, 7, 17, 11, 30, tzinfo=tz)
+    realm = {
+        "id": 1,
+        "rumor_queue": [due.isoformat()],
+        "last_rumor_lines": [],
+        "title": "Север",
+        "tick_index": 3,
+        "pending_minor_key": None,
+        "next_catastrophe_tick": None,
+        "next_catastrophe_key": None,
+    }
     db = MagicMock()
+    db.list_realms_by_chain.return_value = [realm]
+    db.get_realm.return_value = realm
+    db.list_adjacent_realms.return_value = []
+    db.list_fiefs.return_value = [
+        {
+            "id": 7,
+            "frozen": False,
+            "grain": 40,
+            "goods": 40,
+            "might": 12,
+            "patrol_until_tick": None,
+            "name": "Двор",
+        }
+    ]
+    db.fief_tiles.return_value = []
     engine = Engine(db)
-    cached_stale_local = [_snap(fief_id=1, name="Старый", might=5)]
-    cached_foreign = [_snap(fief_id=9, name="Чужой", realm_title="Юг", might=40)]
-    engine._rumor_snapshot_cache = {1: cached_stale_local, 2: cached_foreign}
-    engine._upcoming_event_hints = MagicMock(return_value=[])
+    engine.fief_label = MagicMock(return_value="Двор")  # type: ignore[method-assign]
 
-    live_local = [_snap(fief_id=1, name="Свежий", might=50, grain=200, goods=200)]
-    live_calls: list[int] = []
+    due_items = engine.maybe_due_rumors(1, local_now)
+    assert len(due_items) == 1
+    assert due_items[0]["realm_id"] == 1
+    assert due_items[0]["text"]
+    # Пока не ack - due остаётся.
+    assert len(engine.maybe_due_rumors(1, local_now)) == 1
 
-    def live_snap(realm_id, *, realm_title=None):
-        live_calls.append(int(realm_id))
-        assert int(realm_id) == 1
-        return live_local
+    engine.acknowledge_rumor_posted(
+        1, due_items[0]["due"], due_items[0]["text"]
+    )
+    stored = db.update_realm.call_args.kwargs
+    assert stored["rumor_queue"] == []
+    assert due_items[0]["text"] in stored["last_rumor_lines"]
+    realm["rumor_queue"] = stored["rumor_queue"]
+    realm["last_rumor_lines"] = stored["last_rumor_lines"]
+    assert engine.maybe_due_rumors(1, local_now) == []
 
-    engine._rumor_snapshots = live_snap  # type: ignore[method-assign]
-    engine.db.list_adjacent_realms = MagicMock(
-        side_effect=AssertionError("live adjacent should not be used with cache")
+
+def test_maybe_due_rumors_skips_quiet_hours():
+    tz = ZoneInfo("Europe/Moscow")
+    local_now = datetime(2026, 7, 17, 22, 0, tzinfo=tz)
+    due = datetime(2026, 7, 17, 12, 0, tzinfo=tz)
+    db = MagicMock()
+    db.list_realms_by_chain.return_value = [
+        {"id": 1, "rumor_queue": [due.isoformat()], "last_rumor_lines": []}
+    ]
+    engine = Engine(db)
+    assert engine.maybe_due_rumors(1, local_now) == []
+
+
+def test_failed_send_keeps_queue_until_ack():
+    """Симуляция: due виден снова, пока acknowledge не вызван."""
+    tz = ZoneInfo("Europe/Moscow")
+    local_now = datetime(2026, 7, 17, 12, 0, tzinfo=tz)
+    due = datetime(2026, 7, 17, 11, 0, tzinfo=tz)
+    realm = {
+        "id": 2,
+        "rumor_queue": [due.isoformat()],
+        "last_rumor_lines": ["старая"],
+        "title": "Юг",
+        "tick_index": 1,
+        "pending_minor_key": None,
+        "next_catastrophe_tick": None,
+        "next_catastrophe_key": None,
+    }
+    db = MagicMock()
+    db.list_realms_by_chain.return_value = [realm]
+    db.get_realm.return_value = realm
+    db.list_adjacent_realms.return_value = []
+    db.list_fiefs.return_value = []
+    engine = Engine(db)
+    first = engine.maybe_due_rumors(2, local_now)
+    second = engine.maybe_due_rumors(2, local_now)
+    assert len(first) == 1 and len(second) == 1
+    assert first[0]["due"] == second[0]["due"]
+    assert first[0]["text"] is None
+
+
+def test_plan_world_rumor_queues_clears_when_no_window():
+    db = MagicMock()
+    opened = datetime(2026, 7, 17, 19, 5, tzinfo=timezone.utc)
+    world = {"id": 1, "tick_phase": "play", "play_opened_at": opened}
+    realms = [{"id": 3, "rumor_queue": ["2026-07-17T12:00:00+03:00"]}]
+    db.get_world.return_value = world
+    db.list_realms_by_chain.return_value = realms
+    engine = Engine(db)
+    engine.play_window_bounds_for_world = MagicMock(return_value=None)  # type: ignore[method-assign]
+    engine.plan_world_rumor_queues(1)
+    db.update_realm.assert_called_once_with(3, rumor_queue=[])
+    db.update_world.assert_called_once_with(
+        1, rumor_plan_play_opened_at=opened
     )
 
-    foreign_pool = engine._foreign_rumor_snapshots(1)
-    assert foreign_pool == cached_foreign
 
-    bundle = engine._roll_day_rumors(1)
-    assert live_calls == [1]
-    assert isinstance(bundle, rumors.DailyRumorBundle)
-    # Ролл с line_chance по умолчанию может быть пустым - фиксируем пулы.
-    assert engine._foreign_rumor_snapshots(1) == cached_foreign
-    assert all(s.name == "Чужой" for s in foreign_pool)
-    assert all(s.name != "Старый" for s in live_local)
-
-
-def test_run_world_tick_installs_and_clears_rumor_cache():
-    """Кэш снимков ставится до экономики долин и снимается после цикла."""
-    from contextlib import nullcontext
-    from unittest.mock import MagicMock, patch
-
-    from app.engine import Engine
-
+def test_ensure_rumor_queues_planned_fills_unmarked_play():
     db = MagicMock()
+    opened = datetime(2026, 7, 17, 10, 0, tzinfo=timezone.utc)
     world = {
         "id": 1,
-        "tick_index": 3,
-        "day_number": 4,
-        "pending_minor_key": "",
-        "forced_tick_count": 0,
-        "timezone": "Europe/Moscow",
+        "tick_phase": "play",
+        "play_opened_at": opened,
+        "rumor_plan_play_opened_at": None,
     }
-    r1 = {
-        "id": 1,
-        "world_id": 1,
-        "title": "Север",
-        "last_economy_tick": 3,
-        "chat_id": -100,
-    }
-    r2 = {
-        "id": 2,
-        "world_id": 1,
-        "title": "Юг",
-        "last_economy_tick": 3,
-        "chat_id": -101,
-    }
-    chain = [r1, r2]
     db.get_world.return_value = world
-    db.get_or_create_world.return_value = world
-    db.list_realms_by_chain.return_value = chain
-    db.transaction.return_value = nullcontext()
-    db.sync_realms_clock_from_world = MagicMock()
-    db.update_world = MagicMock(side_effect=lambda _wid, **fields: world.update(fields))
-    db.update_realm = MagicMock(
-        side_effect=lambda rid, **fields: next(
-            r for r in chain if int(r["id"]) == int(rid)
-        ).update(fields)
-    )
-
     engine = Engine(db)
-    snap1 = [_snap(fief_id=1, name="A", realm_title="Север")]
-    snap2 = [_snap(fief_id=2, name="B", realm_title="Юг")]
-    engine._rumor_snapshots = MagicMock(  # type: ignore[method-assign]
-        side_effect=lambda rid, **_kw: snap1 if int(rid) == 1 else snap2
-    )
+    engine.world_tick_incomplete = MagicMock(return_value=False)  # type: ignore[method-assign]
+    engine.plan_world_rumor_queues = MagicMock()  # type: ignore[method-assign]
+    engine.ensure_rumor_queues_planned(1)
+    engine.plan_world_rumor_queues.assert_called_once_with(1)
 
-    seen_during_economy: list[dict | None] = []
 
-    def realm_tick(rid, tick_slot=None, *, advance_clock=False):
-        cache = engine._rumor_snapshot_cache
-        assert cache is not None
-        assert set(cache) == {1, 2}
-        assert cache[1] == snap1
-        assert cache[2] == snap2
-        # Чужой пул для долины 1 - только снимок Юга, не live adjacent.
-        assert engine._foreign_rumor_snapshots(1) == snap2
-        seen_during_economy.append(dict(cache))
-        return {"realm_id": int(rid), "digest": "d", "chat_id": -1}
-
-    engine.run_realm_tick = MagicMock(side_effect=realm_tick)  # type: ignore[method-assign]
-
-    with patch("app.engine.roll_minor_event", return_value=None):
-        engine.run_world_tick(1, tick_slot=0)
-
-    assert len(seen_during_economy) == 2
-    assert engine._rumor_snapshot_cache is None
+def test_ensure_rumor_queues_planned_skips_drained_same_window():
+    """После публикации dues очередь пуста, но план на это окно уже был."""
+    db = MagicMock()
+    opened = datetime(2026, 7, 17, 10, 0, tzinfo=timezone.utc)
+    world = {
+        "id": 1,
+        "tick_phase": "play",
+        "play_opened_at": opened,
+        "rumor_plan_play_opened_at": opened,
+    }
+    db.get_world.return_value = world
+    engine = Engine(db)
+    engine.world_tick_incomplete = MagicMock(return_value=False)  # type: ignore[method-assign]
+    engine.plan_world_rumor_queues = MagicMock()  # type: ignore[method-assign]
+    engine.ensure_rumor_queues_planned(1)
+    engine.plan_world_rumor_queues.assert_not_called()

@@ -89,12 +89,17 @@ from app.domain.road_skirmish import (
     split_loot_by_commit,
 )
 from app.domain.rumors import (
-    DailyRumorBundle,
     FiefRumorSnapshot,
     UpcomingEventHint,
+    append_rumor_archive,
     format_rumors_pull,
+    in_rumor_quiet_hours,
+    parse_rumor_queue,
     parse_stored_rumors,
-    roll_valley_day_rumors,
+    plan_rumor_due_times,
+    rumor_count_for_window,
+    rumor_queue_storage,
+    roll_rumor_line,
 )
 from app.domain.resources import (
     apply_gather_to_stash,
@@ -294,9 +299,6 @@ def raid_pact_lock_message(*, onboard_step: int, day_number: int) -> str:
 class Engine:
     def __init__(self, db: Database):
         self.db = db
-        # Снимок усадеб континента на старте тика: слухи не смешивают
-        # уже обновлённые и ещё не отыгравшие долины.
-        self._rumor_snapshot_cache: dict[int, list[FiefRumorSnapshot]] | None = None
         self._map_image_cache = MapImageCache()
 
     # ---------- realm ----------
@@ -2897,6 +2899,7 @@ class Engine:
                 )
             self._enter_tick_play(wid, world, **play_fields)
             self.db.sync_realms_clock_from_world(wid)
+            self.plan_world_rumor_queues(wid)
             return {
                 "world_id": wid,
                 "realms": [],
@@ -2963,48 +2966,39 @@ class Engine:
             world.update(world_fields)
 
         realm_results = []
-        # Единый снимок на этот вызов тика (при догоне после сбоя - best-effort
-        # по текущей БД, без отдельного персиста start-of-tick).
-        self._rumor_snapshot_cache = {
-            int(r["id"]): self._rumor_snapshots(int(r["id"]))
-            for r in self.db.list_realms_by_chain(wid)
-        }
-        try:
-            for realm in self.db.list_realms_by_chain(wid):
-                rid = int(realm["id"])
-                if int(realm.get("last_economy_tick") or -1) >= new_tick:
-                    realm_results.append(
-                        {
-                            "realm_id": rid,
-                            "skipped": True,
-                            "already_ticked": True,
-                            "digest": None,
-                            "chat_id": realm.get("chat_id"),
-                        }
+        for realm in self.db.list_realms_by_chain(wid):
+            rid = int(realm["id"])
+            if int(realm.get("last_economy_tick") or -1) >= new_tick:
+                realm_results.append(
+                    {
+                        "realm_id": rid,
+                        "skipped": True,
+                        "already_ticked": True,
+                        "digest": None,
+                        "chat_id": realm.get("chat_id"),
+                    }
+                )
+                continue
+            try:
+                with self.db.transaction():
+                    result = self.run_realm_tick(
+                        rid,
+                        tick_slot=tick_slot,
+                        advance_clock=False,
                     )
-                    continue
-                try:
-                    with self.db.transaction():
-                        result = self.run_realm_tick(
-                            rid,
-                            tick_slot=tick_slot,
-                            advance_clock=False,
-                        )
-                        self.db.update_realm(rid, last_economy_tick=new_tick)
-                    realm_results.append(result)
-                except Exception:
-                    logger.exception("realm tick failed world=%s realm=%s", wid, rid)
-                    realm_results.append(
-                        {
-                            "realm_id": rid,
-                            "skipped": True,
-                            "error": True,
-                            "digest": None,
-                            "chat_id": realm.get("chat_id"),
-                        }
-                    )
-        finally:
-            self._rumor_snapshot_cache = None
+                    self.db.update_realm(rid, last_economy_tick=new_tick)
+                realm_results.append(result)
+            except Exception:
+                logger.exception("realm tick failed world=%s realm=%s", wid, rid)
+                realm_results.append(
+                    {
+                        "realm_id": rid,
+                        "skipped": True,
+                        "error": True,
+                        "digest": None,
+                        "chat_id": realm.get("chat_id"),
+                    }
+                )
 
         caught_up = all(
             int(r.get("last_economy_tick") or -1) >= new_tick
@@ -3019,6 +3013,7 @@ class Engine:
                 )
             self._enter_tick_play(wid, world, **play_fields)
             self.db.sync_realms_clock_from_world(wid)
+            self.plan_world_rumor_queues(wid)
 
         posted = [x for x in realm_results if not x.get("skipped")]
         head = posted[0] if posted else (realm_results[0] if realm_results else {})
@@ -3134,7 +3129,6 @@ class Engine:
 
         grow_msg = self.maybe_grow_map(realm_id)
         realm = self.db.get_realm(realm_id) or realm
-        rumor_bundle = self._roll_day_rumors(realm_id)
         digest = format_digest(
             realm_title=realm["title"],
             day=day,
@@ -3142,19 +3136,13 @@ class Engine:
             event_line=event_line,
             feud_lines=feud_lines,
             sunday_extra=sunday_extra,
-            rumor_lines=rumor_bundle.local,
-            foreign_rumor_lines=rumor_bundle.foreign,
         )
         if grow_msg:
             digest += f"\n📜 {grow_msg}"
         if entity_digest_lines:
             digest += "\n" + "\n".join(entity_digest_lines)
 
-        self.db.update_realm(
-            realm_id,
-            last_digest_text=digest,
-            last_rumor_lines=rumor_bundle.as_storage(),
-        )
+        self.db.update_realm(realm_id, last_digest_text=digest)
 
         return {
             "realm_id": int(realm_id),
@@ -3398,15 +3386,7 @@ class Engine:
 
     def _foreign_rumor_snapshots(self, realm_id: int) -> list[FiefRumorSnapshot]:
         """Усадьбы других долин того же континента (для чужих сплетен)."""
-        cache = self._rumor_snapshot_cache
-        if cache is not None:
-            out: list[FiefRumorSnapshot] = []
-            for rid, snaps in cache.items():
-                if int(rid) == int(realm_id):
-                    continue
-                out.extend(snaps)
-            return out
-        out = []
+        out: list[FiefRumorSnapshot] = []
         for nb in self.db.list_adjacent_realms(realm_id):
             title = str(nb.get("title") or "долина")
             out.extend(
@@ -3414,14 +3394,12 @@ class Engine:
             )
         return out
 
-    def _roll_day_rumors(self, realm_id: int) -> DailyRumorBundle:
-        # Местные - живой снимок после экономики долины; чужие - из кэша
-        # старта тика, чтобы не смешивать уже отыгравшие и ещё нет.
-        return roll_valley_day_rumors(
+    def _roll_rumor_line_for_realm(self, realm_id: int) -> str | None:
+        return roll_rumor_line(
             self._rumor_snapshots(realm_id),
             self._foreign_rumor_snapshots(realm_id),
+            self._upcoming_event_hints(realm_id),
             random.Random(),
-            event_hints=self._upcoming_event_hints(realm_id),
         )
 
     def _upcoming_event_hints(self, realm_id: int) -> list[UpcomingEventHint]:
@@ -3442,12 +3420,164 @@ class Engine:
             hints.append(UpcomingEventHint(kind="catastrophe", key=str(next_key)))
         return hints
 
+    def _same_play_opened_mark(self, left: Any, right: Any) -> bool:
+        if left is None or right is None:
+            return False
+        a = left if isinstance(left, datetime) else None
+        b = right if isinstance(right, datetime) else None
+        if a is None:
+            try:
+                a = datetime.fromisoformat(str(left))
+            except ValueError:
+                return False
+        if b is None:
+            try:
+                b = datetime.fromisoformat(str(right))
+            except ValueError:
+                return False
+        aa = self._as_aware_utc(a)
+        bb = self._as_aware_utc(b)
+        if aa is None or bb is None:
+            return False
+        return aa.replace(microsecond=0) == bb.replace(microsecond=0)
+
+    def plan_world_rumor_queues(self, world_id: int) -> None:
+        """После входа в play: 1-2 due на окно. Без окна - очистить stale."""
+        world = self.db.get_world(int(world_id)) or {}
+        bounds = self.play_window_bounds_for_world(world)
+        world = self.db.get_world(int(world_id)) or world
+        realms = self.db.list_realms_by_chain(int(world_id))
+        opened = world.get("play_opened_at")
+        if bounds is None:
+            for realm in realms:
+                self.db.update_realm(int(realm["id"]), rumor_queue=[])
+            self.db.update_world(
+                int(world_id), rumor_plan_play_opened_at=opened
+            )
+            return
+        window_start, window_end = bounds
+        rng = random.Random()
+        for realm in realms:
+            count = rumor_count_for_window(rng)
+            dues = plan_rumor_due_times(
+                window_start, window_end, count, rng=rng
+            )
+            self.db.update_realm(
+                int(realm["id"]),
+                rumor_queue=rumor_queue_storage(dues),
+            )
+        self.db.update_world(int(world_id), rumor_plan_play_opened_at=opened)
+
+    def ensure_rumor_queues_planned(self, world_id: int) -> None:
+        """Деплой mid-play / crash: план один раз на текущий play_opened_at."""
+        world = self.db.get_world(int(world_id)) or {}
+        if normalize_tick_phase(world.get("tick_phase")) != TICK_PHASE_PLAY:
+            return
+        if self.world_tick_incomplete(int(world_id)):
+            return
+        if world.get("play_opened_at") is None:
+            return
+        if self._same_play_opened_mark(
+            world.get("rumor_plan_play_opened_at"),
+            world.get("play_opened_at"),
+        ):
+            return
+        self.plan_world_rumor_queues(int(world_id))
+
+    def maybe_due_rumors(
+        self, world_id: int, local_now: datetime
+    ) -> list[dict[str, Any]]:
+        """Due-слоты к публикации. Очередь чистится только после успешного поста."""
+        if in_rumor_quiet_hours(local_now):
+            return []
+        out: list[dict[str, Any]] = []
+        for realm in self.db.list_realms_by_chain(int(world_id)):
+            rid = int(realm["id"])
+            raw_queue = realm.get("rumor_queue") or []
+            if not isinstance(raw_queue, list):
+                continue
+            for item in raw_queue:
+                key = item.get("due") if isinstance(item, dict) else item
+                if key is None:
+                    continue
+                due_key = str(key)
+                try:
+                    due_local = datetime.fromisoformat(due_key)
+                except ValueError:
+                    continue
+                if due_local.tzinfo is None and local_now.tzinfo is not None:
+                    due_local = due_local.replace(tzinfo=local_now.tzinfo)
+                if due_local > local_now:
+                    continue
+                text = self._roll_rumor_line_for_realm(rid)
+                out.append(
+                    {
+                        "realm_id": rid,
+                        "due": due_key,
+                        "text": text,
+                    }
+                )
+        return out
+
+    def acknowledge_rumor_posted(
+        self,
+        realm_id: int,
+        due_iso: str,
+        text: str | None,
+    ) -> None:
+        """Снять due из очереди и дописать строку в архив catch-up."""
+        realm = self.db.get_realm(int(realm_id))
+        if not realm:
+            return
+        target = str(due_iso)
+        try:
+            target_dt = datetime.fromisoformat(target)
+        except ValueError:
+            return
+        raw_queue = realm.get("rumor_queue") or []
+        if not isinstance(raw_queue, list):
+            return
+        kept_raw: list[Any] = []
+        removed = False
+        for item in raw_queue:
+            key = item
+            if isinstance(item, dict):
+                key = item.get("due")
+            key_s = str(key) if key is not None else ""
+            same = key_s == target
+            if not same and key_s:
+                try:
+                    item_dt = datetime.fromisoformat(key_s)
+                    left = item_dt
+                    right = target_dt
+                    if left.tzinfo is None and right.tzinfo is not None:
+                        left = left.replace(tzinfo=right.tzinfo)
+                    if right.tzinfo is None and left.tzinfo is not None:
+                        right = right.replace(tzinfo=left.tzinfo)
+                    same = left == right
+                except ValueError:
+                    same = False
+            if not removed and same:
+                removed = True
+                continue
+            kept_raw.append(item)
+        if not removed:
+            return
+        archive = parse_stored_rumors(realm.get("last_rumor_lines"))
+        if text:
+            archive = append_rumor_archive(archive, text)
+        kept = parse_rumor_queue(kept_raw)
+        self.db.update_realm(
+            int(realm_id),
+            rumor_queue=rumor_queue_storage(kept),
+            last_rumor_lines=archive,
+        )
+
     def rumors_text(self, realm_id: int) -> str:
         realm = self.db.get_realm(realm_id)
         if not realm:
             return format_rumors_pull([])
-        bundle = parse_stored_rumors(realm.get("last_rumor_lines"))
-        return format_rumors_pull(bundle.local, foreign_lines=bundle.foreign)
+        return format_rumors_pull(parse_stored_rumors(realm.get("last_rumor_lines")))
 
     def help_text(self) -> str:
         from app.domain.guide import short_help

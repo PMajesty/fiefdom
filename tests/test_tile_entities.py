@@ -424,13 +424,6 @@ def test_zero_rows_tick_digest_unchanged_and_single_list_call():
     engine._prepare_tick_minor = MagicMock(return_value=None)  # type: ignore[method-assign]
     engine._feud_lines = MagicMock(return_value=[])  # type: ignore[method-assign]
     engine.maybe_grow_map = MagicMock(return_value=None)  # type: ignore[method-assign]
-    engine._roll_day_rumors = MagicMock(  # type: ignore[method-assign]
-        return_value=type(
-            "B",
-            (),
-            {"local": (), "foreign": (), "as_storage": lambda self: []},
-        )()
-    )
     engine._sunday_extra = MagicMock(return_value=None)  # type: ignore[method-assign]
 
     result = engine.run_realm_tick(1, advance_clock=False)
@@ -507,13 +500,6 @@ def test_fake_kind_end_to_end_tick_via_engine():
         engine._prepare_tick_minor = MagicMock(return_value=None)  # type: ignore[method-assign]
         engine._feud_lines = MagicMock(return_value=[])  # type: ignore[method-assign]
         engine.maybe_grow_map = MagicMock(return_value=None)  # type: ignore[method-assign]
-        engine._roll_day_rumors = MagicMock(  # type: ignore[method-assign]
-            return_value=type(
-                "B",
-                (),
-                {"local": (), "foreign": (), "as_storage": lambda self: []},
-            )()
-        )
         engine._sunday_extra = MagicMock(return_value=None)  # type: ignore[method-assign]
 
         result = engine.run_realm_tick(1, advance_clock=False)

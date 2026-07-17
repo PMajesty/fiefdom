@@ -205,15 +205,13 @@ PACT_SIZE_MIN = 2
 PACT_SIZE_MAX = 5
 PACT_INVITE_EXPIRE_TICKS = 4
 
-# --- Слухи (сплетни в утренней сводке) ---
-# Базовый потолок местных строк при 1 игроке; дальше растёт с населением долины.
-RUMOR_MAX_PER_DAY = 2
-RUMOR_PLAYERS_PER_EXTRA_LINE = 2  # +1 строка за каждых N игроков сверх первого
-RUMOR_MAX_CAP = 6
-RUMOR_LINE_CHANCE = 0.70
-# Чужие долины континента: тот же масштаб, что и местные слухи.
-RUMOR_FOREIGN_LINE_CHANCE = RUMOR_LINE_CHANCE
-RUMOR_FOREIGN_MAX_CAP = RUMOR_MAX_CAP
+# --- Слухи (капельные сплетни между тиками) ---
+# 1 часто / 2 иногда на окно play; в группе не больше двух строк.
+RUMOR_WINDOW_COUNT_WEIGHTS = (0.70, 0.30)
+RUMOR_FLUFF_CHANCE = 0.25
+RUMOR_QUIET_START_HOUR = 21
+RUMOR_QUIET_END_HOUR = 8
+RUMOR_ARCHIVE_MAX = 12
 RUMOR_TRUTH_FULL = 0.50
 RUMOR_TRUTH_FUZZY = 0.35
 # остаток (~0.15) - ложный слух
