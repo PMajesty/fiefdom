@@ -17,9 +17,7 @@ from app.domain.economy import (
     TileView,
     adjacent_claimable,
     fief_daily_production,
-    pick_max_separated_tiles,
     render_map_parts,
-    too_close_to_ruins,
 )
 from app.domain.holdings import format_holdings
 from app.domain.map_image import (
@@ -51,7 +49,7 @@ from app.domain.events import (
 )
 from app.domain.ticks import tick_active
 from app.balance import best_rectangle
-from app.domain.map_gen import GenTile, append_strip, coord_label, generate_map
+from app.domain.map_gen import GenTile, append_strip, generate_map
 from app.domain.portals import pick_portal_insertion
 from app.domain.caravans import (
     DeclareCaravanResult,
@@ -111,7 +109,6 @@ from app.domain.tick_pipeline import (
 from app.domain.realm_identity import (
     CLOCK_MODE_SHARED,
     REALM_KIND_VALLEY,
-    second_fief_on_world_message,
 )
 from app.domain.tick_schedule import (
     format_next_tick_line,
