@@ -327,15 +327,16 @@ def test_crash_resume_reuses_road_planned_fates_no_reroll():
         pending_might=0.0,
     )
     engine = _raid_night_engine(fiefs={1: atk, 2: vic})
+    # Храним fate, который live road не выдаст для соло-40: road_loss + 15 смертей.
     _inject_raid_intent(
         engine,
         fief_id=1,
         victim_id=2,
         might=40,
         road_planned=True,
-        road_deaths=0,
+        road_deaths=15,
         fled=False,
-        siege_eligible=True,
+        siege_eligible=False,
         road_public_line="К хутору Жертва странная дорога из кэша",
     )
 
@@ -345,13 +346,27 @@ def test_crash_resume_reuses_road_planned_fates_no_reroll():
         report = engine.resolve_pending_raids(1, 10)
 
     assert road_spy.call_count == 0
-    # Resume: public road fan-out не повторяется.
     assert not any(
         n.kind == "public" and "странная дорога" in n.text for n in report.notices
     )
     assert "странная дорога" not in engine._realms[1]["pending_raid_lines"]
     assert report.resolved_count == 1
-    assert any(n.kind == "dm" and n.user_id == 101 for n in report.notices)
+    assert _notice_tuples(report) == [
+        (
+            "dm",
+            101,
+            None,
+            "На дороге к хутору Жертва вас оттеснили. "
+            "Свои потери чувствительные. Около половины дружины вернулась.",
+        )
+    ]
+    assert engine._fiefs[1]["might"] == 35  # 10 home + (40-15)
+    assert engine._log_calls[0]["public_line"] == (
+        "Отряд Атакующий схватился на дороге к хутору Жертва"
+    )
+    assert engine._realms[1]["pending_raid_lines"] == [
+        "Отряд Атакующий схватился на дороге к хутору Жертва"
+    ]
 
 
 def test_flee_and_road_loss_attacker_dm_and_public_digest():
@@ -563,19 +578,156 @@ def test_via_portal_night_public_and_flee_valley_prefixes():
 
     flee_digest_atk = 'В "Юг": Отряд Второй развернулся на дороге к хутору Жертва'
     flee_digest_vic = 'Из "Север": Отряд Второй развернулся на дороге к хутору Жертва'
+    siege_digest_atk = 'В "Юг": Атакующий ограбил Жертва'
+    siege_digest_vic = 'Из "Север": Атакующий ограбил Жертва'
     assert flee_digest_atk in engine._realms[1]["pending_raid_lines"]
     assert flee_digest_vic in engine._realms[2]["pending_raid_lines"]
-    public_texts = [n.text for n in report.notices if n.kind == "public"]
-    assert any(t.startswith('⚔️ В "Юг":') for t in public_texts)
-    assert any(t.startswith('⚔️ Из "Север":') for t in public_texts)
+    assert siege_digest_atk in engine._realms[1]["pending_raid_lines"]
+    assert siege_digest_vic in engine._realms[2]["pending_raid_lines"]
+    assert (
+        "public",
+        None,
+        1,
+        f"⚔️ {siege_digest_atk}",
+    ) in _notice_tuples(report)
+    assert (
+        "public",
+        None,
+        2,
+        f"⚔️ {siege_digest_vic}",
+    ) in _notice_tuples(report)
 
 
-def test_h5_seed_two_draw_oracle_matches_cas_miss_stream():
-    """Тот же rng-поток: первый resolve_raid (intercept) съедает draws второго."""
+def test_interceptor_honored_spend_and_night_dms():
+    atk = _base_fief(1, realm_id=1, user_id=101, name="Атакующий", might=10)
+    vic = _base_fief(
+        2,
+        realm_id=1,
+        user_id=202,
+        name="Жертва",
+        might=5,
+        grain=40,
+        goods=20,
+        pact_id=50,
+        pending_grain=0.0,
+        pending_goods=0.0,
+        pending_might=0.0,
+    )
+    ally = _base_fief(
+        3,
+        realm_id=1,
+        user_id=303,
+        name="Союзник",
+        might=B.INTERCEPT_MIGHT + 2,
+        pact_id=50,
+        cover_allies=True,
+    )
+    engine = _raid_night_engine(
+        fiefs={1: atk, 2: vic, 3: ally},
+        pact_members=[vic, ally],
+    )
+    # atk=3: без перехвата успех, с перехватом отбитие
+    _inject_raid_intent(
+        engine,
+        fief_id=1,
+        victim_id=2,
+        might=3,
+        road_planned=True,
+        road_deaths=0,
+        fled=False,
+        siege_eligible=True,
+        road_public_line="",
+    )
+
+    report = engine.resolve_pending_raids(1, 10)
+
+    assert engine._fiefs[3]["might"] == 2  # spent INTERCEPT_MIGHT
+    assert _notice_tuples(report) == [
+        (
+            "dm",
+            101,
+            None,
+            "Набег на хутор Жертва отбит (союзник перехватил у ворот). "
+            "Свои потери чувствительные. Около половины дружины вернулась.",
+        ),
+        (
+            "public",
+            None,
+            1,
+            "⚔️ Набег Атакующий на хутор Жертва отбит у ворот",
+        ),
+        (
+            "dm",
+            202,
+            None,
+            "Ночью набег на ваш хутор отбит у ворот (союзник перехватил).",
+        ),
+        (
+            "dm",
+            303,
+            None,
+            "Вы перехватили ночной набег на хутор Жертва.",
+        ),
+    ]
+
+
+def test_cas_miss_live_matches_two_draw_oracle():
+    """H5: CAS miss перехватчика продолжает тот же Random, итог = второй draw."""
     import random
 
+    from app.domain.resources import stash_from_row
+
+    atk = _base_fief(1, realm_id=1, user_id=101, name="Атакующий", might=10)
+    vic = _base_fief(
+        2,
+        realm_id=1,
+        user_id=202,
+        name="Жертва",
+        might=5,
+        grain=40,
+        goods=20,
+        pact_id=50,
+        pending_grain=0.0,
+        pending_goods=0.0,
+        pending_might=0.0,
+    )
+    ally = _base_fief(
+        3,
+        realm_id=1,
+        user_id=303,
+        name="Союзник",
+        might=B.INTERCEPT_MIGHT + 2,
+        pact_id=50,
+        cover_allies=True,
+    )
+    engine = _raid_night_engine(
+        fiefs={1: atk, 2: vic, 3: ally},
+        pact_members=[vic, ally],
+    )
+    real_debit = engine.db.debit_fief_resources.side_effect
+
+    def debit(fid, amounts=None, **kwargs):
+        merged = dict(amounts or {})
+        merged.update(kwargs)
+        if int(fid) == 3 and int(merged.get("might") or 0) == int(B.INTERCEPT_MIGHT):
+            return None
+        return real_debit(fid, amounts=amounts, **kwargs)
+
+    engine.db.debit_fief_resources.side_effect = debit
+    _inject_raid_intent(
+        engine,
+        fief_id=1,
+        victim_id=2,
+        might=40,
+        road_planned=True,
+        road_deaths=0,
+        fled=False,
+        siege_eligible=True,
+        road_public_line="",
+    )
+
     seed = "1:10:2:1"
-    stash = {B.RES_GRAIN: 40, B.RES_GOODS: 20, B.RES_MIGHT: 5}
+    stash = stash_from_row(vic)
     daily = {B.RES_GRAIN: 5.0, B.RES_GOODS: 2.0, B.RES_MIGHT: 0.0}
     kwargs = dict(
         attacker_name="Атакующий",
@@ -589,12 +741,20 @@ def test_h5_seed_two_draw_oracle_matches_cas_miss_stream():
         fog_ignores_patrol=False,
         victim_might=5,
     )
-    rng_stream = random.Random(seed)
-    resolve_raid(**kwargs, intercept=True, rng=rng_stream)
-    second = resolve_raid(**kwargs, intercept=False, rng=rng_stream)
+    rng = random.Random(seed)
+    resolve_raid(**kwargs, intercept=True, rng=rng)
+    oracle = resolve_raid(**kwargs, intercept=False, rng=rng)
     fresh = resolve_raid(**kwargs, intercept=False, rng=random.Random(seed))
-    # Второй вызов на продолженном потоке отличается от свежего seed (H5).
-    assert (second.might_lost, dict(second.stolen)) != (
-        fresh.might_lost,
-        dict(fresh.stolen),
+    assert oracle.might_lost != fresh.might_lost
+
+    report = engine.resolve_pending_raids(1, 10)
+
+    assert engine._fiefs[3]["might"] == B.INTERCEPT_MIGHT + 2
+    assert engine._fiefs[1]["might"] == 10 + (40 - int(oracle.might_lost))
+    assert engine._fiefs[2]["grain"] == 40 - int(oracle.stolen["grain"])
+    assert engine._fiefs[2]["goods"] == 20 - int(oracle.stolen["goods"])
+    assert any(
+        n.kind == "dm" and n.user_id == 101 and "ограбили" in n.text
+        for n in report.notices
     )
+    assert not any(n.user_id == 303 for n in report.notices)
