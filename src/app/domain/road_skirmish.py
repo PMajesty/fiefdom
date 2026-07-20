@@ -81,11 +81,16 @@ def build_coalitions(stacks: list[RaidStack]) -> list[Coalition]:
     return out
 
 
-def _loser_deaths(commit: int) -> int:
+def deaths_from_loss_frac(commit: int, frac: float) -> int:
+    """Налог крови: round(commit * frac), не меньше 1 при commit > 0."""
     if commit <= 0:
         return 0
-    raw = int(round(commit * float(B.RAID_ROAD_LOSS_FRAC)))
-    return min(commit, max(1, raw))
+    raw = int(round(int(commit) * float(frac)))
+    return min(int(commit), max(1, raw))
+
+
+def _loser_deaths(commit: int) -> int:
+    return deaths_from_loss_frac(commit, B.RAID_ROAD_LOSS_FRAC)
 
 
 def _split_pool_proportional(

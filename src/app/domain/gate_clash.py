@@ -1,9 +1,10 @@
-"""Схватка у ворот: дорожный налог крови без бегства (чистая логика)."""
+"""Схватка у ворот: асимметричный налог крови без бегства (чистая логика)."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from app.domain.road_skirmish import _loser_deaths, _split_pool_proportional
+from app import balance as B
+from app.domain.road_skirmish import deaths_from_loss_frac, _split_pool_proportional
 
 
 @dataclass(frozen=True)
@@ -23,23 +24,23 @@ class GateClashResult:
 
 
 def pairwise_skirmish_deaths(attack: int, defense: int) -> tuple[int, int]:
-    """Смерти (атака, защита) как у дороги, без бегства.
+    """Смерти (атака, защита) у ворот от слабой стороны, без бегства.
 
-    Слабый платит ~25% (min 1); сильный столько же. Равные силы - оба платят
-    налог от своего commit (реальный бой, без дорожного bounce).
+    База = min(атака, защита). Нападающий платит RAID_GATE_ATK_LOSS_FRAC,
+    защита - RAID_GATE_DEF_LOSS_FRAC. Дорожный налог сюда не входит.
     """
     a = max(0, int(attack))
     d = max(0, int(defense))
-    if a <= 0 and d <= 0:
+    if a <= 0 or d <= 0:
         return 0, 0
-    if a > d:
-        lost = _loser_deaths(d)
-        return lost, lost
-    if d > a:
-        lost = _loser_deaths(a)
-        return lost, lost
-    tax = _loser_deaths(a)
-    return tax, tax
+    base = min(a, d)
+    atk_dead = min(
+        a, deaths_from_loss_frac(base, float(B.RAID_GATE_ATK_LOSS_FRAC))
+    )
+    def_dead = min(
+        d, deaths_from_loss_frac(base, float(B.RAID_GATE_DEF_LOSS_FRAC))
+    )
+    return atk_dead, def_dead
 
 
 def resolve_gate_clash(

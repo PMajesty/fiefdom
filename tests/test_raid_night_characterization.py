@@ -341,7 +341,7 @@ def test_multi_stack_road_to_siege_live_resolve_pins_notices_loot_shield():
             101,
             None,
             "Вы ограбили Жертва: +14 зерна, +6 товаров.. "
-            "Свои потери чувствительные. Большая часть дружины вернулась. "
+            "Свои потери чувствительные. Около половины дружины вернулась. "
             "На дороге тоже потрепало.",
         ),
         ("public", None, 1, "⚔️ Атакующий ограбил Жертва"),
@@ -359,11 +359,11 @@ def test_multi_stack_road_to_siege_live_resolve_pins_notices_loot_shield():
     ]
     assert engine._fiefs[2]["grain"] == 56
     assert engine._fiefs[2]["goods"] == 26
-    # Дом 5 + сторожка 1 → схватка у ворот; 2 смерти дома (масштаб fighters/D).
+    # Дом 5 + сторожка 1 → схватка у ворот; дом теряет по масштабу fighters/D.
     assert engine._fiefs[2]["might"] == 3
     assert engine._fiefs[2]["shield_until_tick"] == 10 + 1 + B.RAID_VICTIM_SHIELD_TICKS
-    # После дороги 32 в осаде, у ворот ещё 2 → домой 30 + база 10.
-    assert engine._fiefs[1]["might"] == 40
+    # После дороги 32 в осаде, у ворот atk-налог от слабой стороны → домой 29 + база 10.
+    assert engine._fiefs[1]["might"] == 39
     assert engine._fiefs[3]["might"] == 32
     assert engine._log_calls[0]["attacker_fief_id"] == 3
     assert engine._log_calls[0]["success"] is False
@@ -713,7 +713,7 @@ def test_interceptor_honored_spend_and_night_dms():
             101,
             None,
             "Набег на хутор Жертва отбит (союзник перехватил у ворот). "
-            "Свои потери чувствительные. Около половины дружины вернулась.",
+            "Свои потери тяжёлые. Домой пришла лишь малая часть.",
         ),
         (
             "public",

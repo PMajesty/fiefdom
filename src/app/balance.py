@@ -183,9 +183,12 @@ RAID_SUCCESS_LOSS_EDGE = 0.55
 RAID_FAIL_LOSS_FLEE = 0.18
 RAID_FAIL_LOSS_NEAR = 0.40
 RAID_LOSS_SIGMA = 0.10
-# Дорожный бой перед осадой.
+# Дорожный бой перед осадой (соперники на одной жертве).
 RAID_ROAD_FLEE_FRAC = 0.5
 RAID_ROAD_LOSS_FRAC = 0.25
+# Схватка у ворот: доля от слабой стороны (atk/def раздельно, дорогу не трогает).
+RAID_GATE_ATK_LOSS_FRAC = 0.55
+RAID_GATE_DEF_LOSS_FRAC = 0.45
 # Длительности в тиках долины (4 тика/день: 10:00, 13:00, 16:00 и 19:00).
 # Глобальный щит жертвы: после удачного набега никто не бьёт её N тик(ов).
 RAID_VICTIM_SHIELD_TICKS = 1
