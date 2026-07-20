@@ -171,6 +171,8 @@ def fief_name_for_user(user) -> str:
     return f"Усадьба {label}"[:40]
 
 
+from app.services.onboarding import OnboardingService
+
 def _stash_status_line(barn_level: int) -> str:
     cap = B.stash_cap(barn_level)
     if barn_level <= 0:
@@ -422,11 +424,25 @@ class Engine:
         return f"Континент стёрт ({len(realms)} долин). Можно снова /вотчина."
 
     # ---------- join / onboarding ----------
+
+    # ---------- join / onboarding ----------
     def ensure_user(self, user) -> None:
-        name = (user.full_name or user.first_name or "Путник").strip()
-        self.db.upsert_user(user.id, user.username, name)
-        # подтягиваем имя усадеб под username / полное имя (без дублей "Артём")
-        self.db.set_fief_names_for_user(user.id, fief_name_for_user(user))
+        return OnboardingService(self).ensure_user(user)
+
+    def starter_tile_choices(self, realm_id: int, count: int = 3) -> list[dict]:
+        return OnboardingService(self).starter_tile_choices(realm_id, count)
+
+    def has_fief_elsewhere(self, user_id: int, realm_id: int) -> bool:
+        return OnboardingService(self).has_fief_elsewhere(user_id, realm_id)
+
+    def join_fief(
+        self,
+        realm_id: int,
+        user,
+        tile_id: int,
+    ) -> tuple[dict, str]:
+        return OnboardingService(self).join_fief(realm_id, user, tile_id)
+
 
     def fief_label(self, fief: dict | None) -> str:
         """Публичное имя из профиля владельца; при расхождении обновляет fiefs.name."""
@@ -440,109 +456,6 @@ class Engine:
             self.db.update_fief(int(fief["id"]), name=label)
         return label
 
-    def starter_tile_choices(self, realm_id: int, count: int = 3) -> list[dict]:
-        """Предлагает стартовые клетки, максимально разнесённые на торе."""
-        realm = self.db.get_realm(realm_id)
-        width, height = int(realm["width"]), int(realm["height"])
-        tiles = self.db.get_tiles(realm_id)
-        # якоря - ядра существующих усадеб (иначе все занятые клетки)
-        cores = [(t["x"], t["y"]) for t in tiles if t.get("is_core") and t["owner_fief_id"]]
-        if not cores:
-            cores = [(t["x"], t["y"]) for t in tiles if t["owner_fief_id"]]
-
-        ruins = [
-            (int(t["x"]), int(t["y"]))
-            for t in tiles
-            if t["tile_type"] == B.TILE_RUINS
-        ]
-        blocked = (B.TILE_WILDS, B.TILE_ROAD, B.TILE_RIVER, B.TILE_RUINS)
-        candidates = [
-            t
-            for t in tiles
-            if t["owner_fief_id"] is None
-            and t["tile_type"] not in blocked
-            and not t.get("is_overgrown")
-            and not too_close_to_ruins(
-                int(t["x"]), int(t["y"]), ruins, width, height
-            )
-        ]
-        return pick_max_separated_tiles(candidates, cores, width, height, count)
-
-    def has_fief_elsewhere(self, user_id: int, realm_id: int) -> bool:
-        """У игрока уже есть усадьба в том же мире (в другой долине)."""
-        realm = self.db.get_realm(realm_id) or {}
-        world_id = realm.get("world_id")
-        if world_id is None:
-            return False
-        owned = self.db.get_fief_by_user_world(user_id, int(world_id))
-        return owned is not None and int(owned["realm_id"]) != int(realm_id)
-
-    def join_fief(
-        self,
-        realm_id: int,
-        user,
-        tile_id: int,
-    ) -> tuple[dict, str]:
-        self.ensure_user(user)
-        existing = self.db.get_fief_by_user(realm_id, user.id)
-        if existing:
-            raise ValueError("У вас уже есть усадьба в этой долине")
-        realm = self.db.get_realm(realm_id)
-        if not realm or realm.get("world_id") is None:
-            raise ValueError("Долина не привязана к континенту")
-        owned = self.db.get_fief_by_user_world(user.id, int(realm["world_id"]))
-        if owned:
-            raise ValueError(second_fief_on_world_message())
-
-        tile = self.db.get_tile_by_id(tile_id, realm_id)
-        if not tile or tile["owner_fief_id"] is not None:
-            raise ValueError("Клетка недоступна")
-        if tile["tile_type"] in (B.TILE_WILDS, B.TILE_ROAD, B.TILE_RIVER, B.TILE_RUINS):
-            raise ValueError("Нельзя начать здесь")
-
-        width, height = int(realm["width"]), int(realm["height"])
-        tiles = self.db.get_tiles(realm_id)
-        ruins = [
-            (int(t["x"]), int(t["y"]))
-            for t in tiles
-            if t["tile_type"] == B.TILE_RUINS
-        ]
-        if too_close_to_ruins(int(tile["x"]), int(tile["y"]), ruins, width, height):
-            raise ValueError("Нельзя начать здесь")
-
-        name = fief_name_for_user(user)
-        with self.db.transaction():
-            fief = self.db.create_fief(
-                realm_id,
-                user.id,
-                name,
-                grain=B.STARTING_GRAIN,
-                goods=B.STARTING_GOODS,
-                might=B.STARTING_MIGHT,
-                actions=1,
-                # выбор стартовой клетки уже выполнен - сразу квест на расширение
-                onboard_step=2,
-            )
-            claimed = self.db.claim_unowned_tile(
-                int(tile["id"]),
-                int(realm_id),
-                owner_fief_id=fief["id"],
-                building=B.BLD_MANOR,
-                building_level=B.STARTING_MANOR_LEVEL,
-                is_core=True,
-            )
-            if claimed is None:
-                raise ValueError("Клетка недоступна")
-            self.db.set_last_realm(user.id, realm_id)
-        self.maybe_grow_map(realm_id)
-        return fief, (
-            f"🏡 {name} основана на {coord_label(tile['x'], tile['y'])} "
-            f"({B.TILE_NAMES_RU[tile['tile_type']]}).\n"
-            f"Стартовый набор: двор (главная клетка), {B.STARTING_GRAIN} зерна, "
-            f"{B.STARTING_GOODS} товаров, {B.STARTING_MIGHT} силы.\n"
-            f"Урожай собирается сам. Первый квест - занять соседнюю клетку "
-            f"(от {B.CLAIM_COSTS[2]} товаров)."
-        )
 
     # ---------- views ----------
     def tile_views(self, realm_id: int) -> list[TileView]:
