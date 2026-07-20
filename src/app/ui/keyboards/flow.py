@@ -220,7 +220,7 @@ def demolish_tiles_kb(fief_id: int, tiles: list[dict]) -> InlineKeyboardMarkup:
         level = int(t.get("building_level") or 0)
         if not building or level <= 0:
             continue
-        if building == B.BLD_MANOR or t.get("is_core"):
+        if building == B.BLD_MANOR:
             continue
         name = B.BUILDING_NAMES_RU.get(building, building)
         refund = B.demolish_refund_goods(str(building), level)

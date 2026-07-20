@@ -242,8 +242,8 @@ class LandActionService:
         level = int(tile.get("building_level") or 0)
         if not building or level <= 0:
             raise ValueError("На клетке нет здания")
-        if building == B.BLD_MANOR or tile.get("is_core"):
-            raise ValueError("Главную клетку с двором снести нельзя")
+        if building == B.BLD_MANOR:
+            raise ValueError("Двор снести нельзя")
         if building not in B.BUILDING_COSTS:
             raise ValueError("Это здание нельзя снести")
         refund = B.demolish_refund_goods(building, level)
