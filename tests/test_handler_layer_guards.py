@@ -7,10 +7,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 HANDLERS_DIR = ROOT / "src" / "app" / "handlers"
 
-OCCURRENCE_RE = re.compile(r"\bengine\.db\b|\beng\.db\b|\bengine\._[a-zA-Z_]+")
+# engine/eng и get_engine() - обход публичного API через .db / ._private
+OCCURRENCE_RE = re.compile(
+    r"\b(?:engine|eng)\.db\b"
+    r"|\b(?:engine|eng)\._[a-zA-Z_]+"
+    r"|\bget_engine\s*\(\s*\)\s*\.db\b"
+    r"|\bget_engine\s*\(\s*\)\s*\._[a-zA-Z_]+"
+)
 # Конец RHS: bare / скобки / точка с запятой; не method-call после .db
 ALIAS_RE = re.compile(
-    r"=\s*(?:\(\s*)?(?:engine|eng)\.db\s*(?:\)\s*)?(?:#|;|$)"
+    r"=\s*(?:\(\s*)?(?:engine|eng|get_engine\s*\(\s*\))\.db\s*(?:\)\s*)?(?:#|;|$)"
 )
 
 # Известный долг; любой другой .py в scope без записи = 0.
@@ -23,7 +29,8 @@ OCCURRENCE_FREEZE: dict[str, int] = {
     "src/app/scheduler.py": 0,
     "src/app/patch_announce.py": 0,
     "src/app/notifier.py": 0,
-    "src/app/wiring.py": 0,
+    # Composition root вешает сервисы на engine._* (не handler bypass).
+    "src/app/wiring.py": 13,
     "src/app/messaging.py": 0,
 }
 
@@ -70,6 +77,15 @@ def _alias_hits(rel: str, text: str) -> list[str]:
         if ALIAS_RE.search(line):
             hits.append(f"{rel}:{lineno}: {line}")
     return hits
+
+
+def test_occurrence_re_catches_get_engine_bypass():
+    assert OCCURRENCE_RE.search("x = get_engine().db")
+    assert OCCURRENCE_RE.search("get_engine()._night_raids.foo()")
+    assert OCCURRENCE_RE.search("engine.db")
+    assert OCCURRENCE_RE.search("eng.db")
+    assert OCCURRENCE_RE.search("engine._caravans")
+    assert not OCCURRENCE_RE.search("get_engine().help_text()")
 
 
 def test_engine_db_occurrence_freeze():

@@ -21,8 +21,8 @@ from app.domain.modifiers import (
     MODIFIER_SET_KIND_READERS,
     EffectKind,
 )
-from app.engine import ENGINE_CONSUMED_MODIFIER_KINDS, Engine
-from tests.live_path_scan import live_path_source
+from app.engine import ENGINE_CONSUMED_MODIFIER_KINDS
+from tests.live_path_scan import live_path_calls_method
 
 
 def test_effect_contracts_valid():
@@ -54,10 +54,11 @@ def test_declared_ongoing_kinds_are_reachable_on_engine_paths():
         for decl in contract.modifiers
     }
     assert declared <= LIVE_READ_MODIFIER_KINDS
-    src = live_path_source()
     for kind in declared:
         method = MODIFIER_SET_KIND_READERS[kind]
-        assert f".{method}()" in src
+        assert live_path_calls_method(method), (
+            f"live path must call ModifierSet.{method}()"
+        )
 
 
 def test_every_shipped_key_has_contract():

@@ -348,11 +348,10 @@ def test_modifiers_from_key_helpers_match_collect():
 
 def test_engine_reads_all_live_modifier_kinds():
     assert ENGINE_CONSUMED_MODIFIER_KINDS == LIVE_READ_MODIFIER_KINDS
-    from tests.live_path_scan import live_path_source
+    from tests.live_path_scan import live_path_calls_method
 
-    src = live_path_source()
     for kind in LIVE_READ_MODIFIER_KINDS:
         method = MODIFIER_SET_KIND_READERS[kind]
-        assert f".{method}()" in src, (
-            f"live path must read ModifierSet.{method}()"
+        assert live_path_calls_method(method), (
+            f"live path must call ModifierSet.{method}()"
         )

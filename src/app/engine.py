@@ -73,14 +73,10 @@ from app.presenters.intents import (
 )
 from app.presenters.map import compose_map_photo, render_map_text
 from app.presenters.status import StatusSnapshot, render_status_card
-from app.services.caravans import CaravanService
 from app.services.land_actions import (
-    LandActionService,
     try_complete_onboard_build,
     try_complete_onboard_claim,
 )
-from app.services.pacts import PactService
-from app.services.night_raids import NightRaidResolver
 from app.domain.tick_pipeline import (
     ActionWindow,
     normalize_tick_phase,
@@ -109,10 +105,6 @@ def _as_date(value) -> date | None:
     return None
 
 
-from app.services.world_tick import WorldTickOrchestrator
-from app.services.realm_tick import RealmTickRunner
-
-
 def fief_name_for_user(user) -> str:
     """Уникальное читаемое имя усадьбы: @username, иначе полное имя.
 
@@ -139,8 +131,6 @@ def fief_name_for_user(user) -> str:
         label = str(display).strip() or "Путник"
     return f"Усадьба {label}"[:40]
 
-
-from app.services.onboarding import OnboardingService
 
 def _stash_status_line(barn_level: int) -> str:
     cap = B.stash_cap(barn_level)
@@ -220,31 +210,15 @@ def raid_pact_lock_message(*, onboard_step: int, day_number: int) -> str:
     return f"Набег и пакт - {hint} долины."
 
 
-from app.services.catastrophes import CatastropheService
-from app.services.patch_announce import PatchAnnounceService
-from app.services.player_context import PlayerContextService
-from app.services.raid_declare import RaidDeclareService
-from app.services.realm_admin import RealmLifecycleService
-from app.services.rumors import RumorService
-
 class Engine:
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, *, compose: bool = True):
         self.db = db
         self._map_image_cache = MapImageCache()
-        # Сервисы собираются один раз; фасады делегируют в эти экземпляры.
-        self._realm_lifecycle = RealmLifecycleService(self, db)
-        self._patch_announce = PatchAnnounceService(self, db)
-        self._player_context = PlayerContextService(self, db)
-        self._onboarding = OnboardingService(self, db)
-        self._caravans = CaravanService(self, db)
-        self._land_actions = LandActionService(self, db)
-        self._catastrophes = CatastropheService(self, db)
-        self._raid_declare = RaidDeclareService(self, db)
-        self._night_raids = NightRaidResolver(self, db)
-        self._pacts = PactService(self, db)
-        self._world_tick = WorldTickOrchestrator(self, db)
-        self._realm_tick = RealmTickRunner(self, db)
-        self._rumors = RumorService(self, db)
+        # Сервисы: wiring.compose_services (build_app) или тот же путь при Engine(db).
+        if compose:
+            from app.wiring import compose_services
+
+            compose_services(self, db)
 
     # ---------- realm ----------
     def create_realm(self, chat_id: int, title: str, creator_user_id: int) -> tuple[dict, str]:
