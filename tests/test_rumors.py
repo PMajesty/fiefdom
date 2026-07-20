@@ -57,6 +57,17 @@ def test_compose_full_wealth_uses_true_band():
     assert "тощая" in text
 
 
+def test_compose_fuzzy_wealth_single_hedge():
+    snap = _snap(grain=10, goods=5)
+    text = rumors.compose_rumor_text(
+        snap, rumors.FACT_WEALTH, rumors.TRUTH_FUZZY, Random(1)
+    )
+    assert text.startswith("Про Иван:")
+    assert "говорят" not in text
+    assert "шепчут" not in text
+    assert "будто" in text or "вроде" in text
+
+
 def test_compose_false_wealth_changes_band():
     snap = _snap(grain=10, goods=5)
     text = rumors.compose_rumor_text(snap, rumors.FACT_WEALTH, rumors.TRUTH_FALSE, Random(0))
@@ -87,8 +98,12 @@ def test_compose_foreign_rumor_prefixes_valley():
 
 
 def test_fluff_templates_pool_size():
-    assert len(rumors._FLUFF_TEMPLATES) == 48
+    assert len(rumors._FLUFF_TEMPLATES) == 55
     assert all("{name}" in line for line in rumors._FLUFF_TEMPLATES)
+    assert all(
+        bad not in " ".join(rumors._FLUFF_TEMPLATES)
+        for bad in ("зарплат", "рейд", "табуретка", "мозолями на языке")
+    )
 
 
 def test_compose_fluff_named_and_opener():
