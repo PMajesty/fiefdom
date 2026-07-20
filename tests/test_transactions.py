@@ -810,6 +810,10 @@ def test_raid_interceptor_debit_cas_miss_reresolves_without_interceptor():
     assert resolve.call_count == 2
     assert resolve.call_args_list[0].kwargs["intercept"] is True
     assert resolve.call_args_list[1].kwargs["intercept"] is False
+    assert (
+        resolve.call_args_list[0].kwargs["rng"]
+        is resolve.call_args_list[1].kwargs["rng"]
+    )
     assert report.resolved_count == 1
     assert fiefs[3]["might"] == ally_might_before
     assert fiefs[1]["might"] == 7 + 1  # returned commit-lost = 5-4
