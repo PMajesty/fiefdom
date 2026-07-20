@@ -341,7 +341,7 @@ def test_crash_resume_reuses_road_planned_fates_no_reroll():
     )
 
     with patch(
-        "app.engine.resolve_road_contest", wraps=resolve_road_contest
+        "app.services.night_raids.resolve_road_contest", wraps=resolve_road_contest
     ) as road_spy:
         report = engine.resolve_pending_raids(1, 10)
 

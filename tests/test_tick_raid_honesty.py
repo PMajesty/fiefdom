@@ -629,7 +629,7 @@ def test_raid_does_not_bank_victim_pending_might():
     engine, fiefs, _B = _raid_stateful_engine()
     _declare(engine, 10)
     assert fiefs[1]["might"] == 10  # escrow
-    with patch("app.engine.resolve_raid") as resolve:
+    with patch("app.services.night_raids.resolve_raid") as resolve:
         resolve.return_value = RaidResult(
             success=True,
             ratio=1.0,
@@ -655,7 +655,7 @@ def test_engine_raid_passes_victim_might_into_defense():
         },
     )
     _declare(engine, 10)
-    with patch("app.engine.resolve_raid") as resolve:
+    with patch("app.services.night_raids.resolve_raid") as resolve:
         resolve.return_value = RaidResult(
             success=False,
             ratio=0.2,
@@ -690,7 +690,7 @@ def test_raid_has_no_personal_attacker_cooldown():
         vic_extra={"pending_grain": 0.0, "pending_goods": 0.0, "pending_might": 0.0},
     )
     _declare(engine, 10)
-    with patch("app.engine.resolve_raid") as resolve:
+    with patch("app.services.night_raids.resolve_raid") as resolve:
         resolve.return_value = RaidResult(
             success=True,
             ratio=1.0,
@@ -723,7 +723,7 @@ def test_successful_raid_grants_one_tick_global_shield():
         vic_extra={"pending_grain": 0.0, "pending_goods": 0.0, "pending_might": 0.0},
     )
     _declare(engine, 10)
-    with patch("app.engine.resolve_raid") as resolve:
+    with patch("app.services.night_raids.resolve_raid") as resolve:
         resolve.return_value = RaidResult(
             success=True,
             ratio=1.0,

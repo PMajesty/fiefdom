@@ -208,7 +208,7 @@ def test_same_realm_raid_appends_pending_line_once():
     db.update_action_intent_payload = MagicMock()
     engine.declare_raid(1, 2, 5)
     with patch(
-        "app.engine.resolve_raid",
+        "app.services.night_raids.resolve_raid",
         return_value=MagicMock(
             public_line="Набег!",
             success=False,

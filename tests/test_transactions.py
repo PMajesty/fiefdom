@@ -787,7 +787,7 @@ def test_raid_interceptor_debit_cas_miss_reresolves_without_interceptor():
 
     ally_might_before = fiefs[3]["might"]
     with patch(
-        "app.engine.resolve_raid",
+        "app.services.night_raids.resolve_raid",
         side_effect=[
             MagicMock(
                 public_line="Отбит у ворот",
