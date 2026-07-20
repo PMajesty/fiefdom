@@ -1,7 +1,6 @@
 """Тик одной долины: absence, минор, экономика усадеб, digest."""
 from __future__ import annotations
 
-import logging
 import random
 from datetime import datetime
 from typing import Any
@@ -27,8 +26,6 @@ from app.domain.tile_entities import (
     active_tile_entity_ref,
     resolve_realm_tile_entities,
 )
-
-logger = logging.getLogger(__name__)
 
 
 class RealmTickRunner:
