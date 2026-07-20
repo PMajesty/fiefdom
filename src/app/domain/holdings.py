@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from app import balance as B
-from app.domain.economy import Production, building_production, tile_passive
+from app.domain.production import Production, building_production, tile_passive
+
 from app.domain.map_gen import coord_label
 from app.domain.resources import (
     add_bags,

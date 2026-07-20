@@ -11,7 +11,9 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from app import balance as B
-from app.domain.economy import TileView, owner_mark
+from app.domain.production import TileView
+from app.domain.text_map import owner_mark
+
 from app.domain.map_gen import col_label
 
 CELL_PX = 56

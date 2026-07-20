@@ -5,7 +5,8 @@ import math
 import random
 
 from app import balance as B
-from app.domain.economy import TileView, fief_daily_production
+from app.domain.production import TileView, fief_daily_production
+
 from app.domain.map_gen import generate_map
 from random import Random
 

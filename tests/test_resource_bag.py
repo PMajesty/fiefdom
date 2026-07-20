@@ -8,7 +8,8 @@ import pytest
 
 from app import balance as B
 from app.database import Database
-from app.domain.economy import Production, TileView, fief_daily_production
+from app.domain.production import Production, TileView, fief_daily_production
+
 from app.domain.raids import loot_amounts, resolve_raid
 from app.domain.resources import (
     RESOURCE_DEFS,

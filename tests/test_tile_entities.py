@@ -8,7 +8,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.database import Database
-from app.domain.economy import TileView
+from app.domain.production import TileView
+
 from app.rendering.map_image import map_fingerprint, render_map_image
 from app.domain.modifiers import (
     EffectKind,

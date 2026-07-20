@@ -10,12 +10,10 @@ from app.config import TIMEZONE, tick_slots
 from app.database import Database
 from app.domain import absence as absence_mod
 from app.domain.digest import format_decree
-from app.domain.economy import (
-    TileView,
-    adjacent_claimable,
-    fief_daily_production,
-    render_map_parts,
-)
+from app.domain.map_geometry import adjacent_claimable
+from app.domain.production import TileView, fief_daily_production
+from app.domain.text_map import render_map_parts
+
 from app.domain.holdings import format_holdings
 from app.rendering.map_image import (
     MapImageCache,

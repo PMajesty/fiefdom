@@ -108,7 +108,7 @@ def test_status_card_omits_prepared_block_when_empty():
     from unittest.mock import patch
     from zoneinfo import ZoneInfo
 
-    from app.domain.economy import Production
+    from app.domain.production import Production
 
     db = MagicMock()
     db.list_open_raid_intents_for_fief.return_value = []
@@ -162,7 +162,7 @@ def test_status_card_includes_prepared_raid_and_caravan():
     from unittest.mock import patch
     from zoneinfo import ZoneInfo
 
-    from app.domain.economy import Production
+    from app.domain.production import Production
 
     db = MagicMock()
     db.list_open_raid_intents_for_fief.return_value = [

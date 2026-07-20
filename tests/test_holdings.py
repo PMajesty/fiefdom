@@ -9,7 +9,8 @@ os.environ.setdefault("ADMIN_USER_ID", "42")
 import pytest
 
 from app import balance as B
-from app.domain.economy import Production
+from app.domain.production import Production
+
 from app.domain.holdings import (
     building_level_roman,
     format_holdings,

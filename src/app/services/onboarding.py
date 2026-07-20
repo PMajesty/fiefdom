@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 from app import balance as B
-from app.domain.economy import pick_max_separated_tiles, too_close_to_ruins
+from app.domain.map_geometry import pick_max_separated_tiles, too_close_to_ruins
+
 from app.domain.map_gen import coord_label
 from app.domain.realm_identity import second_fief_on_world_message
 from app.engine import fief_name_for_user

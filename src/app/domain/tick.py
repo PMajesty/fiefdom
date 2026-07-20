@@ -6,7 +6,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app import balance as B
-from app.domain.economy import Production, TileView, fief_daily_production
+from app.domain.production import Production, TileView, fief_daily_production
+
 from app.domain.resources import (
     PendingBag,
     ResourceBag,

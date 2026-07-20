@@ -1,6 +1,6 @@
 """Субстрат сущностей на клетках: реестр kinds, tick-resolve, метки карты, модификаторы.
 
-Текстовая карта (economy.render_map_parts) пока не рисует entity-метки: шов -
+Текстовая карта (text_map.render_map_parts) пока не рисует entity-метки: шов -
 entity_map_marks() / map_mark_for_kind(); PNG и fingerprint уже принимают их.
 С нулём строк в tile_entities все пути - no-op.
 """

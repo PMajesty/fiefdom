@@ -6,7 +6,8 @@ from contextlib import nullcontext
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from app.domain.economy import Production
+from app.domain.production import Production
+
 from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 

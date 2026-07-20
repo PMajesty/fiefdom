@@ -2,17 +2,20 @@
 from __future__ import annotations
 
 from app import balance as B
-from app.domain.economy import (
-    MAP_EMPTY_MARK,
-    TileView,
+from app.domain.map_geometry import (
     adjacent_claimable,
-    format_map_cell,
     pick_max_separated_tiles,
-    render_map,
-    render_map_parts,
     too_close_to_ruins,
     toroidal_manhattan,
 )
+from app.domain.production import TileView
+from app.domain.text_map import (
+    MAP_EMPTY_MARK,
+    format_map_cell,
+    render_map,
+    render_map_parts,
+)
+
 
 
 def _tile(x: int, y: int, tile_type: str, owner: int | None = None) -> TileView:
@@ -126,7 +129,7 @@ def test_map_tile_legend_reads_naturally():
 
 
 def test_format_map_owners_pins_you_and_keeps_full_names():
-    from app.domain.economy import format_map_owners, format_map_you_pin
+    from app.domain.text_map import format_map_owners, format_map_you_pin
 
     marks = {1: "К", 2: "М", 3: "Н", 4: "О", 5: "П", 6: "Р", 7: "С"}
     legend = {

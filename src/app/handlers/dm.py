@@ -10,7 +10,8 @@ from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import InlineKeyboardMarkup, Message
 
 from app import balance as B
-from app.domain.economy import adjacent_claimable
+from app.domain.map_geometry import adjacent_claimable
+
 from app.engine import raid_pact_lock_message
 from app.handlers.shared import (
     fief_home_kb,

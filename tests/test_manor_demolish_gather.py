@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from app import balance as B
-from app.domain.economy import TileView, building_production, fief_daily_production
+from app.domain.production import TileView, building_production, fief_daily_production
+
 
 
 def test_manor_production_profile():

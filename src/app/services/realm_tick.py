@@ -10,7 +10,8 @@ from app import balance as B
 from app.config import TIMEZONE
 from app.domain import absence as absence_mod
 from app.domain.digest import format_digest
-from app.domain.economy import TileView
+from app.domain.production import TileView
+
 from app.domain.event_apply import InstantMinorCtx, apply_instant_minor
 from app.domain.events import (
     MINOR_EVENTS,

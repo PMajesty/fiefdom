@@ -7,7 +7,8 @@ import pytest
 from PIL import Image, ImageFont
 
 from app import balance as B
-from app.domain.economy import TileView
+from app.domain.production import TileView
+
 from app.rendering.map_image import (
     MapImageCache,
     MapPhoto,

@@ -5,7 +5,8 @@ import random
 
 from app import balance as B
 from app.domain import absence as absence_mod
-from app.domain.economy import adjacent_claimable
+from app.domain.map_geometry import adjacent_claimable
+
 from app.domain.map_gen import coord_label
 from app.domain.resources import (
     apply_gather_to_stash,
