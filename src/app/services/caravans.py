@@ -52,6 +52,46 @@ class CaravanService:
         recv = self._db.get_fief(rid) if rid else None
         return self._engine.fief_label(recv) if recv else "?"
 
+    def list_transfer_contacts(
+        self, from_fief_id: int, *, limit: int = 8
+    ) -> list[tuple[int, str]]:
+        """Короткие контакты для UI: недавние получатели, затем пакт."""
+        sender = self._db.get_fief(int(from_fief_id))
+        if not sender:
+            return []
+        sender_id = int(from_fief_id)
+        sender_user = int(sender["user_id"])
+        sender_realm = int(sender["realm_id"])
+        out: list[tuple[int, str]] = []
+        seen: set[int] = {sender_id}
+
+        def _try_add(fid: int) -> None:
+            if fid in seen or len(out) >= int(limit):
+                return
+            fief = self._db.get_fief(fid)
+            if not fief or fief.get("frozen"):
+                return
+            if int(fief["user_id"]) == sender_user:
+                return
+            if not self._db.realms_are_adjacent(
+                sender_realm, int(fief["realm_id"])
+            ):
+                return
+            seen.add(fid)
+            out.append((fid, self._engine.fief_label(fief)))
+
+        for rid in self._db.list_recent_caravan_receiver_ids(
+            sender_id, limit=limit
+        ):
+            _try_add(int(rid))
+        pact_id = sender.get("pact_id")
+        if pact_id and len(out) < int(limit):
+            for member in self._db.pact_members(int(pact_id)):
+                _try_add(int(member["id"]))
+                if len(out) >= int(limit):
+                    break
+        return out
+
     def declare_caravan(
         self,
         from_fief_id: int,

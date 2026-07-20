@@ -1,8 +1,11 @@
 """In-process pending FSM for DM/callback flows."""
 from __future__ import annotations
 
+KIND_SEND_PICK = "send_pick"
 KIND_SEND_TARGET = "send_target"
+KIND_SEND_RESOURCE = "send_resource"
 KIND_SEND_AMOUNT = "send_amount"
+KIND_SEND_CONFIRM = "send_confirm"
 KIND_RAID_MIGHT = "raid_might"
 KIND_RAID_CONFIRM = "raid_confirm"
 KIND_PACT_NAME = "pact_name"

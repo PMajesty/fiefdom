@@ -1033,6 +1033,13 @@ class Engine:
     def resolve_target_fief(self, realm_id: int, text: str) -> dict | None:
         return self._caravans.resolve_target_fief(realm_id, text)
 
+    def list_transfer_contacts(
+        self, from_fief_id: int, *, limit: int = 8
+    ) -> list[tuple[int, str]]:
+        return self._caravans.list_transfer_contacts(
+            from_fief_id, limit=limit
+        )
+
     def declare_caravan(
         self,
         from_fief_id: int,

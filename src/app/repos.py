@@ -335,6 +335,10 @@ class ActionIntentRepo(Protocol):
 
     def list_road_caravan_intents_for_fief(self, fief_id: int) -> list[dict]: ...
 
+    def list_recent_caravan_receiver_ids(
+        self, fief_id: int, *, limit: int = 8
+    ) -> list[int]: ...
+
     def list_cover_stance_intents(
         self,
         world_id: int,
@@ -395,6 +399,8 @@ class CaravanRepos(
     Protocol,
 ):
     """Persistence surface для CaravanService."""
+
+    def pact_members(self, pact_id: int) -> list[dict]: ...
 
 
 @runtime_checkable

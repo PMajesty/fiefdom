@@ -6,15 +6,20 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from app import balance as B
 from app.domain.map_gen import coord_label
 from app.domain.rumors import might_soft_label
+from app.ui.keyboards.chrome import (
+    menu_button,
+    menu_callback,
+    menu_row,
+    pending_cancel_callback,
+    with_menu_footer,
+    with_pending_footer,
+)
 from app.ui.keyboards.labels import (
     format_build_tile_button,
     format_building_type_label,
     format_claim_button,
 )
-
-
-def pending_cancel_callback(fief_id: int) -> str:
-    return f"pend:cancel:{int(fief_id)}"
+from app.ui.keyboards.transfer import transfer_cancel_intent_kb
 
 
 def patrol_confirm_callback(fief_id: int) -> str:
@@ -22,31 +27,24 @@ def patrol_confirm_callback(fief_id: int) -> str:
 
 
 def pending_cancel_kb(fief_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="Отмена",
-                    callback_data=pending_cancel_callback(fief_id),
-                )
-            ]
-        ]
-    )
+    return with_pending_footer([], fief_id)
 
 
 def patrol_confirm_kb(fief_id: int) -> InlineKeyboardMarkup:
+    fid = int(fief_id)
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="Подтвердить",
-                    callback_data=patrol_confirm_callback(fief_id),
+                    callback_data=patrol_confirm_callback(fid),
                 ),
                 InlineKeyboardButton(
                     text="Отмена",
-                    callback_data=f"st:{int(fief_id)}",
+                    callback_data=menu_callback(fid),
                 ),
-            ]
+            ],
+            menu_row(fid),
         ]
     )
 
@@ -54,15 +52,16 @@ def patrol_confirm_kb(fief_id: int) -> InlineKeyboardMarkup:
 def raid_confirm_kb(
     fief_id: int, *, show_truce: bool = False, open_truce: bool = False
 ) -> InlineKeyboardMarkup:
+    fid = int(fief_id)
     rows: list[list[InlineKeyboardButton]] = [
         [
             InlineKeyboardButton(
                 text="Подтвердить",
-                callback_data=f"radok:{int(fief_id)}",
+                callback_data=f"radok:{fid}",
             ),
             InlineKeyboardButton(
                 text="Отмена",
-                callback_data=pending_cancel_callback(fief_id),
+                callback_data=pending_cancel_callback(fid),
             ),
         ]
     ]
@@ -76,54 +75,50 @@ def raid_confirm_kb(
             [
                 InlineKeyboardButton(
                     text=label,
-                    callback_data=f"radtruce:{int(fief_id)}",
+                    callback_data=f"radtruce:{fid}",
                 )
             ]
         )
+    rows.append(menu_row(fid))
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def cover_confirm_kb(fief_id: int) -> InlineKeyboardMarkup:
+    fid = int(fief_id)
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="Подтвердить",
-                    callback_data=f"covok:{int(fief_id)}",
+                    callback_data=f"covok:{fid}",
                 ),
                 InlineKeyboardButton(
                     text="Отмена",
-                    callback_data=pending_cancel_callback(fief_id),
+                    callback_data=pending_cancel_callback(fid),
                 ),
-            ]
+            ],
+            menu_row(fid),
         ]
     )
 
 
 def raid_cancel_intent_kb(fief_id: int, intent_id: int) -> InlineKeyboardMarkup:
+    fid = int(fief_id)
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="Снять заявку",
-                    callback_data=f"radx:{int(fief_id)}:{int(intent_id)}",
+                    callback_data=f"radx:{fid}:{int(intent_id)}",
                 )
-            ]
+            ],
+            menu_row(fid),
         ]
     )
 
 
 def caravan_cancel_intent_kb(fief_id: int, intent_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="Вернуть обоз",
-                    callback_data=f"cvx:{int(fief_id)}:{int(intent_id)}",
-                )
-            ]
-        ]
-    )
+    return transfer_cancel_intent_kb(fief_id, intent_id)
 
 
 def starter_tiles_kb(
@@ -186,8 +181,7 @@ def claimable_kb(
             row = []
     if row:
         rows.append(row)
-    rows.append([InlineKeyboardButton(text="< Меню", callback_data=f"st:{fief_id}")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return with_menu_footer(rows, fief_id)
 
 
 def building_types_kb(
@@ -206,13 +200,11 @@ def building_types_kb(
                 )
             ]
         )
-    rows.append([InlineKeyboardButton(text="< Меню", callback_data=f"st:{fief_id}")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return with_menu_footer(rows, fief_id)
 
 
 def gather_resources_kb(fief_id: int) -> InlineKeyboardMarkup:
     from app.domain.resource_registry import resource_defs
-
 
     fid = int(fief_id)
     rows: list[list[InlineKeyboardButton]] = []
@@ -225,8 +217,7 @@ def gather_resources_kb(fief_id: int) -> InlineKeyboardMarkup:
                 )
             ]
         )
-    rows.append([InlineKeyboardButton(text="< Меню", callback_data=f"st:{fid}")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return with_menu_footer(rows, fid)
 
 
 def demolish_tiles_kb(fief_id: int, tiles: list[dict]) -> InlineKeyboardMarkup:
@@ -255,10 +246,14 @@ def demolish_tiles_kb(fief_id: int, tiles: list[dict]) -> InlineKeyboardMarkup:
         rows.append(row)
     if not rows:
         rows.append(
-            [InlineKeyboardButton(text="Нечего сносить", callback_data=f"st:{fief_id}")]
+            [
+                InlineKeyboardButton(
+                    text="Нечего сносить",
+                    callback_data=menu_callback(fief_id),
+                )
+            ]
         )
-    rows.append([InlineKeyboardButton(text="< Меню", callback_data=f"st:{fief_id}")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return with_menu_footer(rows, fief_id)
 
 
 def build_tiles_kb(
@@ -282,7 +277,15 @@ def build_tiles_kb(
             row = []
     if row:
         rows.append(row)
-    rows.append([InlineKeyboardButton(text="< Назад", callback_data=f"bld:{fief_id}")])
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="< Назад",
+                callback_data=f"bld:{fief_id}",
+            ),
+            menu_button(fief_id),
+        ]
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -299,8 +302,7 @@ def raid_targets_kb(fief_id: int, targets: list[dict]) -> InlineKeyboardMarkup:
                 )
             ]
         )
-    rows.append([InlineKeyboardButton(text="< Меню", callback_data=f"st:{fief_id}")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return with_menu_footer(rows, fief_id)
 
 
 def pact_kb(fief_id: int, in_pact: bool, is_founder: bool) -> InlineKeyboardMarkup:
@@ -330,8 +332,7 @@ def pact_kb(fief_id: int, in_pact: bool, is_founder: bool) -> InlineKeyboardMark
         rows.append(
             [InlineKeyboardButton(text="Выйти из пакта", callback_data=f"pct:leave:{fief_id}")]
         )
-    rows.append([InlineKeyboardButton(text="< Меню", callback_data=f"st:{fief_id}")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return with_menu_footer(rows, fief_id)
 
 
 def cover_stance_kb(fief_id: int) -> InlineKeyboardMarkup:
@@ -356,7 +357,10 @@ def cover_stance_kb(fief_id: int) -> InlineKeyboardMarkup:
                     callback_data=f"pct:zss:{fid}",
                 )
             ],
-            [InlineKeyboardButton(text="< Назад", callback_data=f"pct:{fid}")],
+            [
+                InlineKeyboardButton(text="< Назад", callback_data=f"pct:{fid}"),
+                menu_button(fid),
+            ],
         ]
     )
 
@@ -376,7 +380,10 @@ def cover_ally_pick_kb(
             ]
         )
     rows.append(
-        [InlineKeyboardButton(text="< Назад", callback_data=f"pct:zst:{fid}")]
+        [
+            InlineKeyboardButton(text="< Назад", callback_data=f"pct:zst:{fid}"),
+            menu_button(fid),
+        ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -396,3 +403,28 @@ def pact_invite_kb(target_fief_id: int, invite_id: int) -> InlineKeyboardMarkup:
             ]
         ]
     )
+
+
+# Совместимость: chrome helpers, которые раньше жили здесь.
+__all__ = [
+    "building_types_kb",
+    "build_tiles_kb",
+    "caravan_cancel_intent_kb",
+    "claimable_kb",
+    "cover_ally_pick_kb",
+    "cover_confirm_kb",
+    "cover_stance_kb",
+    "demolish_tiles_kb",
+    "gather_resources_kb",
+    "pact_invite_kb",
+    "pact_kb",
+    "patrol_confirm_callback",
+    "patrol_confirm_kb",
+    "pending_cancel_callback",
+    "pending_cancel_kb",
+    "raid_cancel_intent_kb",
+    "raid_confirm_kb",
+    "raid_targets_kb",
+    "realm_picker_kb",
+    "starter_tiles_kb",
+]

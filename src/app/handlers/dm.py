@@ -33,11 +33,19 @@ from app.handlers.shared import (
     resolve_fief_for_user,
 )
 from app.messaging import answer_html
+from app.domain.resource_bags import stash_amount
+from app.domain.resource_registry import tradeable_keys
+from app.domain.resource_format import resource_name_ru
+from app.presenters.transfer import (
+    transfer_confirm_step,
+    transfer_custom_amount_step,
+    transfer_entry,
+    transfer_resource_step,
+)
 from app.ui.flows import (
     claim_offer,
     pact_menu_offer,
     raid_targets_offer,
-    send_offer,
 )
 from app.ui.keyboards import (
     building_types_kb,
@@ -63,7 +71,14 @@ from app.ui.keyboards import (
     realm_picker_kb as realm_picker_kb_plain,
     starter_tiles_kb,
 )
-from app.ui.pending import pending_store
+from app.ui.pending import (
+    KIND_SEND_AMOUNT,
+    KIND_SEND_CONFIRM,
+    KIND_SEND_PICK,
+    KIND_SEND_RESOURCE,
+    KIND_SEND_TARGET,
+    pending_store,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -474,12 +489,12 @@ async def _offer_send(message: Message, engine, fief: dict) -> None:
     set_pending(
         message.from_user.id,
         {
-            "kind": "send_target",
+            "kind": KIND_SEND_PICK,
             "fief_id": fief["id"],
             "realm_id": fief["realm_id"],
         },
     )
-    text, kb = send_offer(int(fief["id"]))
+    text, kb = transfer_entry(engine, fief)
     await reply_game(message, text, reply_markup=kb)
 
 
@@ -629,7 +644,7 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
         )
         return True
 
-    if kind == "send_target":
+    if kind in {KIND_SEND_PICK, KIND_SEND_TARGET}:
         target = engine.resolve_target_fief(pending["realm_id"], text)
         if not target:
             await answer_html(
@@ -642,7 +657,7 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
         if int(target["id"]) == int(pending["fief_id"]):
             await answer_html(
                 message,
-                "Нельзя слать обоз себе. Укажите другую усадьбу.\n"
+                "Нельзя отправить себе. Укажите другую усадьбу.\n"
                 "Или напишите \"отмена\".",
                 reply_markup=pending_cancel_kb(pending["fief_id"]),
             )
@@ -650,63 +665,112 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
         set_pending(
             user_id,
             {
-                "kind": "send_amount",
+                "kind": KIND_SEND_RESOURCE,
                 "fief_id": pending["fief_id"],
                 "realm_id": pending["realm_id"],
                 "target_fief_id": target["id"],
             },
         )
+        engine.collect_for_fief(int(pending["fief_id"]))
+        sender = engine.fief_by_id(int(pending["fief_id"])) or {}
+        text_out, kb = transfer_resource_step(
+            engine, sender, int(target["id"])
+        )
+        await reply_game(message, text_out, reply_markup=kb)
+        return True
+
+    if kind == KIND_SEND_AMOUNT:
+        res = str(pending.get("res") or "")
+        fief_id = int(pending["fief_id"])
+        target_id = int(pending["target_fief_id"])
+        engine.collect_for_fief(fief_id)
+        sender = engine.fief_by_id(fief_id) or {}
+        have = stash_amount(sender, res) if res else 0
+        amt: int | None = None
+        if res and pending.get("custom"):
+            try:
+                amt = int(text.strip())
+            except ValueError:
+                amt = None
+        if amt is None:
+            parsed = _parse_send_line(text)
+            if parsed:
+                parsed_res, parsed_amt = parsed
+                if res and parsed_res != res:
+                    await reply_game(
+                        message,
+                        f"Сейчас выбран ресурс: {resource_name_ru(res)}. "
+                        "Напишите число или нажмите Отмена.",
+                        reply_markup=pending_cancel_kb(fief_id),
+                    )
+                    return True
+                res = parsed_res
+                amt = parsed_amt
+            else:
+                try:
+                    amt = int(text.strip())
+                except ValueError:
+                    amt = None
+        if not res or res not in tradeable_keys() or amt is None or amt <= 0:
+            await reply_game(
+                message,
+                "Напишите число больше 0.\nИли нажмите Отмена.",
+                reply_markup=pending_cancel_kb(fief_id),
+            )
+            return True
+        have = stash_amount(sender, res)
+        if amt > have:
+            text_out, kb = transfer_custom_amount_step(
+                fief_id, res=res, have=have
+            )
+            await reply_game(
+                message,
+                f"Недостаточно (есть {have}).\n{text_out}",
+                reply_markup=kb,
+            )
+            return True
+        set_pending(
+            user_id,
+            {
+                "kind": KIND_SEND_CONFIRM,
+                "fief_id": fief_id,
+                "realm_id": pending["realm_id"],
+                "target_fief_id": target_id,
+                "res": res,
+                "amt": amt,
+            },
+        )
+        text_out, kb = transfer_confirm_step(
+            engine,
+            sender,
+            target_fief_id=target_id,
+            res=res,
+            amt=amt,
+        )
+        await reply_game(message, text_out, reply_markup=kb)
+        return True
+
+    if kind == KIND_SEND_CONFIRM:
+        from app.ui.keyboards.transfer import transfer_confirm_kb
+
         await reply_game(
             message,
-            f"Получатель: <b>{engine.fief_label(target)}</b>\n"
-            "Сколько положить в обоз? Формат: <code>зерно 10</code> или "
-            "<code>товары 5</code>.\n"
-            "Силу везти нельзя. Или напишите \"отмена\".",
-            reply_markup=pending_cancel_kb(pending["fief_id"]),
+            "Нажмите \"Отправить\" или \"Отмена\" под сообщением выше.",
+            reply_markup=transfer_confirm_kb(int(pending["fief_id"])),
         )
         return True
 
-    if kind == "send_amount":
-        parsed = _parse_send_line(text)
-        if not parsed:
-            await reply_game(
-                message,
-                "Формат: <code>зерно 10</code> или <code>товары 5</code>.\n"
-                "Или напишите \"отмена\".",
-                reply_markup=pending_cancel_kb(pending["fief_id"]),
-            )
-            return True
-        res, amt = parsed
-        sender = engine.fief_by_id(pending["fief_id"])
-        receiver = engine.fief_by_id(pending["target_fief_id"])
-        result = engine.declare_caravan(
-            pending["fief_id"], pending["target_fief_id"], res, amt
-        )
-        clear_pending(user_id)
+    if kind == KIND_SEND_RESOURCE:
+        fief_id = int(pending["fief_id"])
+        target_id = int(pending["target_fief_id"])
+        engine.collect_for_fief(fief_id)
+        sender = engine.fief_by_id(fief_id) or {}
+        text_out, kb = transfer_resource_step(engine, sender, target_id)
         await reply_game(
             message,
-            result.dm_text,
-            reply_markup=caravan_cancel_intent_kb(
-                pending["fief_id"], result.intent_id
-            ),
+            "Выберите ресурс кнопками.\n" + text_out,
+            reply_markup=kb,
         )
-        if receiver:
-            engine.ensure_user(message.from_user)
-            try:
-                await message.bot.send_message(
-                    int(receiver["user_id"]),
-                    result.receiver_dm_text,
-                )
-            except Exception:
-                logger.warning(
-                    "caravan DM to receiver %s failed", receiver.get("user_id")
-                )
-        if sender and result.is_public and result.public_declare_text:
-            await post_continent_public(
-                message.bot,
-                sender["realm_id"],
-                result.public_declare_text,
-            )
         return True
 
     if kind == "cover_budget":

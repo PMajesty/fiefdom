@@ -12,6 +12,7 @@ import pytest
 from app import balance as B
 from app.domain.caravans import DeclareCaravanResult
 from app.engine import Engine
+from app.handlers import callbacks as cb_mod
 from app.handlers.dm import _handle_pending, _parse_send_line
 from app.handlers.shared import format_send_announce
 
@@ -33,60 +34,169 @@ def test_format_send_announce():
 
 
 @pytest.mark.asyncio
-async def test_send_amount_declares_caravan_and_dms_receiver():
-    """Мелкий обоз - ЛС получателю, без анонса в долину; кнопка вернуть."""
+async def test_send_amount_opens_confirm_not_declare():
+    """Текст/число на шаге суммы ведёт к подтверждению, не к escrow."""
     engine, sender, receiver = _engine_pair()
-    result = DeclareCaravanResult(
-        intent_id=7,
-        receiver_fief_id=2,
-        receiver_name="Бета",
-        res=B.RES_GRAIN,
-        amt=10,
-        is_public=False,
-        dm_text="Обоз ушёл к Бета: 10 Зерно в пути.",
-        receiver_dm_text="К вам идёт обоз от Альфа: 10 Зерно.",
-        public_declare_text=None,
-    )
-    engine.declare_caravan = MagicMock(return_value=result)
-    engine.ensure_user = MagicMock()
+    engine.fief_by_id = MagicMock(side_effect=lambda fid: {1: sender, 2: receiver}.get(int(fid)))
+    engine.world_id_for_realm = MagicMock(return_value=1)
+    engine.world = MagicMock(return_value={})
+    engine.format_raid_deadline = MagicMock(return_value="12:00")
 
-    bot = MagicMock()
-    bot.send_message = AsyncMock()
     message = MagicMock()
-    message.bot = bot
     message.from_user = MagicMock(id=100)
 
     pending = {
         "kind": "send_amount",
         "fief_id": 1,
+        "realm_id": 10,
         "target_fief_id": 2,
+        "res": B.RES_GRAIN,
     }
 
     with (
         patch("app.handlers.dm.reply_game", new_callable=AsyncMock) as reply,
-        patch("app.handlers.dm.post_continent_public", new_callable=AsyncMock) as post_pub,
+        patch("app.handlers.dm.set_pending") as set_pending,
         patch("app.handlers.dm.clear_pending") as clear,
-        patch("app.handlers.dm.caravan_cancel_intent_kb", return_value="kb") as cancel_kb,
     ):
-        ok = await _handle_pending(message, engine, pending, "зерно 10")
+        ok = await _handle_pending(message, engine, pending, "10")
 
     assert ok is True
-    clear.assert_called_once_with(100)
-    engine.declare_caravan.assert_called_once_with(1, 2, B.RES_GRAIN, 10)
+    clear.assert_not_called()
+    engine.declare_caravan = getattr(engine, "declare_caravan", MagicMock())
+    set_pending.assert_called_once()
+    stored = set_pending.call_args.args[1]
+    assert stored["kind"] == "send_confirm"
+    assert stored["amt"] == 10
+    assert stored["res"] == B.RES_GRAIN
     reply.assert_awaited_once()
-    assert reply.await_args.args[1] == result.dm_text
-    cancel_kb.assert_called_once_with(1, 7)
-    post_pub.assert_not_called()
-    bot.send_message.assert_awaited_once()
-    assert bot.send_message.await_args.args[0] == 200
-    assert bot.send_message.await_args.args[1] == result.receiver_dm_text
-    assert sender["id"] == 1
-    assert receiver["id"] == 2
+    assert "Кому:" in reply.await_args.args[1]
+    assert "Отправить" in [
+        btn.text
+        for row in reply.await_args.kwargs["reply_markup"].inline_keyboard
+        for btn in row
+    ]
 
 
 @pytest.mark.asyncio
-async def test_send_amount_public_caravan_posts_group_chats():
-    engine, _sender, _receiver = _engine_pair()
+async def test_send_amount_legacy_line_still_reaches_confirm():
+    engine, sender, receiver = _engine_pair()
+    engine.fief_by_id = MagicMock(side_effect=lambda fid: {1: sender, 2: receiver}.get(int(fid)))
+    engine.world_id_for_realm = MagicMock(return_value=1)
+    engine.world = MagicMock(return_value={})
+    engine.format_raid_deadline = MagicMock(return_value="12:00")
+
+    message = MagicMock()
+    message.from_user = MagicMock(id=100)
+    pending = {
+        "kind": "send_amount",
+        "fief_id": 1,
+        "realm_id": 10,
+        "target_fief_id": 2,
+    }
+
+    with (
+        patch("app.handlers.dm.reply_game", new_callable=AsyncMock),
+        patch("app.handlers.dm.set_pending") as set_pending,
+    ):
+        ok = await _handle_pending(
+            message, engine, pending, f"товары {B.CARAVAN_PUBLIC_AMOUNT}"
+        )
+
+    assert ok is True
+    stored = set_pending.call_args.args[1]
+    assert stored["kind"] == "send_confirm"
+    assert stored["res"] == B.RES_GOODS
+    assert stored["amt"] == B.CARAVAN_PUBLIC_AMOUNT
+
+
+@pytest.mark.asyncio
+async def test_cb_send_ok_declares_before_callback_ack():
+    """snd:…:ok: declare/finish first, then answer callback (alerts stay usable)."""
+    fief = {"id": 1, "user_id": 100, "realm_id": 10, "grain": 50, "goods": 40}
+    engine = MagicMock()
+    engine.require_owned_fief.return_value = fief
+    order: list[str] = []
+
+    async def finish(*_a, **_k):
+        order.append("declare")
+
+    async def ok(_callback):
+        order.append("ok")
+
+    callback = MagicMock()
+    callback.data = "snd:1:ok"
+    callback.from_user = MagicMock(id=100)
+    callback.message = MagicMock()
+    callback.answer = AsyncMock()
+
+    with (
+        patch.object(cb_mod, "get_engine", return_value=engine),
+        patch.object(
+            cb_mod.dm_mod,
+            "get_pending",
+            return_value={
+                "kind": "send_confirm",
+                "fief_id": 1,
+                "target_fief_id": 2,
+                "res": B.RES_GRAIN,
+                "amt": 10,
+            },
+        ),
+        patch.object(
+            cb_mod, "_finish_transfer_declare", new_callable=AsyncMock, side_effect=finish
+        ),
+        patch.object(cb_mod, "_ok", new_callable=AsyncMock, side_effect=ok),
+    ):
+        await cb_mod.cb_send(callback)
+
+    assert order == ["declare", "ok"]
+
+
+@pytest.mark.asyncio
+async def test_cb_send_target_opens_resource_step():
+    fief = {
+        "id": 1,
+        "user_id": 100,
+        "realm_id": 10,
+        "grain": 50,
+        "goods": 40,
+    }
+    engine = MagicMock()
+    engine.require_owned_fief.return_value = fief
+    engine.collect_for_fief = MagicMock()
+    engine.fief_by_id.side_effect = lambda fid: {
+        1: fief,
+        2: {"id": 2, "name": "Бета", "user_id": 200, "realm_id": 10},
+    }.get(int(fid))
+    engine.fief_label.side_effect = lambda f: f.get("name") or "?"
+
+    callback = MagicMock()
+    callback.data = "snd:1:t:2"
+    callback.from_user = MagicMock(id=100)
+    callback.message = MagicMock()
+    callback.answer = AsyncMock()
+
+    with (
+        patch.object(cb_mod, "get_engine", return_value=engine),
+        patch.object(cb_mod.dm_mod, "set_pending") as set_pending,
+        patch.object(cb_mod, "reply_game", new_callable=AsyncMock) as reply,
+        patch.object(cb_mod, "_ok", new_callable=AsyncMock),
+    ):
+        await cb_mod.cb_send(callback)
+
+    stored = set_pending.call_args.args[1]
+    assert stored["kind"] == "send_resource"
+    assert stored["target_fief_id"] == 2
+    reply.assert_awaited_once()
+    assert "Получатель" in reply.await_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_finish_transfer_declare_dms_and_public():
+    """Confirm path: escrow + receiver DM + public announce."""
+    engine = MagicMock()
+    sender = {"id": 1, "realm_id": 10, "user_id": 100}
+    receiver = {"id": 2, "realm_id": 10, "user_id": 200}
     result = DeclareCaravanResult(
         intent_id=8,
         receiver_fief_id=2,
@@ -98,34 +208,42 @@ async def test_send_amount_public_caravan_posts_group_chats():
         receiver_dm_text="Обоз идёт.",
         public_declare_text="📦 Обоз: Альфа шлёт товары.",
     )
-    engine.declare_caravan = MagicMock(return_value=result)
+    engine.fief_by_id.side_effect = lambda fid: {1: sender, 2: receiver}.get(int(fid))
+    engine.declare_caravan.return_value = result
     engine.ensure_user = MagicMock()
 
-    bot = MagicMock()
-    bot.send_message = AsyncMock()
-    message = MagicMock()
-    message.bot = bot
-    message.from_user = MagicMock(id=100)
-
-    pending = {
-        "kind": "send_amount",
-        "fief_id": 1,
-        "target_fief_id": 2,
-    }
+    callback = MagicMock()
+    callback.from_user = MagicMock(id=100)
+    callback.bot = MagicMock()
+    callback.message = MagicMock()
 
     with (
-        patch("app.handlers.dm.reply_game", new_callable=AsyncMock),
-        patch("app.handlers.dm.post_continent_public", new_callable=AsyncMock) as post_pub,
-        patch("app.handlers.dm.clear_pending"),
-        patch("app.handlers.dm.caravan_cancel_intent_kb", return_value=None),
+        patch.object(cb_mod, "reply_game", new_callable=AsyncMock) as reply,
+        patch.object(cb_mod, "send_game", new_callable=AsyncMock) as send,
+        patch.object(cb_mod, "post_continent_public", new_callable=AsyncMock) as post_pub,
+        patch.object(cb_mod.dm_mod, "clear_pending") as clear,
+        patch.object(cb_mod.dm_mod, "caravan_cancel_intent_kb", return_value="kb"),
     ):
-        ok = await _handle_pending(
-            message, engine, pending, f"товары {B.CARAVAN_PUBLIC_AMOUNT}"
+        await cb_mod._finish_transfer_declare(
+            callback,
+            engine,
+            fief_id=1,
+            target_fief_id=2,
+            res=B.RES_GOODS,
+            amt=B.CARAVAN_PUBLIC_AMOUNT,
         )
 
-    assert ok is True
+    engine.declare_caravan.assert_called_once_with(
+        1, 2, B.RES_GOODS, B.CARAVAN_PUBLIC_AMOUNT
+    )
+    clear.assert_called_once_with(100)
+    reply.assert_awaited_once()
+    assert reply.await_args.args[1] == result.dm_text
+    send.assert_awaited_once()
+    assert send.await_args.args[1] == 200
+    assert send.await_args.args[2] == result.receiver_dm_text
     post_pub.assert_awaited_once_with(
-        bot, 10, result.public_declare_text
+        callback.bot, 10, result.public_declare_text
     )
 
 

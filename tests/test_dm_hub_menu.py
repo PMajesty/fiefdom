@@ -79,7 +79,7 @@ async def test_cb_hub_estate_opens_estate_keyboard():
 
     estate.assert_called_once_with(7, raid_pact_open=True, lock_hint=None)
     answer.assert_awaited_once()
-    assert "Усадьба" in answer.await_args.args[1]
+    assert "Дела" in answer.await_args.args[1]
     assert answer.await_args.kwargs["reply_markup"] is estate_kb
 
 
@@ -105,7 +105,7 @@ async def test_cb_hub_valley_opens_valley_keyboard():
         7, raid_pact_open=False, lock_hint="после квестов"
     )
     answer.assert_awaited_once()
-    assert "Долина" in answer.await_args.args[1]
+    assert "Связи" in answer.await_args.args[1]
     assert answer.await_args.kwargs["reply_markup"] is valley_kb
 
 

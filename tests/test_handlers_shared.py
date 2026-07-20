@@ -64,7 +64,7 @@ def test_choose_primary_cta_onboard_unaffordable_goes_caravan():
         min_build_cost=50,
         next_claim_cost=30,
     )
-    assert label == "Караван"
+    assert label == "Передать"
     assert cb == "snd:9"
 
     label, cb = choose_primary_cta(
@@ -76,7 +76,7 @@ def test_choose_primary_cta_onboard_unaffordable_goes_caravan():
         min_build_cost=20,
         next_claim_cost=60,
     )
-    assert label == "Караван"
+    assert label == "Передать"
     assert cb == "snd:9"
 
 
@@ -131,7 +131,7 @@ def test_choose_primary_cta_no_raid_while_onboard():
         min_build_cost=50,
         next_claim_cost=120,
     )
-    assert label == "Караван"
+    assert label == "Передать"
     assert cb == "snd:3"
 
 
@@ -210,7 +210,7 @@ def test_estate_hub_kb_unlocked_raid():
         for row in kb.inline_keyboard
         for btn in row
     }
-    assert by_data["rad:9"] == "Набег (атака)"
+    assert by_data["rad:9"] == "Набег"
     assert "lock:rad:9" not in by_data
 
 
@@ -223,7 +223,7 @@ def test_valley_hub_kb_unlocked_pact():
         for row in kb.inline_keyboard
         for btn in row
     }
-    assert by_data["pct:9"] == "Пакт (союз)"
+    assert by_data["pct:9"] == "Пакт"
     assert by_data["rum:9"] == "Слухи"
     assert "lock:pct:9" not in by_data
 
@@ -232,7 +232,7 @@ def test_choose_primary_cta_no_actions_caravan():
     from app.handlers.shared import choose_primary_cta
 
     label, cb = choose_primary_cta(7, actions=0, onboard_step=4, tile_count=5)
-    assert label == "Караван"
+    assert label == "Передать"
     assert cb == "snd:7"
 
 
@@ -240,7 +240,7 @@ def test_choose_primary_cta_onboard_ignored_without_actions():
     from app.handlers.shared import choose_primary_cta
 
     label, cb = choose_primary_cta(7, actions=0, onboard_step=2)
-    assert label == "Караван"
+    assert label == "Передать"
     assert cb == "snd:7"
 
 
@@ -252,9 +252,9 @@ def test_home_kb_has_primary_hubs_map_guide():
     assert len(rows) == 3
     assert rows[0][0].text == "Занять землю"
     assert rows[0][0].callback_data == "clm:9"
-    assert [btn.text for btn in rows[1]] == ["Усадьба (дела)", "Долина (связи)"]
+    assert [btn.text for btn in rows[1]] == ["Дела", "Связи"]
     assert [btn.callback_data for btn in rows[1]] == ["hub:e:9", "hub:v:9"]
-    assert [btn.text for btn in rows[2]] == ["Карта (мир)", "Устав (правила)"]
+    assert [btn.text for btn in rows[2]] == ["Карта", "Правила"]
     assert [btn.callback_data for btn in rows[2]] == ["map:9", "gd:9"]
 
 
@@ -273,7 +273,7 @@ def test_main_menu_kb_uses_fief_snapshot():
     fief = {"actions": 1, "onboard_step": 2, "goods": 0, "might": 0}
     kb = main_menu_kb(5, fief=fief, tile_count=1, min_build_cost=50, next_claim_cost=30)
     assert kb.inline_keyboard[0][0].callback_data == "snd:5"
-    assert kb.inline_keyboard[0][0].text == "Караван"
+    assert kb.inline_keyboard[0][0].text == "Передать"
     assert kb.inline_keyboard[1][0].callback_data == "hub:e:5"
 
     rich = {"actions": 1, "onboard_step": 2, "goods": 50, "might": 0}
@@ -519,7 +519,8 @@ def test_patrol_confirm_callback_shape():
     texts = [btn.text for btn in kb.inline_keyboard[0]]
     data = [btn.callback_data for btn in kb.inline_keyboard[0]]
     assert texts == ["Подтвердить", "Отмена"]
-    assert data == ["pat:9:ok", "st:9"]
+    assert data == ["pat:9:ok", "home:9"]
+    assert kb.inline_keyboard[-1][0].callback_data == "home:9"
 
 
 def test_pending_cancel_helpers():
@@ -536,6 +537,7 @@ def test_pending_cancel_helpers():
     kb = pending_cancel_kb(4)
     assert kb.inline_keyboard[0][0].callback_data == "pend:cancel:4"
     assert kb.inline_keyboard[0][0].text == "Отмена"
+    assert kb.inline_keyboard[0][1].callback_data == "home:4"
 
 
 def test_claimable_kb_includes_cost_preview():

@@ -56,11 +56,11 @@ def choose_primary_cta(
     if actions > 0 and onboard_step == 2:
         if can_claim:
             return "Квест: занять землю", f"clm:{fid}"
-        return "Караван", f"snd:{fid}"
+        return "Передать", f"snd:{fid}"
     if actions > 0 and onboard_step == 3:
         if can_build:
             return "Квест: строить", f"bld:{fid}"
-        return "Караван", f"snd:{fid}"
+        return "Передать", f"snd:{fid}"
     if actions > 0:
         if tile_count < 3:
             return "Занять землю", f"clm:{fid}"
@@ -69,4 +69,4 @@ def choose_primary_cta(
         if unlocked and might >= 5:
             return "Набег", f"rad:{fid}"
         return "Занять землю", f"clm:{fid}"
-    return "Караван", f"snd:{fid}"
+    return "Передать", f"snd:{fid}"

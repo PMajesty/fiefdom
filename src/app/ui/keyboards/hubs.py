@@ -1,10 +1,11 @@
-"""Клавиатуры хабов: дом, усадьба/долина, карта, заявки."""
+"""Клавиатуры хабов: дом, дела/связи, карта, заявки."""
 from __future__ import annotations
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app import balance as B
 from app.domain.cta import choose_primary_cta
+from app.ui.keyboards.chrome import menu_row, with_menu_footer
 
 
 def map_realms_kb(
@@ -26,27 +27,20 @@ def map_realms_kb(
                 )
             ]
         )
-    rows.append(
-        [InlineKeyboardButton(text="< Меню", callback_data=f"st:{int(fief_id)}")]
-    )
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return with_menu_footer(rows, fief_id)
 
 
 def map_view_kb(fief_id: int) -> InlineKeyboardMarkup:
+    fid = int(fief_id)
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="Другие долины",
-                    callback_data=f"map:{int(fief_id)}",
+                    callback_data=f"map:{fid}",
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    text="< Меню",
-                    callback_data=f"st:{int(fief_id)}",
-                )
-            ],
+            menu_row(fid),
         ]
     )
 
@@ -59,17 +53,17 @@ def home_kb(
     prepared_count: int = 0,
     early_tick_label: str | None = None,
 ) -> InlineKeyboardMarkup:
-    """Дом: primary CTA + два хаба (Усадьба / Долина) + карта и устав."""
+    """Дом: primary CTA + два хаба (Дела / Связи) + карта и правила."""
     fid = int(fief_id)
     rows: list[list[InlineKeyboardButton]] = [
         [InlineKeyboardButton(text=primary_label, callback_data=primary_callback)],
         [
             InlineKeyboardButton(
-                text="Усадьба (дела)",
+                text="Дела",
                 callback_data=f"hub:e:{fid}",
             ),
             InlineKeyboardButton(
-                text="Долина (связи)",
+                text="Связи",
                 callback_data=f"hub:v:{fid}",
             ),
         ],
@@ -94,9 +88,9 @@ def home_kb(
         )
     rows.append(
         [
-            InlineKeyboardButton(text="Карта (мир)", callback_data=f"map:{fid}"),
+            InlineKeyboardButton(text="Карта", callback_data=f"map:{fid}"),
             InlineKeyboardButton(
-                text="Устав (правила)",
+                text="Правила",
                 callback_data=f"gd:{fid}",
             ),
         ]
@@ -137,7 +131,7 @@ def prepared_intents_kb(
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"Вернуть обоз: {_short_button_label(target)}",
+                    text=f"Отменить отправку: {_short_button_label(target)}",
                     callback_data=f"cvx:{fid}:{int(intent_id)}",
                 )
             ]
@@ -151,10 +145,7 @@ def prepared_intents_kb(
                 )
             ]
         )
-    rows.append(
-        [InlineKeyboardButton(text="< Меню", callback_data=f"home:{fid}")]
-    )
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return with_menu_footer(rows, fid)
 
 
 def _raid_pact_hub_buttons(
@@ -165,16 +156,16 @@ def _raid_pact_hub_buttons(
     raid_hint: str,
     pact_hint: str,
 ) -> tuple[InlineKeyboardButton, InlineKeyboardButton]:
-    """Кнопки Набег/Пакт: при замке - только хвост lock (без скобок, чтобы влезло)."""
+    """Кнопки Набег/Пакт: при замке - только хвост lock."""
     fid = int(fief_id)
     if raid_pact_open:
         return (
             InlineKeyboardButton(
-                text=f"Набег ({raid_hint})",
+                text="Набег",
                 callback_data=f"rad:{fid}",
             ),
             InlineKeyboardButton(
-                text=f"Пакт ({pact_hint})",
+                text="Пакт",
                 callback_data=f"pct:{fid}",
             ),
         )
@@ -197,7 +188,7 @@ def estate_hub_kb(
     raid_pact_open: bool = True,
     lock_hint: str | None = None,
 ) -> InlineKeyboardMarkup:
-    """Хабы Усадьба: действия за 1 действие (земля, стройка, сбор, дозор, снос, набег)."""
+    """Хабы Дела: действия за 1 действие."""
     fid = int(fief_id)
     raid_btn, _pact = _raid_pact_hub_buttons(
         fid,
@@ -210,32 +201,32 @@ def estate_hub_kb(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Владения (обзор)",
+                    text="Владения",
                     callback_data=f"hld:{fid}",
                 ),
             ],
             [
-                InlineKeyboardButton(text="Земля (клетка)", callback_data=f"clm:{fid}"),
+                InlineKeyboardButton(text="Земля", callback_data=f"clm:{fid}"),
                 InlineKeyboardButton(
-                    text="Строить (здание)",
+                    text="Строить",
                     callback_data=f"bld:{fid}",
                 ),
             ],
             [
-                InlineKeyboardButton(text="Сбор (добыча)", callback_data=f"gth:{fid}"),
-                InlineKeyboardButton(text="Дозор (защита)", callback_data=f"pat:{fid}"),
+                InlineKeyboardButton(text="Сбор", callback_data=f"gth:{fid}"),
+                InlineKeyboardButton(text="Дозор", callback_data=f"pat:{fid}"),
             ],
             [
-                InlineKeyboardButton(text="Снос (вернуть)", callback_data=f"dml:{fid}"),
+                InlineKeyboardButton(text="Снос", callback_data=f"dml:{fid}"),
                 raid_btn,
             ],
             [
                 InlineKeyboardButton(
-                    text="Заявки (набеги/обозы)",
+                    text="Заявки",
                     callback_data=f"prep:{fid}",
                 )
             ],
-            [InlineKeyboardButton(text="< Меню", callback_data=f"home:{fid}")],
+            menu_row(fid),
         ]
     )
 
@@ -246,7 +237,7 @@ def valley_hub_kb(
     raid_pact_open: bool = True,
     lock_hint: str | None = None,
 ) -> InlineKeyboardMarkup:
-    """Хабы Долина: бесплатные связи (караван, пакт, слухи, заявки)."""
+    """Хабы Связи: бесплатные связи (передача, пакт, слухи, заявки)."""
     fid = int(fief_id)
     _raid, pact_btn = _raid_pact_hub_buttons(
         fid,
@@ -259,7 +250,7 @@ def valley_hub_kb(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Караван (передача)", callback_data=f"snd:{fid}"
+                    text="Передать", callback_data=f"snd:{fid}"
                 ),
                 pact_btn,
             ],
@@ -270,7 +261,7 @@ def valley_hub_kb(
                     callback_data=f"prep:{fid}",
                 ),
             ],
-            [InlineKeyboardButton(text="< Меню", callback_data=f"home:{fid}")],
+            menu_row(fid),
         ]
     )
 
@@ -281,25 +272,22 @@ def more_menu_kb(
     raid_pact_open: bool = True,
     lock_hint: str | None = None,
 ) -> InlineKeyboardMarkup:
-    """Совместимость: старый flat \"Ещё\" свёрнут в выбор хаба.
-
-    Живой callback more: обновляет дом целиком (см. cb_more).
-    """
+    """Совместимость: старый flat \"Ещё\" свёрнут в выбор хаба."""
     _ = (raid_pact_open, lock_hint)
     fid = int(fief_id)
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="Усадьба (дела)",
+                    text="Дела",
                     callback_data=f"hub:e:{fid}",
                 ),
                 InlineKeyboardButton(
-                    text="Долина (связи)",
+                    text="Связи",
                     callback_data=f"hub:v:{fid}",
                 ),
             ],
-            [InlineKeyboardButton(text="< Меню", callback_data=f"home:{fid}")],
+            menu_row(fid),
         ]
     )
 
@@ -343,4 +331,3 @@ def main_menu_kb(
         prepared_count=prepared_count,
         early_tick_label=early_tick_label,
     )
-

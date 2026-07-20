@@ -7,8 +7,8 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery
 
 from app import balance as B
-from app.domain.resource_registry import resource_defs
-
+from app.domain.resource_bags import stash_amount
+from app.domain.resource_registry import resource_defs, tradeable_keys
 from app.engine import raid_pact_lock_message
 from app.handlers import dm as dm_mod
 from app.handlers.shared import (
@@ -21,6 +21,7 @@ from app.handlers.shared import (
     get_engine,
     map_realms_kb,
     map_view_kb,
+    post_continent_public,
     post_realm_public,
     prepared_intents_kb,
     reply_game,
@@ -29,13 +30,27 @@ from app.handlers.shared import (
     valley_hub_kb,
 )
 from app.messaging import answer_html, send_game
+from app.presenters.transfer import (
+    transfer_amount_step,
+    transfer_confirm_step,
+    transfer_custom_amount_step,
+    transfer_entry,
+    transfer_find_prompt,
+    transfer_resource_step,
+)
 from app.ui.flows import (
     claim_offer,
     pact_menu_offer,
     raid_targets_offer,
-    send_offer,
 )
 from app.ui.keyboards import cover_ally_pick_kb, cover_stance_kb
+from app.ui.pending import (
+    KIND_SEND_AMOUNT,
+    KIND_SEND_CONFIRM,
+    KIND_SEND_PICK,
+    KIND_SEND_RESOURCE,
+    KIND_SEND_TARGET,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +231,7 @@ async def cb_status(callback: CallbackQuery) -> None:
         fief_id = int(callback.data.split(":")[1])
         fief = engine.require_owned_fief(fief_id, callback.from_user.id)
         engine.remember_last_realm(callback.from_user.id, fief["realm_id"])
+        dm_mod.clear_pending(callback.from_user.id)
         await _ok(callback)
         await reply_game(
             callback.message,
@@ -237,6 +253,7 @@ async def cb_home(callback: CallbackQuery) -> None:
         fief_id = int(callback.data.split(":")[1])
         fief = engine.require_owned_fief(fief_id, callback.from_user.id)
         engine.remember_last_realm(callback.from_user.id, fief["realm_id"])
+        dm_mod.clear_pending(callback.from_user.id)
         await _ok(callback)
         await reply_game(
             callback.message,
@@ -273,7 +290,7 @@ async def cb_more(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("hub:"))
 async def cb_hub(callback: CallbackQuery) -> None:
-    """Хабы Усадьба (e) / Долина (v)."""
+    """Хабы Дела (e) / Связи (v)."""
     engine = get_engine()
     try:
         parts = callback.data.split(":")
@@ -291,7 +308,7 @@ async def cb_hub(callback: CallbackQuery) -> None:
         if kind == "e":
             await answer_html(
                 callback.message,
-                "Усадьба - дела за действие:",
+                "Дела - действия за 1 ход:",
                 reply_markup=estate_hub_kb(
                     fief_id,
                     raid_pact_open=open_,
@@ -301,7 +318,7 @@ async def cb_hub(callback: CallbackQuery) -> None:
             return
         await answer_html(
             callback.message,
-            "Долина - связи без действия:",
+            "Связи - без траты действия:",
             reply_markup=valley_hub_kb(
                 fief_id,
                 raid_pact_open=open_,
@@ -803,23 +820,265 @@ async def cb_raid_cancel_intent(callback: CallbackQuery) -> None:
         await callback.answer("Ошибка", show_alert=True)
 
 
+async def _finish_transfer_declare(
+    callback: CallbackQuery,
+    engine,
+    *,
+    fief_id: int,
+    target_fief_id: int,
+    res: str,
+    amt: int,
+) -> None:
+    sender = engine.fief_by_id(fief_id)
+    receiver = engine.fief_by_id(target_fief_id)
+    result = engine.declare_caravan(fief_id, target_fief_id, res, amt)
+    dm_mod.clear_pending(callback.from_user.id)
+    await reply_game(
+        callback.message,
+        result.dm_text,
+        reply_markup=dm_mod.caravan_cancel_intent_kb(fief_id, result.intent_id),
+    )
+    if receiver:
+        engine.ensure_user(callback.from_user)
+        try:
+            await send_game(
+                callback.bot,
+                int(receiver["user_id"]),
+                result.receiver_dm_text,
+            )
+        except Exception:
+            logger.warning(
+                "caravan DM to receiver %s failed", receiver.get("user_id")
+            )
+    if sender and result.is_public and result.public_declare_text:
+        await post_continent_public(
+            callback.bot,
+            sender["realm_id"],
+            result.public_declare_text,
+        )
+
+
 @router.callback_query(F.data.startswith("snd:"))
 async def cb_send(callback: CallbackQuery) -> None:
     engine = get_engine()
     try:
-        fief_id = int(callback.data.split(":")[1])
+        parts = callback.data.split(":")
+        fief_id = int(parts[1])
         fief = engine.require_owned_fief(fief_id, callback.from_user.id)
-        dm_mod.set_pending(
-            callback.from_user.id,
-            {
-                "kind": "send_target",
-                "fief_id": fief_id,
-                "realm_id": fief["realm_id"],
-            },
-        )
-        text, kb = send_offer(fief_id)
-        await _ok(callback)
-        await reply_game(callback.message, text, reply_markup=kb)
+        user_id = callback.from_user.id
+        action = parts[2] if len(parts) > 2 else ""
+
+        if action == "":
+            dm_mod.set_pending(
+                user_id,
+                {
+                    "kind": KIND_SEND_PICK,
+                    "fief_id": fief_id,
+                    "realm_id": fief["realm_id"],
+                },
+            )
+            text, kb = transfer_entry(engine, fief)
+            await _ok(callback)
+            await reply_game(callback.message, text, reply_markup=kb)
+            return
+
+        if action == "find":
+            dm_mod.set_pending(
+                user_id,
+                {
+                    "kind": KIND_SEND_TARGET,
+                    "fief_id": fief_id,
+                    "realm_id": fief["realm_id"],
+                },
+            )
+            text, kb = transfer_find_prompt(fief_id)
+            await _ok(callback)
+            await reply_game(callback.message, text, reply_markup=kb)
+            return
+
+        if action == "t" and len(parts) >= 4:
+            target_id = int(parts[3])
+            if target_id == fief_id:
+                await callback.answer("Нельзя отправить себе", show_alert=True)
+                return
+            dm_mod.set_pending(
+                user_id,
+                {
+                    "kind": KIND_SEND_RESOURCE,
+                    "fief_id": fief_id,
+                    "realm_id": fief["realm_id"],
+                    "target_fief_id": target_id,
+                },
+            )
+            engine.collect_for_fief(fief_id)
+            fief = engine.fief_by_id(fief_id) or fief
+            text, kb = transfer_resource_step(engine, fief, target_id)
+            await _ok(callback)
+            await reply_game(callback.message, text, reply_markup=kb)
+            return
+
+        if action == "r" and len(parts) >= 4:
+            res = str(parts[3])
+            pending = dm_mod.get_pending(user_id) or {}
+            if (
+                pending.get("kind") not in {KIND_SEND_RESOURCE, KIND_SEND_AMOUNT, KIND_SEND_CONFIRM}
+                or int(pending.get("fief_id") or 0) != fief_id
+            ):
+                await callback.answer("Сначала выберите получателя", show_alert=True)
+                return
+            if res not in tradeable_keys():
+                await callback.answer("Этот ресурс нельзя передать", show_alert=True)
+                return
+            target_id = int(pending["target_fief_id"])
+            engine.collect_for_fief(fief_id)
+            fief = engine.fief_by_id(fief_id) or fief
+            have = stash_amount(fief, res)
+            if have <= 0:
+                await callback.answer("Недостаточно ресурса", show_alert=True)
+                return
+            dm_mod.set_pending(
+                user_id,
+                {
+                    "kind": KIND_SEND_AMOUNT,
+                    "fief_id": fief_id,
+                    "realm_id": fief["realm_id"],
+                    "target_fief_id": target_id,
+                    "res": res,
+                },
+            )
+            text, kb = transfer_amount_step(
+                engine, fief, target_fief_id=target_id, res=res
+            )
+            await _ok(callback)
+            await reply_game(callback.message, text, reply_markup=kb)
+            return
+
+        if action == "a" and len(parts) >= 4:
+            pending = dm_mod.get_pending(user_id) or {}
+            if (
+                pending.get("kind") not in {KIND_SEND_AMOUNT, KIND_SEND_CONFIRM}
+                or int(pending.get("fief_id") or 0) != fief_id
+            ):
+                await callback.answer("Сначала выберите ресурс", show_alert=True)
+                return
+            res = str(pending.get("res") or "")
+            target_id = int(pending["target_fief_id"])
+            if parts[3] == "x":
+                engine.collect_for_fief(fief_id)
+                fief = engine.fief_by_id(fief_id) or fief
+                have = stash_amount(fief, res)
+                dm_mod.set_pending(
+                    user_id,
+                    {
+                        "kind": KIND_SEND_AMOUNT,
+                        "fief_id": fief_id,
+                        "realm_id": fief["realm_id"],
+                        "target_fief_id": target_id,
+                        "res": res,
+                        "custom": True,
+                    },
+                )
+                text, kb = transfer_custom_amount_step(
+                    fief_id, res=res, have=have
+                )
+                await _ok(callback)
+                await reply_game(callback.message, text, reply_markup=kb)
+                return
+            amt = int(parts[3])
+            engine.collect_for_fief(fief_id)
+            fief = engine.fief_by_id(fief_id) or fief
+            have = stash_amount(fief, res)
+            if amt <= 0 or amt > have:
+                await callback.answer("Недостаточно ресурса", show_alert=True)
+                return
+            dm_mod.set_pending(
+                user_id,
+                {
+                    "kind": KIND_SEND_CONFIRM,
+                    "fief_id": fief_id,
+                    "realm_id": fief["realm_id"],
+                    "target_fief_id": target_id,
+                    "res": res,
+                    "amt": amt,
+                },
+            )
+            text, kb = transfer_confirm_step(
+                engine,
+                fief,
+                target_fief_id=target_id,
+                res=res,
+                amt=amt,
+            )
+            await _ok(callback)
+            await reply_game(callback.message, text, reply_markup=kb)
+            return
+
+        if action == "ok":
+            pending = dm_mod.get_pending(user_id) or {}
+            if (
+                pending.get("kind") != KIND_SEND_CONFIRM
+                or int(pending.get("fief_id") or 0) != fief_id
+            ):
+                await callback.answer("Нет готовой отправки", show_alert=True)
+                return
+            await _finish_transfer_declare(
+                callback,
+                engine,
+                fief_id=fief_id,
+                target_fief_id=int(pending["target_fief_id"]),
+                res=str(pending["res"]),
+                amt=int(pending["amt"]),
+            )
+            await _ok(callback)
+            return
+
+        if action == "back" and len(parts) >= 4:
+            pending = dm_mod.get_pending(user_id) or {}
+            if int(pending.get("fief_id") or 0) != fief_id:
+                await callback.answer("Сессия устарела", show_alert=True)
+                return
+            step = parts[3]
+            if step not in {"res", "amt"}:
+                await callback.answer("Неизвестная команда", show_alert=True)
+                return
+            await _ok(callback)
+            if step == "res":
+                target_id = int(pending.get("target_fief_id") or 0)
+                dm_mod.set_pending(
+                    user_id,
+                    {
+                        "kind": KIND_SEND_RESOURCE,
+                        "fief_id": fief_id,
+                        "realm_id": fief["realm_id"],
+                        "target_fief_id": target_id,
+                    },
+                )
+                engine.collect_for_fief(fief_id)
+                fief = engine.fief_by_id(fief_id) or fief
+                text, kb = transfer_resource_step(engine, fief, target_id)
+                await reply_game(callback.message, text, reply_markup=kb)
+                return
+            target_id = int(pending.get("target_fief_id") or 0)
+            res = str(pending.get("res") or "")
+            dm_mod.set_pending(
+                user_id,
+                {
+                    "kind": KIND_SEND_AMOUNT,
+                    "fief_id": fief_id,
+                    "realm_id": fief["realm_id"],
+                    "target_fief_id": target_id,
+                    "res": res,
+                },
+            )
+            engine.collect_for_fief(fief_id)
+            fief = engine.fief_by_id(fief_id) or fief
+            text, kb = transfer_amount_step(
+                engine, fief, target_fief_id=target_id, res=res
+            )
+            await reply_game(callback.message, text, reply_markup=kb)
+            return
+
+        await callback.answer("Неизвестная команда", show_alert=True)
     except ValueError as exc:
         await callback.answer(str(exc), show_alert=True)
     except Exception:

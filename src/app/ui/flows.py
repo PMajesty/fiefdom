@@ -3,13 +3,13 @@ from __future__ import annotations
 
 from aiogram.types import InlineKeyboardMarkup
 
-from app import balance as B
 from app.ui.keyboards import (
     claimable_kb,
     pact_kb,
-    pending_cancel_kb,
     raid_targets_kb,
 )
+from app.ui.keyboards.chrome import menu_only_kb
+from app.ui.keyboards.transfer import transfer_contacts_kb
 
 
 def claim_offer(
@@ -22,7 +22,7 @@ def claim_offer(
     prompt_text: str,
 ) -> tuple[str, InlineKeyboardMarkup | None]:
     if not claimable:
-        return empty_text, None
+        return empty_text, menu_only_kb(fief_id)
     return (
         prompt_text,
         claimable_kb(
@@ -42,19 +42,28 @@ def raid_targets_offer(
     prompt_text: str,
 ) -> tuple[str, InlineKeyboardMarkup | None]:
     if not targets:
-        return empty_text, None
+        return empty_text, menu_only_kb(fief_id)
     return prompt_text, raid_targets_kb(fief_id, targets)
 
 
-def send_offer(fief_id: int) -> tuple[str, InlineKeyboardMarkup]:
+def send_offer(
+    fief_id: int,
+    contacts: list[tuple[int, str]] | None = None,
+) -> tuple[str, InlineKeyboardMarkup]:
+    """Старт передачи: короткий prompt + контакты / Найти…"""
     text = (
-        "Куда отправить обоз с зерном или товарами?\n"
+        "Кому отправить зерно или товары?\n"
+        "Выберите получателя или нажмите \"Найти…\"."
+    )
+    return text, transfer_contacts_kb(fief_id, contacts or [])
+
+
+def send_find_offer(fief_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    from app.ui.keyboards import pending_cancel_kb
+
+    text = (
         "Напишите id усадьбы, имя или @username.\n"
-        "Объявить можно в первой половине окна тика (как набег); "
-        "вернуть - до середины окна. Доставка после колокола тика. "
-        f"От {B.CARAVAN_PUBLIC_AMOUNT} и больше долина увидит выезд; "
-        "мелкое - только адресату. Силу везти нельзя.\n"
-        "Или напишите \"отмена\"."
+        "Или нажмите Отмена."
     )
     return text, pending_cancel_kb(fief_id)
 

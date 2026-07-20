@@ -6,11 +6,12 @@ from app.ui.flows import (
     claim_offer,
     pact_menu_offer,
     raid_targets_offer,
+    send_find_offer,
     send_offer,
 )
 
 
-def test_claim_offer_empty_returns_text_without_keyboard():
+def test_claim_offer_empty_returns_text_with_menu():
     text, kb = claim_offer(
         3,
         [],
@@ -20,7 +21,8 @@ def test_claim_offer_empty_returns_text_without_keyboard():
         prompt_text="Выберите клетку:",
     )
     assert text == "Нет клеток для занятия."
-    assert kb is None
+    assert kb is not None
+    assert kb.inline_keyboard[-1][0].callback_data == "home:3"
 
 
 def test_claim_offer_prompt_passthrough_with_keyboard():
@@ -35,6 +37,7 @@ def test_claim_offer_prompt_passthrough_with_keyboard():
     assert text == "Выберите клетку для занятия:"
     assert kb is not None
     assert kb.inline_keyboard[0][0].callback_data == "clm:3:0:2"
+    assert kb.inline_keyboard[-1][0].callback_data == "home:3"
 
 
 def test_raid_targets_offer_empty_and_content():
@@ -45,7 +48,8 @@ def test_raid_targets_offer_empty_and_content():
         prompt_text="ignored",
     )
     assert empty_text == "Некого грабить."
-    assert empty_kb is None
+    assert empty_kb is not None
+    assert empty_kb.inline_keyboard[-1][0].callback_data == "home:1"
 
     prompt = (
         "Выберите цель набега (любая долина континента).\n"
@@ -63,19 +67,22 @@ def test_raid_targets_offer_empty_and_content():
     assert kb.inline_keyboard[0][0].callback_data == "rad:1:2"
 
 
-def test_send_offer_golden_text_and_cancel_kb():
-    text, kb = send_offer(9)
-    assert text == (
-        "Куда отправить обоз с зерном или товарами?\n"
-        "Напишите id усадьбы, имя или @username.\n"
-        "Объявить можно в первой половине окна тика (как набег); "
-        "вернуть - до середины окна. Доставка после колокола тика. "
-        f"От {B.CARAVAN_PUBLIC_AMOUNT} и больше долина увидит выезд; "
-        "мелкое - только адресату. Силу везти нельзя.\n"
-        "Или напишите \"отмена\"."
-    )
-    assert kb.inline_keyboard[0][0].callback_data == "pend:cancel:9"
-    assert kb.inline_keyboard[0][0].text == "Отмена"
+def test_send_offer_contacts_and_find():
+    text, kb = send_offer(9, [(2, "Бета")])
+    assert "Кому отправить" in text
+    assert "Найти" in text
+    data = [btn.callback_data for row in kb.inline_keyboard for btn in row]
+    assert "snd:9:t:2" in data
+    assert "snd:9:find" in data
+    assert "pend:cancel:9" in data
+    assert "home:9" in data
+
+
+def test_send_find_offer_asks_for_text():
+    text, kb = send_find_offer(9)
+    assert "id усадьбы" in text
+    assert kb.inline_keyboard[-1][0].text == "Отмена"
+    assert kb.inline_keyboard[-1][1].callback_data == "home:9"
 
 
 def test_pact_menu_offer_preserves_text():

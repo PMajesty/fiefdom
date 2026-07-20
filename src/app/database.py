@@ -2139,6 +2139,36 @@ class Database(
             (int(fief_id),),
         )
 
+    def list_recent_caravan_receiver_ids(
+        self, fief_id: int, *, limit: int = 8
+    ) -> list[int]:
+        """Недавние получатели обозов (любой статус), новые сверху, без дублей."""
+        rows = self._fetchall(
+            """
+            SELECT payload->>'receiver_id' AS receiver_id
+            FROM action_intents
+            WHERE fief_id=%s AND kind='caravan'
+              AND payload ? 'receiver_id'
+            ORDER BY id DESC
+            LIMIT 40;
+            """,
+            (int(fief_id),),
+        )
+        out: list[int] = []
+        seen: set[int] = set()
+        for row in rows:
+            try:
+                rid = int(row.get("receiver_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if rid <= 0 or rid in seen:
+                continue
+            seen.add(rid)
+            out.append(rid)
+            if len(out) >= int(limit):
+                break
+        return out
+
     def list_cover_stance_intents(
         self,
         world_id: int,
