@@ -11,13 +11,9 @@ from app.domain.caravans import (
     format_caravan_land_public,
 )
 from app.domain.raids import RaidNightPartyNotice
-from app.domain.resources import (
-    capped_receive_amount,
-    resource_name_ru,
-    send_forbidden_message,
-    stash_amount,
-    tradeable_keys,
-)
+from app.domain.resource_bags import capped_receive_amount, stash_amount
+from app.domain.resource_format import resource_name_ru, send_forbidden_message
+from app.domain.resource_registry import tradeable_keys
 
 
 class CaravanService:

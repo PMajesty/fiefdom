@@ -675,7 +675,8 @@ def test_cas_miss_live_matches_two_draw_oracle():
     """H5: CAS miss перехватчика продолжает тот же Random, итог = второй draw."""
     import random
 
-    from app.domain.resources import stash_from_row
+    from app.domain.resource_bags import stash_from_row
+
 
     atk = _base_fief(1, realm_id=1, user_id=101, name="Атакующий", might=10)
     vic = _base_fief(

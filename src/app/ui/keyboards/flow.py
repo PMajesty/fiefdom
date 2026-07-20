@@ -194,7 +194,8 @@ def building_types_kb(
 
 
 def gather_resources_kb(fief_id: int) -> InlineKeyboardMarkup:
-    from app.domain.resources import resource_defs
+    from app.domain.resource_registry import resource_defs
+
 
     fid = int(fief_id)
     rows: list[list[InlineKeyboardButton]] = []

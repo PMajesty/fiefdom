@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from app import balance as B
-from app.domain.resources import add_bags, live_resource_keys, scale_bag
+from app.domain.resource_bags import add_bags, scale_bag
+from app.domain.resource_registry import live_resource_keys
 
 
 @dataclass

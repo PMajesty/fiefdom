@@ -127,9 +127,10 @@ async def cmd_grant(message: Message) -> None:
         return
     engine = get_engine()
     try:
-        from app.domain.resources import live_resource_keys, resource_defs
+        from app.domain.resource_registry import live_resource_keys, resource_defs
 
         parts = (message.text or "").split()
+
         keys = live_resource_keys()
         if len(parts) < 3 + len(keys):
             raise ValueError(

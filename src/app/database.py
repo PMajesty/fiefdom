@@ -12,12 +12,12 @@ from typing import Any, Iterator
 import pg8000
 
 from app.config import DB_CONFIG, tick_slots
-from app.domain.resources import (
-    live_resource_keys,
+from app.domain.resource_bags import (
     normalize_credit_amounts,
     normalize_debit_amounts,
-    raid_lootable_defs,
 )
+from app.domain.resource_registry import live_resource_keys, raid_lootable_defs
+
 from app.resource_schema import (
     build_annul_open_trades_sql,
     build_credit_sql,

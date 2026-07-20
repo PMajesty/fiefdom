@@ -8,13 +8,13 @@ from app.domain import absence as absence_mod
 from app.domain.map_geometry import adjacent_claimable
 
 from app.domain.map_gen import coord_label
-from app.domain.resources import (
-    apply_gather_to_stash,
+from app.domain.resource_bags import apply_gather_to_stash, stash_from_row
+from app.domain.resource_format import (
     gather_forbidden_message,
     gather_result_text,
-    live_resource_keys,
-    stash_from_row,
 )
+from app.domain.resource_registry import live_resource_keys
+
 
 
 def try_complete_onboard_claim(fief: dict) -> dict | None:

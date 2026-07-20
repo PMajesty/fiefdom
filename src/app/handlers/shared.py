@@ -110,7 +110,8 @@ def format_send_announce(
     amt: int,
     res: str,
 ) -> str:
-    from app.domain.resources import resource_name_ru
+    from app.domain.resource_format import resource_name_ru
+
 
     res_name = resource_name_ru(res)
     return (

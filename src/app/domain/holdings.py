@@ -5,12 +5,13 @@ from app import balance as B
 from app.domain.production import Production, building_production, tile_passive
 
 from app.domain.map_gen import coord_label
-from app.domain.resources import (
-    add_bags,
+from app.domain.resource_bags import add_bags
+from app.domain.resource_format import (
     format_prod_parts,
     format_totals_production_line,
-    live_resource_keys,
 )
+from app.domain.resource_registry import live_resource_keys
+
 
 _LEVEL_ROMAN = {1: "I", 2: "II", 3: "III"}
 

@@ -761,15 +761,16 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
 
 
 def _tradeable_res_map() -> dict[str, str]:
-    from app.domain.resources import synonym_to_key
+    from app.domain.resource_format import synonym_to_key
 
     return synonym_to_key(tradeable_only=True)
 
 
 def _send_re() -> re.Pattern[str]:
-    from app.domain.resources import tradeable_synonym_alternatives
+    from app.domain.resource_format import tradeable_synonym_alternatives
 
     alt = tradeable_synonym_alternatives()
+
     return re.compile(rf"^({alt})\s+(\d+)$", re.IGNORECASE)
 
 

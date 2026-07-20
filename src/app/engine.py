@@ -54,14 +54,14 @@ from app.domain.rumors import (
     FiefRumorSnapshot,
     UpcomingEventHint,
 )
-from app.domain.resources import (
-    fief_balance_columns,
+from app.domain.resource_bags import pending_from_row, stash_from_row
+from app.domain.resource_format import (
     format_daily_production_line,
     format_status_stash_line,
-    pending_from_row,
     resource_name_ru,
-    stash_from_row,
 )
+from app.domain.resource_registry import fief_balance_columns
+
 from app.domain.tick import (
     collect_pending_bags,
 )

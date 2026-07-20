@@ -79,7 +79,7 @@ RES_GRAIN = "grain"
 RES_GOODS = "goods"
 RES_MIGHT = "might"
 
-# Отображаемые имена и tradeable - в domain.resources (реестр).
+# Отображаемые имена и tradeable - в domain.resource_registry.
 
 DEFAULT_STASH_CAP = 150  # зерно/товары без амбара
 COLLECT_CAP_DAYS_BASE = 3
@@ -226,7 +226,7 @@ RUMOR_CATASTROPHE_WARN_TICKS = 4
 # --- Караваны (передача на доверии) ---
 # Крупный обоз виден долинам континента при выезде и при прибытии.
 CARAVAN_PUBLIC_AMOUNT = 30
-# TRADEABLE - флаг ResourceDef.tradeable в domain.resources
+# TRADEABLE - флаг ResourceDef.tradeable в domain.resource_registry
 
 # --- События ---
 MINOR_EVENT_CHANCE = 1.0

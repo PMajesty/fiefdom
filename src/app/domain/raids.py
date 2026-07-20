@@ -6,13 +6,13 @@ from dataclasses import dataclass, field
 from random import Random
 
 from app import balance as B
-from app.domain.resources import (
-    LootBag,
-    empty_loot_bag,
+from app.domain.resource_bags import LootBag, empty_loot_bag
+from app.domain.resource_format import (
     format_attacker_loot_suffix,
     format_victim_loot_sentence,
-    raid_lootable_keys,
 )
+from app.domain.resource_registry import raid_lootable_keys
+
 
 
 @dataclass

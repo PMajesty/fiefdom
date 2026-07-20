@@ -22,12 +22,13 @@ from app.domain.road_skirmish import (
     resolve_road_contest,
     split_loot_by_commit,
 )
-from app.domain.resources import (
+from app.domain.resource_bags import (
     capped_receive_amount,
-    format_victim_loot_sentence,
     stash_amount,
     stash_from_row,
 )
+from app.domain.resource_format import format_victim_loot_sentence
+
 from app.domain.ticks import tick_active
 from app.resource_schema import raid_stolen_fields
 
