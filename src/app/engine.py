@@ -1044,6 +1044,10 @@ class Engine:
     def set_cover_stand_down(self, fief_id: int) -> str:
         return self._cover_stances.set_stand_down(fief_id)
 
+    def open_cover_stance_escrow_preview(self, fief_id: int) -> tuple[int, int]:
+        """(budget, supply_grain) открытой заставы текущего тика."""
+        return self._cover_stances.open_stance_escrow_preview(int(fief_id))
+
     def set_cover_stance(
         self,
         fief_id: int,

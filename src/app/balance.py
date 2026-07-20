@@ -311,6 +311,16 @@ def militia_upkeep_grain(might: int) -> int:
     return int(math.ceil(excess * MILITIA_GRAIN_PER_EXCESS))
 
 
+def travel_supply_grain(might: int) -> int:
+    """Разовое снабжение похода/заставы: ceil(B × ставка), без бесплатной полосы."""
+    import math
+
+    force = max(0, int(might))
+    if force <= 0:
+        return 0
+    return int(math.ceil(force * MILITIA_GRAIN_PER_EXCESS))
+
+
 def militia_affordable(might: int, grain_available: int) -> int:
     """Максимум силы, который можно прокормить при данном зерне на жалование."""
     import math

@@ -12,6 +12,11 @@ from app.domain.tick_schedule import (
     raid_lock_due,
 )
 from app.domain.ticks import tick_active
+from app.domain.travel_supply import (
+    PAYLOAD_SUPPLY_GRAIN,
+    format_travel_supply_confirm_line,
+    intent_supply_grain,
+)
 from app.engine import _utcnow, raid_pact_lock_message, raid_pact_unlocked
 
 
@@ -155,6 +160,9 @@ class RaidDeclareService:
         atk = self._db.get_fief(attacker_id) or atk
         if int(atk["might"]) < might:
             raise ValueError("Недостаточно силы")
+        supply = B.travel_supply_grain(might)
+        if int(atk.get("grain") or 0) < supply:
+            raise ValueError("Недостаточно зерна на снабжение похода")
 
         same_realm = int(atk["realm_id"]) == int(vic["realm_id"])
         vic_realm = self._db.get_realm(vic["realm_id"]) or realm
@@ -175,8 +183,14 @@ class RaidDeclareService:
                     "Поздно объявлять набег: до закрытия заявок осталось меньше половины окна"
                 )
             self._engine._spend_action(atk)
-            if not self._db.debit_fief_resources(attacker_id, might=int(might)):
-                raise ValueError("Недостаточно силы")
+            debit = {"might": int(might)}
+            if supply > 0:
+                debit["grain"] = int(supply)
+            if not self._db.debit_fief_resources(attacker_id, **debit):
+                atk_now = self._db.get_fief(attacker_id) or atk
+                if int(atk_now.get("might") or 0) < might:
+                    raise ValueError("Недостаточно силы")
+                raise ValueError("Недостаточно зерна на снабжение похода")
             intent = self._db.create_action_intent(
                 world_id=wid,
                 tick_index=tick_index,
@@ -191,6 +205,7 @@ class RaidDeclareService:
                     "attacker_realm_id": int(atk["realm_id"]),
                     "victim_realm_id": int(vic["realm_id"]),
                     "escrowed": True,
+                    PAYLOAD_SUPPLY_GRAIN: int(supply),
                     "attacker_pact_id": (
                         int(atk["pact_id"]) if atk.get("pact_id") else None
                     ),
@@ -209,6 +224,7 @@ class RaidDeclareService:
         dm = (
             f"Дружина ушла в ночь на хутор {self._engine.fief_label(vic)}: "
             f"{might} силы в пути, дома {men_home}. "
+            f"{format_travel_supply_confirm_line(might)} "
             f"Заявку можно отменить до {lock_text}. "
             f"Бой в тик около {resolve_text}."
         )
@@ -239,13 +255,24 @@ class RaidDeclareService:
             raise ValueError("После закрытия заявок отменить нельзя")
         payload = dict(intent.get("payload") or {})
         might = int(payload.get("might") or 0)
+        supply = intent_supply_grain(payload)
         with self._db.transaction():
             claimed = self._db.cancel_action_intent(int(intent_id))
             if not claimed:
                 raise ValueError("После закрытия заявок отменить нельзя")
+            credit: dict[str, int] = {}
             if might > 0:
-                self._db.credit_fief_resources(fief_id, might=might)
+                credit["might"] = might
+            if supply > 0:
+                credit["grain"] = supply
+            if credit:
+                self._db.credit_fief_resources(fief_id, **credit)
             self._engine._refund_action(fief_id)
+        if supply > 0:
+            return (
+                f"Заявка снята: {might} силы, {supply} зерна снабжения и 1 действие "
+                f"вернулись ({self._engine.fief_label(fief)})."
+            )
         return (
             f"Заявка снята: {might} силы и 1 действие вернулись "
             f"({self._engine.fief_label(fief)})."

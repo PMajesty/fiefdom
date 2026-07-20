@@ -50,6 +50,10 @@ def render_prepared_intent_status_lines(
         lines.append(
             f"· застава ({cover.stance_label}): {cover.budget} силы ({st})"
         )
+    if raids or covers:
+        lines.append(
+            "· снабжение похода списано при выходе; дневной корм считает только двор"
+        )
     return lines
 
 

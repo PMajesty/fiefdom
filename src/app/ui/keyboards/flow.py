@@ -83,6 +83,23 @@ def raid_confirm_kb(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def cover_confirm_kb(fief_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Подтвердить",
+                    callback_data=f"covok:{int(fief_id)}",
+                ),
+                InlineKeyboardButton(
+                    text="Отмена",
+                    callback_data=pending_cancel_callback(fief_id),
+                ),
+            ]
+        ]
+    )
+
+
 def raid_cancel_intent_kb(fief_id: int, intent_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[

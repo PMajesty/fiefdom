@@ -43,7 +43,7 @@ def render_status_card(snapshot: StatusSnapshot) -> str:
             snapshot.production_line,
             (
                 f"Корм: земля {snapshot.land_upkeep}, "
-                f"дружина {snapshot.militia_upkeep}"
+                f"дружина дома {snapshot.militia_upkeep}"
             ),
             "",
         ]

@@ -827,6 +827,37 @@ async def cb_cover_cancel_intent(callback: CallbackQuery) -> None:
         await callback.answer("Ошибка", show_alert=True)
 
 
+@router.callback_query(F.data.startswith("covok:"))
+async def cb_cover_confirm(callback: CallbackQuery) -> None:
+    engine = get_engine()
+    try:
+        fief_id = int(callback.data.split(":")[1])
+        engine.require_owned_fief(fief_id, callback.from_user.id)
+        pending = dm_mod.get_pending(callback.from_user.id) or {}
+        if pending.get("kind") != "cover_confirm" or int(pending.get("fief_id") or 0) != fief_id:
+            await callback.answer("Сначала укажите силу заставы.", show_alert=True)
+            return
+        budget = int(pending.get("budget") or 0)
+        mode = str(pending.get("mode") or "any")
+        target_raw = pending.get("target_fief_id")
+        msg = engine.set_cover_stance(
+            fief_id,
+            mode=mode,
+            budget=budget,
+            target_fief_id=int(target_raw) if target_raw is not None else None,
+        )
+        dm_mod.clear_pending(callback.from_user.id)
+        await _ok(callback)
+        await reply_game(
+            callback.message, msg, reply_markup=fief_home_kb(engine, fief_id)
+        )
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+    except Exception:
+        logger.exception("cb_cover_confirm")
+        await callback.answer("Ошибка", show_alert=True)
+
+
 @router.callback_query(F.data.startswith("pct:"))
 async def cb_pact(callback: CallbackQuery) -> None:
     engine = get_engine()

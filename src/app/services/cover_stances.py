@@ -15,6 +15,12 @@ from app.domain.cover import (
     select_cover_deployment,
 )
 from app.domain.raids import RaidNightPartyNotice
+from app.domain.travel_supply import (
+    PAYLOAD_SUPPLY_GRAIN,
+    format_travel_supply_charge_line,
+    intent_supply_grain,
+    travel_supply_net_delta,
+)
 
 
 class CoverStanceService:
@@ -57,14 +63,54 @@ class CoverStanceService:
                 return intent
         return None
 
-    def _cancel_open_stance_refund(self, intent: dict) -> None:
-        payload = dict(intent.get("payload") or {})
+    def open_stance_escrow_preview(self, fief_id: int) -> tuple[int, int]:
+        """Бюджет и уже списанное снабжение текущей open-стойки тика; иначе (0, 0)."""
+        fief = self._db.get_fief(int(fief_id))
+        if not fief:
+            return 0, 0
+        realm = self._db.get_realm(int(fief["realm_id"])) or {}
+        tick_index = int(realm.get("tick_index") or 0)
+        existing = self._current_open_stance(int(fief_id), tick_index)
+        if not existing:
+            return 0, 0
+        payload = existing.get("payload") or {}
+        budget = (
+            int(payload.get("budget") or 0) if payload.get("escrowed") else 0
+        )
+        return budget, intent_supply_grain(payload)
+
+    def _credit_cover_escrow(
+        self,
+        *,
+        fief_id: int,
+        payload: dict,
+        refund_supply: bool,
+    ) -> int:
+        """Вернуть силу; зерно снабжения - только если refund_supply и оно было списано."""
         budget = int(payload.get("budget") or 0)
+        credit: dict[str, int] = {}
+        if budget > 0 and payload.get("escrowed"):
+            credit["might"] = budget
+        if refund_supply:
+            supply = intent_supply_grain(payload)
+            if supply > 0:
+                credit["grain"] = supply
+        if credit:
+            self._db.credit_fief_resources(int(fief_id), **credit)
+        return budget if "might" in credit else 0
+
+    def _cancel_open_stance_refund(
+        self, intent: dict, *, refund_supply: bool = True
+    ) -> None:
+        payload = dict(intent.get("payload") or {})
         claimed = self._db.cancel_action_intent(int(intent["id"]))
         if not claimed:
             raise ValueError("После закрытия заявок стойку уже не сменить")
-        if budget > 0 and payload.get("escrowed"):
-            self._db.credit_fief_resources(int(intent["fief_id"]), might=budget)
+        self._credit_cover_escrow(
+            fief_id=int(intent["fief_id"]),
+            payload=payload,
+            refund_supply=refund_supply,
+        )
 
     def refund_cover_stances_for_fief(
         self,
@@ -72,22 +118,27 @@ class CoverStanceService:
         *,
         statuses: tuple[str, ...] = ("open", "locked"),
     ) -> int:
-        """Снять заставу в заданных статусах и вернуть эскроу."""
+        """Снять заставу в заданных статусах и вернуть эскроу.
+
+        Зерно снабжения возвращается только для open (до midday lock).
+        """
         refunded = 0
         allowed = set(statuses)
         for intent in self.list_open_cover_stance_intents_for_fief(int(fief_id)):
             if intent.get("status") not in allowed:
                 continue
             payload = dict(intent.get("payload") or {})
-            budget = int(payload.get("budget") or 0)
+            was_open = intent.get("status") == "open"
             claimed = self._db.cancel_action_intent(
                 int(intent["id"]), statuses=tuple(allowed)
             )
             if not claimed:
                 continue
-            if budget > 0 and payload.get("escrowed"):
-                self._db.credit_fief_resources(int(intent["fief_id"]), might=budget)
-                refunded += budget
+            refunded += self._credit_cover_escrow(
+                fief_id=int(intent["fief_id"]),
+                payload=payload,
+                refund_supply=was_open,
+            )
         self._sync_cover_allies_flag(int(fief_id))
         return refunded
 
@@ -98,7 +149,10 @@ class CoverStanceService:
         world_id: int,
         tick_index: int,
     ) -> int:
-        """Вернуть весь эскроу пакта (включая вышедших с locked-обязательством)."""
+        """Вернуть эскроу пакта (в т.ч. locked у вышедших).
+
+        Зерно снабжения - только у open (роспуск в первой половине окна).
+        """
         refunded = 0
         touched: set[int] = set()
         intents = self.list_cover_stance_intents(
@@ -110,16 +164,18 @@ class CoverStanceService:
             payload = dict(intent.get("payload") or {})
             if int(payload.get("pact_id") or 0) != int(pact_id):
                 continue
-            budget = int(payload.get("budget") or 0)
+            was_open = intent.get("status") == "open"
             claimed = self._db.cancel_action_intent(
                 int(intent["id"]), statuses=("open", "locked")
             )
             if not claimed:
                 continue
             helper_fid = int(intent["fief_id"])
-            if budget > 0 and payload.get("escrowed"):
-                self._db.credit_fief_resources(helper_fid, might=budget)
-                refunded += budget
+            refunded += self._credit_cover_escrow(
+                fief_id=helper_fid,
+                payload=payload,
+                refund_supply=was_open,
+            )
             touched.add(helper_fid)
         for fid in touched:
             self._sync_cover_allies_flag(fid)
@@ -175,6 +231,8 @@ class CoverStanceService:
         fief = self._engine.require_active_fief(fief_id)
         if not fief.get("pact_id"):
             raise ValueError("Нужен пакт")
+        if fief.get("hungry"):
+            raise ValueError("Голодные мужики не воюют")
         if mode == COVER_MODE_SPECIFIC:
             if target_fief_id is None:
                 raise ValueError("Укажите союзника")
@@ -196,7 +254,19 @@ class CoverStanceService:
 
         self._engine.collect_for_fief(fief_id)
         fief = self._db.get_fief(fief_id) or fief
+        if fief.get("hungry"):
+            raise ValueError("Голодные мужики не воюют")
         lock_text = self._engine._format_raid_deadline(world, midpoint=True)
+        new_supply = B.travel_supply_grain(int(budget))
+        prior_budget, prior_supply = self.open_stance_escrow_preview(fief_id)
+        available_might = int(fief.get("might") or 0) + prior_budget
+        if available_might < int(budget):
+            raise ValueError("Недостаточно силы")
+        grain_delta = travel_supply_net_delta(
+            prior_fee=prior_supply, new_fee=new_supply
+        )
+        if grain_delta > 0 and int(fief.get("grain") or 0) < grain_delta:
+            raise ValueError("Недостаточно зерна на снабжение похода")
 
         with self._db.transaction():
             if not self._engine.raid_declare_is_open(self._db.get_world(wid) or world):
@@ -204,13 +274,29 @@ class CoverStanceService:
                     "Поздно менять заставу: до закрытия заявок осталось меньше половины окна"
                 )
             existing = self._current_open_stance(fief_id, tick_index)
+            prior_supply = 0
             if existing:
-                self._cancel_open_stance_refund(existing)
+                prior_supply = intent_supply_grain(existing.get("payload") or {})
+                # Силу вернём; зерно снабжения сведём нетто к новой ставке.
+                self._cancel_open_stance_refund(existing, refund_supply=False)
             fief = self._db.get_fief(fief_id) or fief
             if int(fief.get("might") or 0) < int(budget):
                 raise ValueError("Недостаточно силы")
-            if not self._db.debit_fief_resources(fief_id, might=int(budget)):
-                raise ValueError("Недостаточно силы")
+            grain_delta = travel_supply_net_delta(
+                prior_fee=prior_supply, new_fee=new_supply
+            )
+            if grain_delta > 0 and int(fief.get("grain") or 0) < grain_delta:
+                raise ValueError("Недостаточно зерна на снабжение похода")
+            debit: dict[str, int] = {"might": int(budget)}
+            if grain_delta > 0:
+                debit["grain"] = int(grain_delta)
+            if not self._db.debit_fief_resources(fief_id, **debit):
+                fief_now = self._db.get_fief(fief_id) or fief
+                if int(fief_now.get("might") or 0) < int(budget):
+                    raise ValueError("Недостаточно силы")
+                raise ValueError("Недостаточно зерна на снабжение похода")
+            if grain_delta < 0:
+                self._db.credit_fief_resources(fief_id, grain=int(-grain_delta))
             self._db.create_action_intent(
                 world_id=int(wid),
                 tick_index=tick_index,
@@ -227,6 +313,7 @@ class CoverStanceService:
                     ),
                     "pact_id": int(fief["pact_id"]),
                     "escrowed": True,
+                    PAYLOAD_SUPPLY_GRAIN: int(new_supply),
                 },
             )
             self._db.update_fief(
@@ -234,16 +321,19 @@ class CoverStanceService:
             )
 
         label = COVER_MODE_LABELS.get(mode, mode)
+        supply_line = format_travel_supply_charge_line(
+            new_fee=int(new_supply), prior_fee=int(prior_supply)
+        )
         if mode == COVER_MODE_SPECIFIC and target_fief_id:
             tgt = self._db.get_fief(int(target_fief_id))
             who = self._engine.fief_label(tgt) if tgt else str(target_fief_id)
             return (
                 f"Застава: {label} ({who}), {budget} силы в резерве. "
-                f"Сменить можно до {lock_text}."
+                f"{supply_line} Сменить можно до {lock_text}."
             )
         return (
             f"Застава: {label}, {budget} силы в резерве. "
-            f"Сменить можно до {lock_text}."
+            f"{supply_line} Сменить можно до {lock_text}."
         )
 
     def cancel_cover_stance_intent(self, fief_id: int, intent_id: int) -> str:
@@ -257,9 +347,15 @@ class CoverStanceService:
             raise ValueError("После закрытия заявок стойку уже не снять")
         payload = dict(intent.get("payload") or {})
         budget = int(payload.get("budget") or 0)
+        supply = intent_supply_grain(payload)
         with self._db.transaction():
-            self._cancel_open_stance_refund(intent)
+            self._cancel_open_stance_refund(intent, refund_supply=True)
             self._db.update_fief(fief_id, cover_allies=False)
+        if supply > 0:
+            return (
+                f"Застава снята: {budget} силы и {supply} зерна снабжения вернулись. "
+                "Стоите в стороне."
+            )
         return f"Застава снята: {budget} силы вернулись. Стоите в стороне."
 
     def offers_from_intents(

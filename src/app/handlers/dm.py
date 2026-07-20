@@ -11,6 +11,10 @@ from aiogram.types import InlineKeyboardMarkup, Message
 
 from app import balance as B
 from app.domain.map_geometry import adjacent_claimable
+from app.domain.travel_supply import (
+    format_travel_supply_charge_line,
+    format_travel_supply_confirm_line,
+)
 
 from app.engine import raid_pact_lock_message
 from app.handlers.shared import (
@@ -52,6 +56,7 @@ from app.ui.keyboards import (
     patrol_confirm_kb,
     pending_cancel_callback,
     pending_cancel_kb,
+    cover_confirm_kb,
     raid_cancel_intent_kb,
     raid_confirm_kb,
     raid_targets_kb as raid_targets_kb_plain,
@@ -600,6 +605,7 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
             (
                 f"Подтвердите набег на {vic_name}.\n"
                 f"Уйдёт {might} силы, дома останется {men_home}.\n"
+                f"{format_travel_supply_confirm_line(might)}\n"
                 f"Отмена заявки до {lock_text}; бой около {resolve_text}."
                 f"{truce_note}"
             ),
@@ -717,17 +723,61 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
                 reply_markup=pending_cancel_kb(pending["fief_id"]),
             )
             return True
+        if budget < int(B.COVER_BUDGET_MIN):
+            await answer_html(
+                message,
+                (
+                    f"Минимум {B.COVER_BUDGET_MIN} силы.\n"
+                    "Или напишите \"отмена\"."
+                ),
+                reply_markup=pending_cancel_kb(pending["fief_id"]),
+            )
+            return True
         mode = str(pending.get("mode") or "any")
         target_id = pending.get("target_fief_id")
-        msg = engine.set_cover_stance(
-            int(pending["fief_id"]),
-            mode=mode,
-            budget=budget,
-            target_fief_id=int(target_id) if target_id is not None else None,
+        fief_id = int(pending["fief_id"])
+        set_pending(
+            user_id,
+            {
+                "kind": "cover_confirm",
+                "fief_id": fief_id,
+                "mode": mode,
+                "budget": int(budget),
+                "target_fief_id": target_id,
+            },
         )
-        clear_pending(user_id)
+        fief = engine.fief_by_id(fief_id) or {}
+        prior_budget, prior_supply = engine.open_cover_stance_escrow_preview(
+            fief_id
+        )
+        men_home = max(
+            0, int(fief.get("might") or 0) + prior_budget - int(budget)
+        )
+        new_fee = B.travel_supply_grain(int(budget))
+        supply_line = format_travel_supply_charge_line(
+            new_fee=new_fee, prior_fee=prior_supply
+        )
+        label = "любого союзника"
+        if mode == "specific" and target_id is not None:
+            tgt = engine.fief_by_id(int(target_id))
+            label = engine.fief_label(tgt) if tgt else str(target_id)
         await reply_game(
-            message, msg, reply_markup=fief_home_kb(engine, pending["fief_id"])
+            message,
+            (
+                f"Подтвердите заставу ({label}).\n"
+                f"Уйдёт {budget} силы, дома останется {men_home}.\n"
+                f"{supply_line}\n"
+                "Или напишите \"отмена\"."
+            ),
+            reply_markup=cover_confirm_kb(fief_id),
+        )
+        return True
+
+    if kind == "cover_confirm":
+        await reply_game(
+            message,
+            "Нажмите \"Подтвердить\" или \"Отмена\" под сообщением выше.",
+            reply_markup=cover_confirm_kb(int(pending["fief_id"])),
         )
         return True
 

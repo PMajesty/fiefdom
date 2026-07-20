@@ -76,6 +76,7 @@ def _cover_engine():
         might=40,
         pact_id=7,
         cover_allies=False,
+        grain=100,
     )
     engine = _raid_night_engine(
         fiefs={1: atk, 2: vic, 3: ally},
@@ -641,6 +642,7 @@ def test_any_cover_first_siege_consumes_full_budget():
 def test_guide_mentions_zastava_and_no_declare_ping():
     text = game_guide()
     assert "Застава" in text
+    assert "снабжение похода" in text.lower()
     assert "нет / мало / средне / много" not in text
     assert "политик" in text.lower()
     assert "сюрприз" in text.lower() or "не пишет" in text
