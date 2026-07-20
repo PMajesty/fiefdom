@@ -80,41 +80,34 @@ def test_choose_primary_cta_onboard_unaffordable_goes_caravan():
     assert cb == "snd:9"
 
 
-def test_choose_primary_cta_expand_land():
+def test_choose_primary_cta_hidden_after_onboarding():
     from app.handlers.shared import choose_primary_cta
 
-    label, cb = choose_primary_cta(
-        3, actions=1, onboard_step=4, tile_count=2, goods=0, might=0
+    assert (
+        choose_primary_cta(
+            3, actions=1, onboard_step=4, tile_count=2, goods=0, might=0
+        )
+        is None
     )
-    assert label == "Занять землю"
-    assert cb == "clm:3"
-
-
-def test_choose_primary_cta_build_when_goods():
-    from app.handlers.shared import choose_primary_cta
-
-    label, cb = choose_primary_cta(
-        3, actions=1, onboard_step=4, tile_count=4, goods=25, might=10
+    assert (
+        choose_primary_cta(
+            3, actions=1, onboard_step=4, tile_count=4, goods=25, might=10
+        )
+        is None
     )
-    assert label == "Строить"
-    assert cb == "bld:3"
-
-
-def test_choose_primary_cta_raid_when_might():
-    from app.handlers.shared import choose_primary_cta
-
-    label, cb = choose_primary_cta(
-        3,
-        actions=1,
-        onboard_step=4,
-        tile_count=4,
-        goods=5,
-        might=8,
-        day_number=3,
-        min_build_cost=50,
+    assert (
+        choose_primary_cta(
+            3,
+            actions=1,
+            onboard_step=4,
+            tile_count=4,
+            goods=5,
+            might=8,
+            day_number=3,
+            min_build_cost=50,
+        )
+        is None
     )
-    assert label == "Набег"
-    assert cb == "rad:3"
 
 
 def test_choose_primary_cta_no_raid_while_onboard():
@@ -133,23 +126,6 @@ def test_choose_primary_cta_no_raid_while_onboard():
     )
     assert label == "Передать"
     assert cb == "snd:3"
-
-
-def test_choose_primary_cta_no_raid_before_unlock_day():
-    from app.handlers.shared import choose_primary_cta
-
-    label, cb = choose_primary_cta(
-        3,
-        actions=1,
-        onboard_step=4,
-        tile_count=4,
-        goods=5,
-        might=8,
-        day_number=2,
-    )
-    assert label == "Занять землю"
-    assert cb == "clm:3"
-    assert label != "Набег"
 
 
 def test_raid_pact_unlock_helpers():
@@ -228,20 +204,27 @@ def test_valley_hub_kb_unlocked_pact():
     assert "lock:pct:9" not in by_data
 
 
-def test_choose_primary_cta_no_actions_caravan():
+def test_choose_primary_cta_no_cta_after_onboarding_even_without_actions():
     from app.handlers.shared import choose_primary_cta
 
-    label, cb = choose_primary_cta(7, actions=0, onboard_step=4, tile_count=5)
-    assert label == "Передать"
-    assert cb == "snd:7"
+    assert choose_primary_cta(7, actions=0, onboard_step=4, tile_count=5) is None
 
 
-def test_choose_primary_cta_onboard_ignored_without_actions():
+def test_choose_primary_cta_onboard_without_actions_still_suggests_transfer():
     from app.handlers.shared import choose_primary_cta
 
     label, cb = choose_primary_cta(7, actions=0, onboard_step=2)
     assert label == "Передать"
     assert cb == "snd:7"
+
+
+def test_home_kb_without_primary_starts_with_hubs():
+    from app.handlers.shared import home_kb
+
+    kb = home_kb(9)
+    rows = kb.inline_keyboard
+    assert [btn.text for btn in rows[0]] == ["Дела", "Связи"]
+    assert [btn.text for btn in rows[1]] == ["Карта", "Правила"]
 
 
 def test_home_kb_has_primary_hubs_map_guide():
@@ -289,6 +272,13 @@ def test_main_menu_kb_uses_fief_snapshot():
     )
     assert kb3.inline_keyboard[0][0].callback_data == "bld:5"
     assert kb3.inline_keyboard[0][0].text == "Квест: строить"
+
+    done = {"actions": 1, "onboard_step": 4, "goods": 50, "might": 8}
+    kb4 = main_menu_kb(
+        5, fief=done, tile_count=4, min_build_cost=20, next_claim_cost=60
+    )
+    assert kb4.inline_keyboard[0][0].callback_data == "hub:e:5"
+    assert [btn.text for btn in kb4.inline_keyboard[0]] == ["Дела", "Связи"]
 
 
 def test_estate_and_valley_hub_prefixes():

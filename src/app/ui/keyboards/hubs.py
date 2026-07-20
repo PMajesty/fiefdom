@@ -47,16 +47,25 @@ def map_view_kb(fief_id: int) -> InlineKeyboardMarkup:
 
 def home_kb(
     fief_id: int,
-    primary_label: str,
-    primary_callback: str,
+    primary_label: str | None = None,
+    primary_callback: str | None = None,
     *,
     prepared_count: int = 0,
     early_tick_label: str | None = None,
 ) -> InlineKeyboardMarkup:
-    """Дом: primary CTA + два хаба (Дела / Связи) + карта и правила."""
+    """Дом: опциональный квест-CTA + Дела / Связи + карта и правила."""
     fid = int(fief_id)
-    rows: list[list[InlineKeyboardButton]] = [
-        [InlineKeyboardButton(text=primary_label, callback_data=primary_callback)],
+    rows: list[list[InlineKeyboardButton]] = []
+    if primary_label and primary_callback:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=primary_label,
+                    callback_data=primary_callback,
+                )
+            ]
+        )
+    rows.append(
         [
             InlineKeyboardButton(
                 text="Дела",
@@ -66,8 +75,8 @@ def home_kb(
                 text="Связи",
                 callback_data=f"hub:v:{fid}",
             ),
-        ],
-    ]
+        ]
+    )
     if early_tick_label:
         rows.append(
             [
@@ -313,7 +322,7 @@ def main_menu_kb(
             prepared_count=prepared_count,
             early_tick_label=early_tick_label,
         )
-    label, cb = choose_primary_cta(
+    cta = choose_primary_cta(
         fid,
         actions=int(fief.get("actions") or 0),
         onboard_step=int(fief.get("onboard_step") or 0),
@@ -324,6 +333,7 @@ def main_menu_kb(
         min_build_cost=min_build_cost,
         next_claim_cost=next_claim_cost,
     )
+    label, cb = cta if cta else (None, None)
     return home_kb(
         fid,
         label,
