@@ -55,7 +55,18 @@ def test_declared_ongoing_kinds_are_reachable_on_engine_paths():
         for decl in contract.modifiers
     }
     assert declared <= LIVE_READ_MODIFIER_KINDS
-    src = inspect.getsource(Engine)
+    from app.services.caravans import CaravanService
+    from app.services.night_raids import NightRaidResolver
+    from app.services.realm_tick import RealmTickRunner
+    from app.services.world_tick import WorldTickOrchestrator
+
+    src = (
+        inspect.getsource(Engine)
+        + inspect.getsource(CaravanService)
+        + inspect.getsource(NightRaidResolver)
+        + inspect.getsource(RealmTickRunner)
+        + inspect.getsource(WorldTickOrchestrator)
+    )
     for kind in declared:
         method = MODIFIER_SET_KIND_READERS[kind]
         assert f".{method}()" in src
