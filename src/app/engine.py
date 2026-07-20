@@ -77,13 +77,9 @@ from app.domain.rumors import (
     roll_rumor_line,
 )
 from app.domain.resources import (
-    apply_gather_to_stash,
     fief_balance_columns,
     format_daily_production_line,
     format_status_stash_line,
-    gather_forbidden_message,
-    gather_result_text,
-    live_resource_keys,
     pending_from_row,
     resource_name_ru,
     stash_from_row,
@@ -100,6 +96,11 @@ from app.presenters.intents import (
 from app.presenters.map import compose_map_photo, render_map_text
 from app.presenters.status import StatusSnapshot, render_status_card
 from app.services.caravans import CaravanService
+from app.services.land_actions import (
+    LandActionService,
+    try_complete_onboard_build,
+    try_complete_onboard_claim,
+)
 from app.services.pacts import PactService
 from app.services.night_raids import NightRaidResolver
 from app.domain.tick_pipeline import (
@@ -229,27 +230,6 @@ def onboard_patience_hint(
             f"Пока копите товары или зайдите на рынок: стройка от {build_s}."
         )
     return None
-
-
-def try_complete_onboard_claim(fief: dict) -> dict | None:
-    """Шаг 2: занятие земли → шаг 3 и награда товарами. Идемпотентно."""
-    if int(fief["onboard_step"]) != 2:
-        return None
-    return {
-        "onboard_step": 3,
-        "goods": int(fief["goods"]) + B.ONBOARD_DAY2_GOODS,
-    }
-
-
-def try_complete_onboard_build(fief: dict) -> dict | None:
-    """Шаг 3: строительство → шаг 4 и награда товарами. Идемпотентно."""
-    if int(fief["onboard_step"]) != 3:
-        return None
-    return {
-        "onboard_step": 4,
-        "goods": int(fief["goods"]) + B.ONBOARD_DAY3_GOODS,
-    }
-
 
 def raid_pact_unlocked(*, onboard_step: int, day_number: int) -> bool:
     """Набег/Пакт в UI: квесты закрыты (onboard_step >= 4) и день долины >= RAID_PACT_UNLOCK_DAY."""
@@ -955,263 +935,28 @@ class Engine:
         fief.update(updated)
         return updated
 
+
     def claim_tile(self, fief_id: int, x: int, y: int) -> str:
-        fief = self.db.get_fief(fief_id)
-        self.collect_for_fief(fief_id)
-        fief = self.db.get_fief(fief_id)
-        tiles = self.db.fief_tiles(fief_id)
-        n = len([t for t in tiles if not t.get("is_overgrown")]) + 1
-        if n > B.TILE_HARD_CAP:
-            raise ValueError("Достигнут предел клеток")
-        realm_id = fief["realm_id"]
-        target = self.db.get_tile(realm_id, x, y)
-        if not target:
-            raise ValueError("Клетка не существует")
-        if target["owner_fief_id"] is not None and not target.get("is_overgrown"):
-            raise ValueError("Клетка занята")
-        realm = self.db.get_realm(realm_id)
-        views = {(t.x, t.y): t for t in self.tile_views(realm_id)}
-        owned = {(t["x"], t["y"]) for t in tiles if not t.get("is_overgrown")}
-        if (x, y) not in adjacent_claimable(
-            owned,
-            views,
-            width=realm["width"],
-            height=realm["height"],
-            for_fief_id=fief_id,
-        ):
-            raise ValueError("Клетка не соседняя")
-
-        is_wilds = target["tile_type"] == B.TILE_WILDS
-        if target.get("is_overgrown"):
-            prev = target.get("owner_fief_id")
-            cost = B.claim_cost(n, is_wilds=False)
-            if fief["goods"] < cost:
-                raise ValueError(f"Нужно {cost} товаров")
-            with self.db.transaction():
-                self._spend_action(fief)
-                if not self.db.debit_fief_resources(fief_id, goods=cost):
-                    raise ValueError(f"Нужно {cost} товаров")
-                if prev and prev != fief_id:
-                    comp = absence_mod.compensation_for_claim(cost)
-                    prev_f = self.db.get_fief(prev)
-                    if prev_f:
-                        self.db.update_fief(prev, goods=prev_f["goods"] + comp)
-                self.db.update_tile(
-                    target["id"],
-                    owner_fief_id=fief_id,
-                    is_overgrown=False,
-                    is_core=(n <= 2),
-                    building=None,
-                    building_level=0,
-                    damaged=False,
-                )
-                if n == 2:
-                    for t in self.db.fief_tiles(fief_id):
-                        self.db.update_tile(t["id"], is_core=True)
-                self.maybe_grow_map(realm_id)
-            self._onboard_claim(fief_id)
-            return f"Занята заросшая клетка {coord_label(x, y)} (−{cost} товаров)."
-
-        cost = B.claim_cost(n, is_wilds=is_wilds)
-        if fief["goods"] < cost:
-            raise ValueError(f"Нужно {cost} товаров (у вас {fief['goods']})")
-
-        new_type = target["tile_type"]
-        ruins_loot = 0
-        if is_wilds:
-            new_type = random.choice(B.WILDS_CLEAR_TO)
-        if new_type == B.TILE_RUINS and not target.get("ruins_looted"):
-            ruins_loot = random.randint(B.RUINS_LOOT_MIN, B.RUINS_LOOT_MAX)
-
-        with self.db.transaction():
-            self._spend_action(fief)
-            if not self.db.debit_fief_resources(fief_id, goods=cost):
-                raise ValueError(f"Нужно {cost} товаров (у вас {fief['goods']})")
-
-            if ruins_loot:
-                fief = self.db.get_fief(fief_id)
-                cap = B.stash_cap(self.barn_level(fief_id))
-                add = min(ruins_loot, max(0, cap - fief["goods"]))
-                self.db.update_fief(fief_id, goods=fief["goods"] + add)
-
-            self.db.update_tile(
-                target["id"],
-                owner_fief_id=fief_id,
-                tile_type=new_type,
-                is_core=(n <= 2),
-                ruins_looted=True if new_type == B.TILE_RUINS or target.get("ruins_looted") else target.get("ruins_looted"),
-                is_overgrown=False,
-            )
-            if n == 2:
-                for t in self.db.fief_tiles(fief_id):
-                    self.db.update_tile(t["id"], is_core=True)
-
-            self.maybe_grow_map(realm_id)
-        self._onboard_claim(fief_id)
-        extra = f" Находка в руинах: +{ruins_loot} товаров." if ruins_loot else ""
-        if is_wilds:
-            extra = f" Глушь расчищена → {B.TILE_NAMES_RU[new_type]}." + extra
-        return f"Клетка {coord_label(x, y)} присоединена (−{cost} товаров).{extra}"
+        return LandActionService(self).claim_tile(fief_id, x, y)
 
     def build_or_upgrade(self, fief_id: int, x: int, y: int, building: str) -> str:
-        if building not in B.BUILDING_COSTS:
-            raise ValueError("Неизвестное здание")
-        fief = self.db.get_fief(fief_id)
-        self.collect_for_fief(fief_id)
-        fief = self.db.get_fief(fief_id)
-        tile = self.db.get_tile(fief["realm_id"], x, y)
-        if not tile or tile["owner_fief_id"] != fief_id:
-            raise ValueError("Это не ваша клетка")
-        if tile.get("is_overgrown"):
-            raise ValueError("Клетка заросла")
-        if tile["tile_type"] == B.TILE_WILDS:
-            raise ValueError("Сначала расчистите глушь (займите клетку)")
-
-        current = tile.get("building")
-        level = int(tile.get("building_level") or 0)
-        damaged = bool(tile.get("damaged"))
-
-        if damaged and current:
-            # ремонт = половина стоимости текущего уровня
-            cost = B.repair_cost(current, level)
-            if fief["goods"] < cost:
-                raise ValueError(f"Ремонт: нужно {cost} товаров")
-            with self.db.transaction():
-                self._spend_action(fief)
-                if not self.db.debit_fief_resources(fief_id, goods=cost):
-                    raise ValueError(f"Ремонт: нужно {cost} товаров")
-                self.db.update_tile(tile["id"], damaged=False)
-            self._onboard_build(fief_id)
-            return f"Отремонтирован {B.BUILDING_NAMES_RU[current]} {level} (−{cost} товаров)."
-
-        if current == B.BLD_MANOR:
-            raise ValueError("Двор - главная клетка, его нельзя заменить")
-        if building == B.BLD_MANOR:
-            raise ValueError("Двор ставится только при основании усадьбы")
-        if building not in B.PLAYER_BUILDINGS:
-            raise ValueError("Неизвестное здание")
-        if current and current != building:
-            raise ValueError("На клетке уже другое здание - сначала снесите его")
-        if not current:
-            target_level = 1
-        else:
-            target_level = level + 1
-        if target_level > 3:
-            raise ValueError("Максимальный уровень")
-        # если damaged сбросили выше; апгрейд
-        cost = B.building_upgrade_cost(building, target_level)
-        realm = self.db.get_realm(fief["realm_id"])
-        # Снимок катастроф до write-транзакции: collect чистый, без commit внутри tx.
-        build_mods = self.realm_modifiers(realm)
-        cost = B.scaled_building_cost(cost, build_mods.upgrade_cost_mult())
-        if fief["goods"] < cost:
-            raise ValueError(f"Нужно {cost} товаров")
-        with self.db.transaction():
-            self._spend_action(fief)
-            if not self.db.debit_fief_resources(fief_id, goods=cost):
-                raise ValueError(f"Нужно {cost} товаров")
-            self.db.update_tile(
-                tile["id"],
-                building=building,
-                building_level=target_level,
-                damaged=False,
-            )
-        self._onboard_build(fief_id)
-        return f"{B.BUILDING_NAMES_RU[building]} {target_level} на {coord_label(x, y)} (−{cost} товаров)."
+        return LandActionService(self).build_or_upgrade(fief_id, x, y, building)
 
     def demolish_building(self, fief_id: int, x: int, y: int) -> str:
-        """Снос здания на клетке: 1 действие, возврат доли вложенных товаров."""
-        fief = self.db.get_fief(fief_id)
-        if not fief:
-            raise ValueError("Усадьба не найдена")
-        tile = self.db.get_tile(fief["realm_id"], x, y)
-        if not tile or tile["owner_fief_id"] != fief_id:
-            raise ValueError("Это не ваша клетка")
-        if tile.get("is_overgrown"):
-            raise ValueError("Клетка заросла")
-        building = tile.get("building")
-        level = int(tile.get("building_level") or 0)
-        if not building or level <= 0:
-            raise ValueError("На клетке нет здания")
-        if building == B.BLD_MANOR or tile.get("is_core"):
-            raise ValueError("Главную клетку с двором снести нельзя")
-        if building not in B.BUILDING_COSTS:
-            raise ValueError("Это здание нельзя снести")
-        refund = B.demolish_refund_goods(building, level)
-        with self.db.transaction():
-            self._spend_action(fief)
-            fief = self.db.get_fief(fief_id)
-            self.db.update_fief(fief_id, goods=int(fief["goods"]) + refund)
-            self.db.update_tile(
-                tile["id"],
-                building=None,
-                building_level=0,
-                damaged=False,
-            )
-        name = B.BUILDING_NAMES_RU.get(building, building)
-        return (
-            f"Снесено: {name} {level} на {coord_label(x, y)}. "
-            f"Возврат {refund} товаров ({int(B.DEMOLISH_REFUND_FRAC * 100)}%)."
-        )
+        return LandActionService(self).demolish_building(fief_id, x, y)
 
     def gather_resource(self, fief_id: int, resource: str) -> str:
-        """Потратить 1 действие на плоский сбор одного ресурса."""
-        if resource not in live_resource_keys():
-            raise ValueError(gather_forbidden_message())
-        fief = self.db.get_fief(fief_id)
-        if not fief:
-            raise ValueError("Усадьба не найдена")
-        if fief.get("frozen"):
-            raise ValueError("Усадьба заморожена")
-        amount = B.gather_amount(resource)
-        self.collect_for_fief(fief_id, include_might=(resource != B.RES_MIGHT))
-        fief = self.db.get_fief(fief_id)
-        with self.db.transaction():
-            self._spend_action(fief)
-            fief = self.db.get_fief(fief_id)
-            barn = self.barn_level(fief_id)
-            cap = B.stash_cap(barn)
-            stash, gained = apply_gather_to_stash(
-                stash_from_row(fief), resource, amount, cap=cap
-            )
-            self.db.update_fief(fief_id, **{resource: stash[resource]})
-            return gather_result_text(resource, gained, amount)
+        return LandActionService(self).gather_resource(fief_id, resource)
 
     def _onboard_claim(self, fief_id: int) -> None:
-        fief = self.db.get_fief(fief_id)
-        patch = try_complete_onboard_claim(fief)
-        if patch:
-            self.db.update_fief(fief_id, **patch)
+        return LandActionService(self)._onboard_claim(fief_id)
 
     def _onboard_build(self, fief_id: int) -> None:
-        fief = self.db.get_fief(fief_id)
-        patch = try_complete_onboard_build(fief)
-        if patch:
-            self.db.update_fief(fief_id, **patch)
+        return LandActionService(self)._onboard_build(fief_id)
 
     def patrol(self, fief_id: int) -> str:
-        fief = self.db.get_fief(fief_id)
-        cost = int(B.PATROL_COST_MIGHT)
-        if cost > 0 and fief["might"] < cost:
-            raise ValueError(f"Нужно {cost} силы")
-        with self.db.transaction():
-            self._spend_action(fief)
-            realm = self.db.get_realm(fief["realm_id"]) or {}
-            tick_index = int(realm.get("tick_index") or 0)
-            if cost > 0:
-                if not self.db.debit_fief_resources(fief_id, might=cost):
-                    raise ValueError(f"Нужно {cost} силы")
-            self.db.update_fief(
-                fief_id,
-                patrol_until=None,
-                patrol_until_tick=tick_index + B.PATROL_TICKS,
-            )
-        if cost > 0:
-            return (
-                f"Дозор выставлен на {B.PATROL_TICKS} тик(а) "
-                f"(−{cost} силы)."
-            )
-        return f"Дозор выставлен на {B.PATROL_TICKS} тик(а)."
+        return LandActionService(self).patrol(fief_id)
+
 
     def contribute_catastrophe_might(
         self, event_id: int, user_id: int, amount: int = 5

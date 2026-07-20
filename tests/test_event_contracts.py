@@ -56,6 +56,7 @@ def test_declared_ongoing_kinds_are_reachable_on_engine_paths():
     }
     assert declared <= LIVE_READ_MODIFIER_KINDS
     from app.services.caravans import CaravanService
+    from app.services.land_actions import LandActionService
     from app.services.night_raids import NightRaidResolver
     from app.services.realm_tick import RealmTickRunner
     from app.services.world_tick import WorldTickOrchestrator
@@ -63,6 +64,7 @@ def test_declared_ongoing_kinds_are_reachable_on_engine_paths():
     src = (
         inspect.getsource(Engine)
         + inspect.getsource(CaravanService)
+        + inspect.getsource(LandActionService)
         + inspect.getsource(NightRaidResolver)
         + inspect.getsource(RealmTickRunner)
         + inspect.getsource(WorldTickOrchestrator)
