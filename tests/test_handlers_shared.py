@@ -599,20 +599,17 @@ def test_announce_formatters_escape_names():
 
 
 async def test_announce_realm_posts_to_player_dms(monkeypatch):
-    from app.handlers import shared as shared_mod
+    from app import notifier as notifier_mod
 
     sent: list[tuple[int, str]] = []
 
-    class _Db:
-        def list_fiefs(self, realm_id):
+    class _Engine:
+        def fiefs_of_realm(self, realm_id):
             assert realm_id == 7
             return [
                 {"id": 1, "user_id": 101},
                 {"id": 2, "user_id": 202},
             ]
-
-    class _Engine:
-        db = _Db()
 
     class _Bot:
         pass
@@ -620,73 +617,64 @@ async def test_announce_realm_posts_to_player_dms(monkeypatch):
     async def _fake_send_game(bot, chat_id, text, **kwargs):
         sent.append((chat_id, text))
 
-    monkeypatch.setattr(shared_mod, "get_engine", lambda: _Engine())
-    monkeypatch.setattr(shared_mod, "send_game", _fake_send_game)
+    monkeypatch.setattr(notifier_mod, "get_engine", lambda: _Engine())
+    monkeypatch.setattr(notifier_mod, "send_game", _fake_send_game)
 
-    await shared_mod.announce_realm(_Bot(), 7, "🏡 тест")
+    await notifier_mod.announce_realm(_Bot(), 7, "🏡 тест")
     assert sent == [(101, "🏡 тест"), (202, "🏡 тест")]
 
 
 async def test_announce_realm_skips_empty_realm(monkeypatch):
-    from app.handlers import shared as shared_mod
+    from app import notifier as notifier_mod
 
     called = False
 
-    class _Db:
-        def list_fiefs(self, realm_id):
-            return []
-
     class _Engine:
-        db = _Db()
+        def fiefs_of_realm(self, realm_id):
+            return []
 
     async def _fake_send_game(*_a, **_k):
         nonlocal called
         called = True
 
-    monkeypatch.setattr(shared_mod, "get_engine", lambda: _Engine())
-    monkeypatch.setattr(shared_mod, "send_game", _fake_send_game)
+    monkeypatch.setattr(notifier_mod, "get_engine", lambda: _Engine())
+    monkeypatch.setattr(notifier_mod, "send_game", _fake_send_game)
 
-    await shared_mod.announce_realm(object(), 1, "текст")
+    await notifier_mod.announce_realm(object(), 1, "текст")
     assert called is False
 
 
 async def test_announce_realm_swallows_send_errors(monkeypatch):
-    from app.handlers import shared as shared_mod
-
-    class _Db:
-        def list_fiefs(self, realm_id):
-            return [{"id": 1, "user_id": 9}]
+    from app import notifier as notifier_mod
 
     class _Engine:
-        db = _Db()
+        def fiefs_of_realm(self, realm_id):
+            return [{"id": 1, "user_id": 9}]
 
     async def _boom(*_a, **_k):
         raise RuntimeError("telegram down")
 
-    monkeypatch.setattr(shared_mod, "get_engine", lambda: _Engine())
-    monkeypatch.setattr(shared_mod, "send_game", _boom)
+    monkeypatch.setattr(notifier_mod, "get_engine", lambda: _Engine())
+    monkeypatch.setattr(notifier_mod, "send_game", _boom)
 
-    await shared_mod.announce_realm(object(), 1, "текст")
+    await notifier_mod.announce_realm(object(), 1, "текст")
 
 
 async def test_announce_continent_fans_out_to_adjacent(monkeypatch):
-    from app.handlers import shared as shared_mod
+    from app import notifier as notifier_mod
 
     announced: list[int] = []
 
-    class _Db:
-        def list_adjacent_realms(self, realm_id):
-            assert realm_id == 1
-            return [{"id": 2}, {"id": 3}, {"id": 2}]
-
     class _Engine:
-        db = _Db()
+        def adjacent_realm_ids(self, realm_id):
+            assert realm_id == 1
+            return [2, 3, 2]
 
     async def _fake_announce_realm(bot, realm_id, text, *, reply_markup=None):
         announced.append(int(realm_id))
 
-    monkeypatch.setattr(shared_mod, "get_engine", lambda: _Engine())
-    monkeypatch.setattr(shared_mod, "announce_realm", _fake_announce_realm)
+    monkeypatch.setattr(notifier_mod, "get_engine", lambda: _Engine())
+    monkeypatch.setattr(notifier_mod, "announce_realm", _fake_announce_realm)
 
-    await shared_mod.announce_continent(object(), 1, "🛒 лот")
+    await notifier_mod.announce_continent(object(), 1, "🛒 лот")
     assert announced == [1, 2, 3]

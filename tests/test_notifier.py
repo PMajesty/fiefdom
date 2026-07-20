@@ -22,13 +22,10 @@ async def test_post_realm_public_posts_to_group_chat(monkeypatch):
 
     sent: list[tuple[int, str, object]] = []
 
-    class _Db:
+    class _Engine:
         def get_realm(self, realm_id):
             assert realm_id == 7
             return {"id": 7, "chat_id": -100500}
-
-    class _Engine:
-        db = _Db()
 
     async def _fake_send_game(bot, chat_id, text, **kwargs):
         sent.append((chat_id, text, kwargs.get("reply_markup")))
@@ -50,12 +47,9 @@ async def test_post_realm_public_skips_missing_or_zero_realm(monkeypatch):
 
     called = False
 
-    class _Db:
+    class _Engine:
         def get_realm(self, realm_id):
             return None
-
-    class _Engine:
-        db = _Db()
 
     async def _fake_send_game(*_a, **_k):
         nonlocal called
@@ -73,12 +67,9 @@ async def test_post_realm_public_skips_missing_or_zero_realm(monkeypatch):
 async def test_post_realm_public_swallows_send_errors(monkeypatch):
     from app import notifier as notifier_mod
 
-    class _Db:
+    class _Engine:
         def get_realm(self, realm_id):
             return {"id": 1, "chat_id": -1}
-
-    class _Engine:
-        db = _Db()
 
     async def _boom(*_a, **_k):
         raise RuntimeError("telegram down")

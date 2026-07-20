@@ -204,6 +204,15 @@ class RealmLifecycleService:
     def get_realm(self, realm_id: int) -> dict | None:
         return self._db.get_realm(realm_id)
 
+    def fiefs_of_realm(self, realm_id: int) -> list[dict]:
+        return self._db.list_fiefs(int(realm_id))
+
+    def adjacent_realm_ids(self, realm_id: int) -> list[int]:
+        return [
+            int(nb["id"])
+            for nb in self._db.list_adjacent_realms(int(realm_id))
+        ]
+
     def grant_resources(
         self,
         realm_id: int,

@@ -22,12 +22,14 @@ from app.messaging import (
     answer_photo_bytes,
     escape_html,
     reply_guide_document,
-    send_game,
 )
 from app.notifier import (
+    announce_continent,
+    announce_realm,
     bot_username_or_none,
     deep_link_url,
     open_estate_kb,
+    post_continent_public,
     post_digest,
     post_realm_public,
 )
@@ -134,79 +136,6 @@ def format_pact_leave_announce(
         f"🤝 {escape_html(fief_name)} больше не в пакте "
         f"\"{escape_html(pact_name)}\""
     )
-
-
-async def announce_realm(
-    bot, realm_id: int, text: str, *, reply_markup=None
-) -> None:
-    """Короткое объявление владельцам усадеб долины в личку. Ошибки не роняют хендлер."""
-    if not text:
-        return
-    try:
-        engine = get_engine()
-        for fief in engine.db.list_fiefs(int(realm_id)):
-            uid = fief.get("user_id")
-            if not uid:
-                continue
-            try:
-                await send_game(
-                    bot, int(uid), text, reply_markup=reply_markup
-                )
-            except Exception:
-                logger.warning(
-                    "announce_realm dm failed user=%s realm_id=%s",
-                    uid,
-                    realm_id,
-                    exc_info=True,
-                )
-    except Exception:
-        logger.warning("announce_realm failed realm_id=%s", realm_id, exc_info=True)
-
-
-async def announce_continent(
-    bot, realm_id: int, text: str, *, reply_markup=None
-) -> None:
-    """Объявление всем усадьбам континента (своя долина и остальные долины мира)."""
-    if not text:
-        return
-    seen: set[int] = set()
-    try:
-        engine = get_engine()
-        targets = [int(realm_id)]
-        for nb in engine.db.list_adjacent_realms(int(realm_id)):
-            targets.append(int(nb["id"]))
-        for rid in targets:
-            if rid in seen:
-                continue
-            seen.add(rid)
-            await announce_realm(bot, rid, text, reply_markup=reply_markup)
-    except Exception:
-        logger.warning(
-            "announce_continent failed realm_id=%s", realm_id, exc_info=True
-        )
-
-
-async def post_continent_public(
-    bot, realm_id: int, text: str, *, reply_markup=None
-) -> None:
-    """Крупный обоз: в групповые чаты всех долин континента."""
-    if not text:
-        return
-    seen: set[int] = set()
-    try:
-        engine = get_engine()
-        targets = [int(realm_id)]
-        for nb in engine.db.list_adjacent_realms(int(realm_id)):
-            targets.append(int(nb["id"]))
-        for rid in targets:
-            if rid in seen:
-                continue
-            seen.add(rid)
-            await post_realm_public(bot, rid, text, reply_markup=reply_markup)
-    except Exception:
-        logger.warning(
-            "post_continent_public failed realm_id=%s", realm_id, exc_info=True
-        )
 
 
 def map_realms_kb(

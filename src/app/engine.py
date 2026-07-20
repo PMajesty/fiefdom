@@ -258,6 +258,12 @@ class Engine:
     def get_realm(self, realm_id: int) -> dict | None:
         return RealmLifecycleService(self).get_realm(realm_id)
 
+    def fiefs_of_realm(self, realm_id: int) -> list[dict]:
+        return RealmLifecycleService(self).fiefs_of_realm(realm_id)
+
+    def adjacent_realm_ids(self, realm_id: int) -> list[int]:
+        return RealmLifecycleService(self).adjacent_realm_ids(realm_id)
+
     def grant_resources(
         self,
         realm_id: int,
