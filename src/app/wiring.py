@@ -1,3 +1,8 @@
+"""Composition root: сборка Engine и выдача зависимостей.
+
+Хендлеры вызывают только публичные API Engine/сервисов.
+Прямой доступ к БД и приватным членам Engine отсюда не раздаётся.
+"""
 from __future__ import annotations
 
 from app.database import get_db
