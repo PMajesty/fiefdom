@@ -7,8 +7,8 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery
 
 from app import balance as B
-from app.domain.economy import adjacent_claimable
 from app.domain.resources import resource_defs
+from app.engine import raid_pact_lock_message
 from app.handlers import dm as dm_mod
 from app.handlers.shared import (
     estate_hub_kb,
@@ -27,8 +27,13 @@ from app.handlers.shared import (
     reply_map_photo,
     valley_hub_kb,
 )
-from app.engine import raid_pact_lock_message
 from app.messaging import answer_html
+from app.ui.flows import (
+    claim_offer,
+    pact_menu_offer,
+    raid_targets_offer,
+    send_offer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -499,42 +504,19 @@ async def cb_claim(callback: CallbackQuery) -> None:
         fief = engine.require_owned_fief(fief_id, callback.from_user.id)
 
         if len(parts) == 2:
-            views = engine.tile_views(fief["realm_id"])
-            owned = {
-                (t.x, t.y)
-                for t in views
-                if t.owner_fief_id == fief_id and not t.is_overgrown
-            }
-            by_xy = {(t.x, t.y): t for t in views}
-            realm = engine.get_realm(fief["realm_id"])
-            claimable = sorted(
-                adjacent_claimable(
-                    owned,
-                    by_xy,
-                    width=realm["width"],
-                    height=realm["height"],
-                    for_fief_id=fief_id,
-                )
+            claimable, tile_meta, next_tile_count = dm_mod.claim_offer_data(
+                engine, fief
+            )
+            text, kb = claim_offer(
+                fief_id,
+                claimable,
+                next_tile_count=next_tile_count,
+                tile_meta=tile_meta,
+                empty_text="Нет клеток для занятия.",
+                prompt_text="Выберите клетку:",
             )
             await _ok(callback)
-            if not claimable:
-                await answer_html(callback.message, "Нет клеток для занятия.")
-                return
-            tile_meta = {
-                (x, y): (by_xy[(x, y)].tile_type, by_xy[(x, y)].is_overgrown)
-                for x, y in claimable
-                if (x, y) in by_xy
-            }
-            await answer_html(
-                callback.message,
-                "Выберите клетку:",
-                reply_markup=dm_mod.claimable_kb(
-                    fief_id,
-                    claimable,
-                    next_tile_count=len(owned) + 1,
-                    tile_meta=tile_meta,
-                ),
-            )
+            await answer_html(callback.message, text, reply_markup=kb)
             return
 
         x, y = int(parts[2]), int(parts[3])
@@ -669,17 +651,18 @@ async def cb_raid(callback: CallbackQuery) -> None:
 
         if len(parts) == 2:
             others = engine.list_raid_target_fiefs(fief_id)
-            await _ok(callback)
-            if not others:
-                await answer_html(callback.message, "Некого грабить.")
-                return
-            await answer_html(
-                callback.message,
-                "Выберите цель (любая долина континента).\n"
-                "Точная сила скрыта - смотрите слухи или спрашивайте. "
-                "Защита цели - дружина на месте, сторожка, дозор и перехват пакта.",
-                reply_markup=dm_mod.raid_targets_kb(fief_id, others, engine),
+            text, kb = raid_targets_offer(
+                fief_id,
+                dm_mod.raid_target_rows(others, engine),
+                empty_text="Некого грабить.",
+                prompt_text=(
+                    "Выберите цель (любая долина континента).\n"
+                    "Точная сила скрыта - смотрите слухи или спрашивайте. "
+                    "Защита цели - дружина на месте, сторожка, дозор и перехват пакта."
+                ),
             )
+            await _ok(callback)
+            await answer_html(callback.message, text, reply_markup=kb)
             return
 
         victim_id = int(parts[2])
@@ -792,17 +775,9 @@ async def cb_send(callback: CallbackQuery) -> None:
                 "realm_id": fief["realm_id"],
             },
         )
+        text, kb = send_offer(fief_id)
         await _ok(callback)
-        await reply_game(
-            callback.message,
-            "Куда отправить обоз с зерном или товарами?\n"
-            "Напишите id усадьбы, имя или @username.\n"
-            "Обоз идёт до следующего колокола тика; пока в пути - можно вернуть. "
-            f"От {B.CARAVAN_PUBLIC_AMOUNT} и больше долина увидит выезд; "
-            "мелкое - только адресату. Силу везти нельзя.\n"
-            "Или напишите \"отмена\".",
-            reply_markup=dm_mod.pending_cancel_kb(fief_id),
-        )
+        await reply_game(callback.message, text, reply_markup=kb)
     except ValueError as exc:
         await callback.answer(str(exc), show_alert=True)
     except Exception:
@@ -884,17 +859,19 @@ async def cb_pact(callback: CallbackQuery) -> None:
         if action == "menu":
             in_pact = bool(fief.get("pact_id"))
             is_founder = False
-            text = "Вы не в пакте."
+            menu_text = "Вы не в пакте."
             if in_pact:
                 pact = engine.get_pact(fief["pact_id"])
                 is_founder = bool(pact and pact["founder_fief_id"] == fief_id)
-                text = f"Пакт \"{pact['name']}\"." if pact else "Пакт."
-            await _ok(callback)
-            await answer_html(
-                callback.message,
-                text,
-                reply_markup=dm_mod.pact_kb(fief_id, in_pact, is_founder),
+                menu_text = f"Пакт \"{pact['name']}\"." if pact else "Пакт."
+            text, kb = pact_menu_offer(
+                fief_id,
+                in_pact=in_pact,
+                is_founder=is_founder,
+                text=menu_text,
             )
+            await _ok(callback)
+            await answer_html(callback.message, text, reply_markup=kb)
             return
 
         if action == "new":

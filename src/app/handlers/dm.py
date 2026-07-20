@@ -28,6 +28,12 @@ from app.handlers.shared import (
     resolve_fief_for_user,
 )
 from app.messaging import answer_html
+from app.ui.flows import (
+    claim_offer,
+    pact_menu_offer,
+    raid_targets_offer,
+    send_offer,
+)
 from app.ui.keyboards import (
     building_types_kb,
     build_tiles_kb,
@@ -170,10 +176,8 @@ def realm_picker_kb(fiefs: list[dict], engine) -> InlineKeyboardMarkup:
     return realm_picker_kb_plain(entries)
 
 
-def raid_targets_kb(
-    fief_id: int, others: list[dict], engine=None
-) -> InlineKeyboardMarkup:
-    """Адаптер: подписи целей через Engine (или name), разметка в ui.keyboards."""
+def raid_target_rows(others: list[dict], engine=None) -> list[dict]:
+    """Подписи целей набега: id/label/might для ui.keyboards.raid_targets_kb."""
     targets: list[dict] = []
     for o in others[:20]:
         label = engine.fief_label(o) if engine is not None else o["name"]
@@ -184,7 +188,41 @@ def raid_targets_kb(
         targets.append(
             {"id": o["id"], "label": label, "might": o.get("might") or 0}
         )
-    return raid_targets_kb_plain(fief_id, targets)
+    return targets
+
+
+def raid_targets_kb(
+    fief_id: int, others: list[dict], engine=None
+) -> InlineKeyboardMarkup:
+    """Адаптер: подписи целей через Engine (или name), разметка в ui.keyboards."""
+    return raid_targets_kb_plain(fief_id, raid_target_rows(others, engine))
+
+
+def claim_offer_data(engine, fief: dict) -> tuple[list[tuple[int, int]], dict, int]:
+    """claimable coords, tile_meta, next_tile_count для claim_offer."""
+    views = engine.tile_views(fief["realm_id"])
+    owned = {
+        (t.x, t.y)
+        for t in views
+        if t.owner_fief_id == fief["id"] and not t.is_overgrown
+    }
+    by_xy = {(t.x, t.y): t for t in views}
+    realm = engine.get_realm(fief["realm_id"])
+    claimable = sorted(
+        adjacent_claimable(
+            owned,
+            by_xy,
+            width=realm["width"],
+            height=realm["height"],
+            for_fief_id=fief["id"],
+        )
+    )
+    tile_meta = {
+        (x, y): (by_xy[(x, y)].tile_type, by_xy[(x, y)].is_overgrown)
+        for x, y in claimable
+        if (x, y) in by_xy
+    }
+    return claimable, tile_meta, len(owned) + 1
 
 
 async def show_status(message: Message, fief_id: int) -> None:
@@ -435,54 +473,21 @@ async def _offer_send(message: Message, engine, fief: dict) -> None:
             "realm_id": fief["realm_id"],
         },
     )
-    await reply_game(
-        message,
-        "Куда отправить обоз с зерном или товарами?\n"
-        "Напишите id усадьбы, имя или @username.\n"
-        "Обоз идёт до следующего колокола тика; пока в пути - можно вернуть. "
-        f"От {B.CARAVAN_PUBLIC_AMOUNT} и больше долина увидит выезд; "
-        "мелкое - только адресату. Силу везти нельзя.\n"
-        "Или напишите \"отмена\".",
-        reply_markup=pending_cancel_kb(fief["id"]),
-    )
+    text, kb = send_offer(int(fief["id"]))
+    await reply_game(message, text, reply_markup=kb)
 
 
 async def _offer_claim(message: Message, engine, fief: dict) -> None:
-    views = engine.tile_views(fief["realm_id"])
-    owned = {
-        (t.x, t.y)
-        for t in views
-        if t.owner_fief_id == fief["id"] and not t.is_overgrown
-    }
-    by_xy = {(t.x, t.y): t for t in views}
-    realm = engine.get_realm(fief["realm_id"])
-    claimable = sorted(
-        adjacent_claimable(
-            owned,
-            by_xy,
-            width=realm["width"],
-            height=realm["height"],
-            for_fief_id=fief["id"],
-        )
+    claimable, tile_meta, next_tile_count = claim_offer_data(engine, fief)
+    text, kb = claim_offer(
+        int(fief["id"]),
+        claimable,
+        next_tile_count=next_tile_count,
+        tile_meta=tile_meta,
+        empty_text="Нет соседних клеток для занятия.",
+        prompt_text="Выберите клетку для занятия:",
     )
-    if not claimable:
-        await answer_html(message, "Нет соседних клеток для занятия.")
-        return
-    tile_meta = {
-        (x, y): (by_xy[(x, y)].tile_type, by_xy[(x, y)].is_overgrown)
-        for x, y in claimable
-        if (x, y) in by_xy
-    }
-    await answer_html(
-        message,
-        "Выберите клетку для занятия:",
-        reply_markup=claimable_kb(
-            fief["id"],
-            claimable,
-            next_tile_count=len(owned) + 1,
-            tile_meta=tile_meta,
-        ),
-    )
+    await answer_html(message, text, reply_markup=kb)
 
 
 async def _offer_raid(message: Message, engine, fief: dict) -> None:
@@ -500,16 +505,17 @@ async def _offer_raid(message: Message, engine, fief: dict) -> None:
         )
         return
     others = engine.list_raid_target_fiefs(int(fief["id"]))
-    if not others:
-        await answer_html(message, "Некого грабить.")
-        return
-    await answer_html(
-        message,
-        "Выберите цель набега (любая долина континента).\n"
-        "Точная сила скрыта - смотрите слухи или спрашивайте. "
-        "Защита цели - дружина на месте, сторожка, дозор и перехват пакта.",
-        reply_markup=raid_targets_kb(fief["id"], others, engine),
+    text, kb = raid_targets_offer(
+        int(fief["id"]),
+        raid_target_rows(others, engine),
+        empty_text="Некого грабить.",
+        prompt_text=(
+            "Выберите цель набега (любая долина континента).\n"
+            "Точная сила скрыта - смотрите слухи или спрашивайте. "
+            "Защита цели - дружина на месте, сторожка, дозор и перехват пакта."
+        ),
     )
+    await answer_html(message, text, reply_markup=kb)
 
 
 async def _offer_pact(message: Message, engine, fief: dict) -> None:
@@ -532,14 +538,16 @@ async def _offer_pact(message: Message, engine, fief: dict) -> None:
         pact = engine.get_pact(fief["pact_id"])
         is_founder = bool(pact and pact["founder_fief_id"] == fief["id"])
         name = pact["name"] if pact else "?"
-        text = f"Пакт \"{name}\"."
+        menu_text = f"Пакт \"{name}\"."
     else:
-        text = "Вы не в пакте."
-    await answer_html(
-        message,
-        text,
-        reply_markup=pact_kb(fief["id"], in_pact, is_founder),
+        menu_text = "Вы не в пакте."
+    text, kb = pact_menu_offer(
+        int(fief["id"]),
+        in_pact=in_pact,
+        is_founder=is_founder,
+        text=menu_text,
     )
+    await answer_html(message, text, reply_markup=kb)
 
 
 async def _handle_pending(message: Message, engine, pending: dict, text: str) -> bool:
