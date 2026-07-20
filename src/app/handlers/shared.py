@@ -68,27 +68,9 @@ def parse_start_payload(payload: str | None) -> tuple[str | None, int | None]:
 
 def resolve_realm_for_user(engine: Engine, user_id: int, chat: Any = None) -> dict | None:
     """Realm из группового чата, last_realm с усадьбой пользователя или единственной усадьбы."""
-    db = engine.db
-    if chat is not None:
-        chat_type = getattr(chat, "type", None)
-        chat_id = getattr(chat, "id", None)
-        if chat_type in ("group", "supergroup") and chat_id is not None:
-            return db.get_realm_by_chat(chat_id)
+    from app.services.player_context import PlayerContextService
 
-    user = db.get_user(user_id)
-    last_realm_id = user.get("last_realm_id") if user else None
-    if last_realm_id:
-        realm = db.get_realm(last_realm_id)
-        if realm and db.get_fief_by_user(int(realm["id"]), user_id):
-            return realm
-
-    fiefs = db.list_fiefs_by_user(user_id)
-    if len(fiefs) == 1:
-        owned_realm_id = int(fiefs[0]["realm_id"])
-        if last_realm_id is not None and int(last_realm_id) != owned_realm_id:
-            db.set_last_realm(user_id, owned_realm_id)
-        return db.get_realm(owned_realm_id)
-    return None
+    return PlayerContextService(engine).resolve_realm_for_user(user_id, chat)
 
 
 def resolve_fief_for_user(
@@ -96,18 +78,9 @@ def resolve_fief_for_user(
     user_id: int,
     realm_id: int | None = None,
 ) -> dict | None:
-    db = engine.db
-    if realm_id is not None:
-        return db.get_fief_by_user(realm_id, user_id)
-    realm = resolve_realm_for_user(engine, user_id)
-    if realm:
-        fief = db.get_fief_by_user(realm["id"], user_id)
-        if fief:
-            return fief
-    fiefs = db.list_fiefs_by_user(user_id)
-    if len(fiefs) == 1:
-        return fiefs[0]
-    return None
+    from app.services.player_context import PlayerContextService
+
+    return PlayerContextService(engine).resolve_fief_for_user(user_id, realm_id)
 
 
 def format_join_announce(fief_name: str) -> str:

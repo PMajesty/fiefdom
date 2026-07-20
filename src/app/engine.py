@@ -226,6 +226,7 @@ def raid_pact_lock_message(*, onboard_step: int, day_number: int) -> str:
 
 
 from app.services.catastrophes import CatastropheService
+from app.services.player_context import PlayerContextService
 from app.services.raid_declare import RaidDeclareService
 from app.services.realm_admin import RealmLifecycleService
 from app.services.rumors import RumorService
@@ -284,6 +285,29 @@ class Engine:
 
     def realms_of_world(self, world_id: int) -> list[dict]:
         return self.db.list_realms_by_chain(world_id)
+
+    def resolve_realm_for_user(self, user_id: int, chat: Any = None) -> dict | None:
+        return PlayerContextService(self).resolve_realm_for_user(user_id, chat)
+
+    def resolve_fief_for_user(
+        self, user_id: int, realm_id: int | None = None
+    ) -> dict | None:
+        return PlayerContextService(self).resolve_fief_for_user(user_id, realm_id)
+
+    def remember_last_realm(self, user_id: int, realm_id: int) -> None:
+        return PlayerContextService(self).remember_last_realm(user_id, realm_id)
+
+    def realm_by_chat(self, chat_id: int) -> dict | None:
+        return PlayerContextService(self).realm_by_chat(chat_id)
+
+    def fief_of_user_in_realm(self, user_id: int, realm_id: int) -> dict | None:
+        return PlayerContextService(self).fief_of_user_in_realm(user_id, realm_id)
+
+    def fief_of_user_in_world(self, user_id: int, world_id: int) -> dict | None:
+        return PlayerContextService(self).fief_of_user_in_world(user_id, world_id)
+
+    def fiefs_of_user(self, user_id: int) -> list[dict]:
+        return PlayerContextService(self).fiefs_of_user(user_id)
 
     # ---------- join / onboarding ----------
     def ensure_user(self, user) -> None:

@@ -19,7 +19,7 @@ OCCURRENCE_FREEZE: dict[str, int] = {
     "src/app/handlers/callbacks.py": 21,
     "src/app/handlers/admin.py": 0,
     "src/app/handlers/group.py": 5,
-    "src/app/handlers/shared.py": 9,
+    "src/app/handlers/shared.py": 7,
     "src/app/scheduler.py": 0,
     "src/app/patch_announce.py": 3,
     "src/app/notifier.py": 1,
@@ -27,9 +27,7 @@ OCCURRENCE_FREEZE: dict[str, int] = {
     "src/app/messaging.py": 0,
 }
 
-ALIAS_FREEZE: dict[str, int] = {
-    "src/app/handlers/shared.py": 2,
-}
+ALIAS_FREEZE: dict[str, int] = {}
 
 INFRA_FILES = (
     "src/app/scheduler.py",
