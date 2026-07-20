@@ -50,9 +50,9 @@ def test_claim_costs():
 def test_claim_costs_fit_barn_caps():
     assert B.stash_cap(0) == 150
     assert B.BARN_CAP == {1: 250, 2: 450, 3: 800}
-    # Soft bands: no barn → 2..4; I → 5..6; II → 7; III → 8..9
-    assert B.claim_fits_stash(B.claim_cost(4), 0)
-    assert not B.claim_fits_stash(B.claim_cost(5), 0)
+    # Soft bands: no barn → 2..5; I → 6; II → 7; III → 8..9
+    assert B.claim_fits_stash(B.claim_cost(5), 0)
+    assert not B.claim_fits_stash(B.claim_cost(6), 0)
     assert B.claim_fits_stash(B.claim_cost(6), 1)
     assert not B.claim_fits_stash(B.claim_cost(7), 1)
     assert B.claim_fits_stash(B.claim_cost(7), 2)
@@ -65,20 +65,20 @@ def test_claim_cost_refund_delta():
     assert B.claim_cost_refund_delta(2) == 0
     assert B.claim_cost_refund_delta(3) == 15
     assert B.claim_cost_refund_delta(4) == 45
-    assert B.claim_cost_refund_delta(5) == 120
-    assert B.claim_cost_refund_delta(6) == 300
-    assert B.claim_cost_refund_delta(7) == 540
-    assert B.claim_cost_refund_delta(8) == 870
-    assert B.claim_cost_refund_delta(9) == 1320
-    assert B.claim_cost_refund_delta(99) == 1320
+    assert B.claim_cost_refund_delta(5) == 145
+    assert B.claim_cost_refund_delta(6) == 325
+    assert B.claim_cost_refund_delta(7) == 565
+    assert B.claim_cost_refund_delta(8) == 895
+    assert B.claim_cost_refund_delta(9) == 1345
+    assert B.claim_cost_refund_delta(99) == 1345
 
 
 def test_claim_stash_gate_message():
-    assert B.claim_stash_gate_message(90, 0) is None
-    msg = B.claim_stash_gate_message(175, 0)
+    assert B.claim_stash_gate_message(150, 0) is None
+    msg = B.claim_stash_gate_message(220, 0)
     assert msg is not None
     assert B.CLAIM_STASH_TOO_SMALL in msg
-    assert "175" in msg
+    assert "220" in msg
     assert "150" in msg
 
 

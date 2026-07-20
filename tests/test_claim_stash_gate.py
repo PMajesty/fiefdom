@@ -50,9 +50,9 @@ def _claim_service(*, barn: int, goods: int, tiles_n: int, tile_type: str):
 
 
 def test_claim_blocked_when_cost_above_stash_cap():
-    # 4 клетки → следующая №5 стоит 175, без амбара cap=150
+    # 5 клеток → следующая №6 стоит 220, без амбара cap=150
     svc, db, _engine = _claim_service(
-        barn=0, goods=500, tiles_n=4, tile_type=B.TILE_FIELD
+        barn=0, goods=500, tiles_n=5, tile_type=B.TILE_FIELD
     )
     with patch(
         "app.services.land_actions.adjacent_claimable",
@@ -65,7 +65,7 @@ def test_claim_blocked_when_cost_above_stash_cap():
 
 def test_claim_allowed_when_barn_covers_cost():
     svc, db, _engine = _claim_service(
-        barn=1, goods=500, tiles_n=4, tile_type=B.TILE_FIELD
+        barn=1, goods=500, tiles_n=5, tile_type=B.TILE_FIELD
     )
     with patch(
         "app.services.land_actions.adjacent_claimable",
@@ -86,11 +86,11 @@ def test_claim_prompt_appends_stash_hint():
     fief = {"id": 3}
     tile_meta = {(1, 0): (B.TILE_FIELD, False)}
     text = claim_prompt_text(
-        engine, fief, 5, tile_meta, base="Выберите клетку:"
+        engine, fief, 6, tile_meta, base="Выберите клетку:"
     )
     assert text.startswith("Выберите клетку:")
     assert B.CLAIM_STASH_TOO_SMALL in text
-    assert "175" in text
+    assert "220" in text
 
 
 def test_claim_prompt_clear_when_barn_enough():
@@ -99,6 +99,6 @@ def test_claim_prompt_clear_when_barn_enough():
     fief = {"id": 3}
     tile_meta = {(1, 0): (B.TILE_FIELD, False)}
     text = claim_prompt_text(
-        engine, fief, 5, tile_meta, base="Выберите клетку:"
+        engine, fief, 6, tile_meta, base="Выберите клетку:"
     )
     assert text == "Выберите клетку:"

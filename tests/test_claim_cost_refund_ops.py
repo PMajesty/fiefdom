@@ -50,7 +50,7 @@ def test_plan_from_fief_tile_counts_matches_delta_table():
         (3, 11, 9, B.claim_cost_refund_delta(9)),
     ]
     assert planned[0][3] == 45
-    assert planned[1][3] == 1320
+    assert planned[1][3] == 1345
 
 
 def test_apply_refunds_replace_marker_deletes_before_insert():
