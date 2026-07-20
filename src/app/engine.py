@@ -741,6 +741,12 @@ class Engine:
         return updated
 
 
+    def demolish_options(self, fief_id: int) -> list[dict]:
+        return LandActionService(self).demolish_options(fief_id)
+
+    def build_options(self, fief_id: int) -> tuple[list[dict], float]:
+        return LandActionService(self).build_options(fief_id)
+
     def claim_tile(self, fief_id: int, x: int, y: int) -> str:
         return LandActionService(self).claim_tile(fief_id, x, y)
 

@@ -41,6 +41,26 @@ class LandActionService:
         self._engine = engine
         self._db = engine.db
 
+    def demolish_options(self, fief_id: int) -> list[dict]:
+        """Незаросшие клетки усадьбы для UI сноса."""
+        return [
+            t
+            for t in self._db.fief_tiles(fief_id)
+            if not t.get("is_overgrown")
+        ]
+
+    def build_options(self, fief_id: int) -> tuple[list[dict], float]:
+        """Клетки и множитель стоимости для UI стройки/апгрейда."""
+        tiles = self.demolish_options(fief_id)
+        fief = self._db.get_fief(fief_id)
+        if not fief:
+            return tiles, 1.0
+        realm = self._engine.get_realm(int(fief["realm_id"]))
+        if not realm:
+            return tiles, 1.0
+        cost_mult = self._engine.realm_modifiers(realm).upgrade_cost_mult()
+        return tiles, cost_mult
+
     def claim_tile(self, fief_id: int, x: int, y: int) -> str:
         fief = self._db.get_fief(fief_id)
         self._engine.collect_for_fief(fief_id)

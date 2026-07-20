@@ -23,7 +23,6 @@ from app.handlers.shared import (
     parse_start_payload,
     post_continent_public,
     post_realm_public,
-    realm_upgrade_cost_mult,
     reply_game,
     reply_guide,
     reply_map_photo,
@@ -761,13 +760,7 @@ async def dm_text(message: Message) -> None:
         elif key == "claim":
             await _offer_claim(message, engine, fief)
         elif key == "build":
-            tiles = [
-                t
-                for t in engine.db.fief_tiles(fid)
-                if not t.get("is_overgrown")
-            ]
-            realm = engine.db.get_realm(fief["realm_id"])
-            cost_mult = realm_upgrade_cost_mult(engine, realm)
+            tiles, cost_mult = engine.build_options(fid)
             await answer_html(
                 message,
                 "Выберите здание:",

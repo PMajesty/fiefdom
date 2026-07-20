@@ -247,6 +247,23 @@ def test_engine_holdings_text_uses_fief_tiles():
 
 
 @pytest.mark.asyncio
+def test_build_and_demolish_options_skip_overgrown():
+    active = {"id": 1, "is_overgrown": False, "building": None}
+    overgrown = {"id": 2, "is_overgrown": True, "building": None}
+    db = MagicMock()
+    db.fief_tiles.return_value = [active, overgrown]
+    db.get_fief.return_value = {"id": 7, "realm_id": 3}
+    db.get_realm.return_value = {"id": 3, "active_minor_key": None}
+    engine = Engine(db)
+    with patch.object(engine, "realm_modifiers") as mods:
+        mods.return_value.upgrade_cost_mult.return_value = 1.5
+        tiles, cost_mult = engine.build_options(7)
+    assert tiles == [active]
+    assert cost_mult == 1.5
+    assert engine.demolish_options(7) == [active]
+    db.fief_tiles.assert_called_with(7)
+
+
 async def test_cb_holdings_shows_text_and_home():
     fief = {"id": 7, "user_id": 100, "realm_id": 3}
     engine = MagicMock()

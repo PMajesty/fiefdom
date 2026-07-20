@@ -22,7 +22,6 @@ from app.handlers.shared import (
     map_view_kb,
     post_realm_public,
     prepared_intents_kb,
-    realm_upgrade_cost_mult,
     reply_game,
     reply_guide,
     reply_map_photo,
@@ -143,11 +142,7 @@ async def cb_demolish(callback: CallbackQuery) -> None:
         fief_id = int(parts[1])
         engine.require_owned_fief(fief_id, callback.from_user.id)
         if len(parts) == 2:
-            tiles = [
-                t
-                for t in engine.db.fief_tiles(fief_id)
-                if not t.get("is_overgrown")
-            ]
+            tiles = engine.demolish_options(fief_id)
             await _ok(callback)
             await answer_html(
                 callback.message,
@@ -562,13 +557,7 @@ async def cb_build(callback: CallbackQuery) -> None:
         fief = engine.require_owned_fief(fief_id, callback.from_user.id)
 
         if len(parts) == 2:
-            tiles = [
-                t
-                for t in engine.db.fief_tiles(fief_id)
-                if not t.get("is_overgrown")
-            ]
-            realm = engine.db.get_realm(fief["realm_id"])
-            cost_mult = realm_upgrade_cost_mult(engine, realm)
+            tiles, cost_mult = engine.build_options(fief_id)
             await _ok(callback)
             await answer_html(
                 callback.message,
@@ -585,13 +574,7 @@ async def cb_build(callback: CallbackQuery) -> None:
             return
 
         if len(parts) == 3:
-            tiles = [
-                t
-                for t in engine.db.fief_tiles(fief_id)
-                if not t.get("is_overgrown")
-            ]
-            realm = engine.db.get_realm(fief["realm_id"])
-            cost_mult = realm_upgrade_cost_mult(engine, realm)
+            tiles, cost_mult = engine.build_options(fief_id)
             await _ok(callback)
             await answer_html(
                 callback.message,
