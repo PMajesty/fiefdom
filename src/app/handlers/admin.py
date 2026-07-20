@@ -87,10 +87,7 @@ async def cmd_realms(message: Message) -> None:
         return
     engine = get_engine()
     try:
-        realms = engine.db.list_realms()
-        fief_counts = {
-            int(r["id"]): len(engine.db.list_fiefs(int(r["id"]))) for r in realms
-        }
+        realms, fief_counts = engine.list_realms_with_fief_counts()
         await reply_game(message, format_realms_list(realms, fief_counts))
     except Exception:
         logger.exception("cmd_realms")
@@ -103,7 +100,7 @@ async def cmd_tick(message: Message, bot: Bot) -> None:
         return
     engine = get_engine()
     try:
-        world = engine.db.get_or_create_world()
+        world = engine.default_world()
         result = engine.run_world_tick(int(world["id"]))
         n = 0
         for item in result.get("realms") or []:
@@ -141,13 +138,7 @@ async def cmd_grant(message: Message) -> None:
         realm_id = int(parts[1])
         fief_id = int(parts[2])
         deltas = {keys[i]: int(parts[3 + i]) for i in range(len(keys))}
-        fief = engine.db.get_fief(fief_id)
-        if not fief or fief["realm_id"] != realm_id:
-            raise ValueError("Усадьба не найдена в этой долине")
-        engine.db.update_fief(
-            fief_id,
-            **{key: int(fief[key]) + deltas[key] for key in keys},
-        )
+        engine.grant_resources(realm_id, fief_id, deltas)
         granted = ", ".join(
             f"+{deltas[r.key]} {r.name_ru_genitive}" for r in resource_defs()
         )
@@ -174,29 +165,14 @@ async def cmd_event(message: Message) -> None:
             raise ValueError(f"Формат: /вч_event realm_id key\nКлючи: {keys}")
         realm_id = int(parts[1])
         key = parts[2].strip()
-        realm = engine.db.get_realm(realm_id)
-        if not realm:
-            raise ValueError("Долина не найдена")
-        world_id = engine._world_id_for_realm(realm_id)
+        engine.set_active_minor(realm_id, key)
         if key in MINOR_EVENTS:
             meta = MINOR_EVENTS[key]
-            engine.db.update_world(
-                world_id,
-                active_minor_key=key,
-                active_minor_until=None,
-            )
-            engine.db.sync_realms_clock_from_world(world_id)
             note = (
                 f"Событие континента \"{meta['name_ru']}\" до следующего тика. "
                 f"{meta['mechanics']}"
             )
         else:
-            engine.db.update_world(
-                world_id,
-                active_minor_key=key,
-                active_minor_until=None,
-            )
-            engine.db.sync_realms_clock_from_world(world_id)
             note = f"Ключ события континента \"{key}\" до следующего тика."
         await answer_html(message, note)
     except ValueError as exc:
@@ -219,7 +195,7 @@ async def cmd_wipe_start(message: Message) -> None:
                 "(подставь id из /вч_realms). Бот пришлёт команду с кодом."
             )
         realm_id = int(parts[1])
-        if not engine.db.get_realm(realm_id):
+        if not engine.get_realm(realm_id):
             raise ValueError("Долина не найдена. Смотри /вч_realms")
         msg = engine.begin_wipe(realm_id)
         await reply_game(message, msg)
@@ -268,10 +244,7 @@ async def cmd_freeze(message: Message) -> None:
         flag = int(parts[2])
         if flag not in (0, 1):
             raise ValueError("Флаг: 0 или 1")
-        fief = engine.db.get_fief(fief_id)
-        if not fief:
-            raise ValueError("Усадьба не найдена")
-        engine.db.update_fief(fief_id, frozen=bool(flag))
+        engine.set_fief_frozen(fief_id, bool(flag))
         state = "заморожена" if flag else "разморожена"
         await answer_html(message, f"Усадьба #{fief_id} {state}.")
     except ValueError as exc:
@@ -292,11 +265,7 @@ async def cmd_decree(message: Message, bot: Bot) -> None:
             raise ValueError("Формат: /вч_decree realm_id текст...")
         realm_id = int(parts[1])
         body = parts[2].strip()
-        realm = engine.db.get_realm(realm_id)
-        if not realm:
-            raise ValueError("Долина не найдена")
-        number = engine.db.next_decree_number(realm_id)
-        engine.db.add_decree(realm_id, number, body)
+        number = engine.issue_decree(realm_id, body)
         text = format_decree(number, body)
         await post_realm_public(bot, realm_id, text)
         await answer_html(message, f"Указ №{number} отправлен в группу.")

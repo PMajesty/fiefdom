@@ -17,7 +17,7 @@ ALIAS_RE = re.compile(
 OCCURRENCE_FREEZE: dict[str, int] = {
     "src/app/handlers/dm.py": 38,
     "src/app/handlers/callbacks.py": 21,
-    "src/app/handlers/admin.py": 17,
+    "src/app/handlers/admin.py": 0,
     "src/app/handlers/group.py": 5,
     "src/app/handlers/shared.py": 9,
     "src/app/scheduler.py": 18,

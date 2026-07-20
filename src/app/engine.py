@@ -248,6 +248,36 @@ class Engine:
             realm_id, code, confirm_word
         )
 
+    def list_realms_with_fief_counts(
+        self,
+    ) -> tuple[list[dict], dict[int, int]]:
+        return RealmLifecycleService(self).list_realms_with_fief_counts()
+
+    def get_realm(self, realm_id: int) -> dict | None:
+        return RealmLifecycleService(self).get_realm(realm_id)
+
+    def grant_resources(
+        self,
+        realm_id: int,
+        fief_id: int,
+        deltas: dict[str, int],
+    ) -> None:
+        return RealmLifecycleService(self).grant_resources(
+            realm_id, fief_id, deltas
+        )
+
+    def set_fief_frozen(self, fief_id: int, frozen: bool) -> None:
+        return RealmLifecycleService(self).set_fief_frozen(fief_id, frozen)
+
+    def set_active_minor(self, realm_id: int, key: str) -> None:
+        return RealmLifecycleService(self).set_active_minor(realm_id, key)
+
+    def issue_decree(self, realm_id: int, body: str) -> int:
+        return RealmLifecycleService(self).issue_decree(realm_id, body)
+
+    def default_world(self) -> dict:
+        return self.db.get_or_create_world()
+
     # ---------- join / onboarding ----------
     def ensure_user(self, user) -> None:
         return OnboardingService(self).ensure_user(user)

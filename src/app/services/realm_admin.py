@@ -191,3 +191,55 @@ class RealmLifecycleService:
             last_tick_slot=None,
         )
         return f"Континент стёрт ({len(realms)} долин). Можно снова /вотчина."
+
+    def list_realms_with_fief_counts(
+        self,
+    ) -> tuple[list[dict], dict[int, int]]:
+        realms = self._db.list_realms()
+        fief_counts = {
+            int(r["id"]): len(self._db.list_fiefs(int(r["id"]))) for r in realms
+        }
+        return realms, fief_counts
+
+    def get_realm(self, realm_id: int) -> dict | None:
+        return self._db.get_realm(realm_id)
+
+    def grant_resources(
+        self,
+        realm_id: int,
+        fief_id: int,
+        deltas: dict[str, int],
+    ) -> None:
+        fief = self._db.get_fief(fief_id)
+        if not fief or fief["realm_id"] != realm_id:
+            raise ValueError("Усадьба не найдена в этой долине")
+        self._db.update_fief(
+            fief_id,
+            **{key: int(fief[key]) + int(deltas[key]) for key in deltas},
+        )
+
+    def set_fief_frozen(self, fief_id: int, frozen: bool) -> None:
+        fief = self._db.get_fief(fief_id)
+        if not fief:
+            raise ValueError("Усадьба не найдена")
+        self._db.update_fief(fief_id, frozen=bool(frozen))
+
+    def set_active_minor(self, realm_id: int, key: str) -> None:
+        realm = self._db.get_realm(realm_id)
+        if not realm:
+            raise ValueError("Долина не найдена")
+        world_id = self._engine._world_id_for_realm(realm_id)
+        self._db.update_world(
+            world_id,
+            active_minor_key=key,
+            active_minor_until=None,
+        )
+        self._db.sync_realms_clock_from_world(world_id)
+
+    def issue_decree(self, realm_id: int, body: str) -> int:
+        realm = self._db.get_realm(realm_id)
+        if not realm:
+            raise ValueError("Долина не найдена")
+        number = self._db.next_decree_number(realm_id)
+        self._db.add_decree(realm_id, number, body)
+        return number
