@@ -70,6 +70,9 @@ def pack_source() -> bytes:
         design = PROJECT_ROOT / "valley_game_design.md"
         if design.exists():
             tar.add(str(design), arcname="valley_game_design.md")
+        refund_ops = PROJECT_ROOT / "deploy" / "claim_cost_refund.py"
+        if refund_ops.exists():
+            tar.add(str(refund_ops), arcname="deploy/claim_cost_refund.py")
     data = buf.getvalue()
     print(f"    packed {len(data):,} bytes")
     return data
@@ -147,7 +150,17 @@ def ssh_connect(client: paramiko.SSHClient) -> None:
     raise RuntimeError(f"SSH failed: {last}") from last
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--skip-restart",
+        action="store_true",
+        help="только выгрузить код (для ручного рефанда до start)",
+    )
+    args = parser.parse_args(argv)
+
     if not VPS_PASS:
         raise SystemExit("Задай VPS_PASS в deploy/secrets.env")
     archive = pack_source()
@@ -171,15 +184,21 @@ def main() -> None:
     )
     run(
         client,
-        f"mkdir -p {REMOTE_DIR}/logs "
+        f"mkdir -p {REMOTE_DIR}/logs {REMOTE_DIR}/deploy "
         f"&& chown -R {BOT_USER}:{BOT_USER} {REMOTE_DIR}/src {REMOTE_DIR}/requirements.txt "
-        f"{REMOTE_DIR}/tests {REMOTE_DIR}/pytest.ini {REMOTE_DIR}/logs 2>/dev/null; true",
+        f"{REMOTE_DIR}/tests {REMOTE_DIR}/pytest.ini {REMOTE_DIR}/logs "
+        f"{REMOTE_DIR}/deploy 2>/dev/null; true",
     )
     run(client, f"{REMOTE_DIR}/venv/bin/pip install -r {REMOTE_DIR}/requirements.txt -q")
     print(">>> Syncing tick schedule in .env…")
     sftp = client.open_sftp()
     sync_remote_tick_env(sftp, REMOTE_DIR)
     sftp.close()
+    if args.skip_restart:
+        print(">>> Skip restart (--skip-restart). Bot still on old process.")
+        client.close()
+        print(">>> Files synced. Дальше: stop → claim_cost_refund → start.")
+        return
     print(">>> Restarting…")
     run(client, f"systemctl restart {SERVICE}")
     print(">>> Status:")

@@ -57,12 +57,25 @@ RUINS_LOOT_MIN = 30
 RUINS_LOOT_MAX = 80
 # Стартовая усадьба не на руинах и не рядом (тор Манхэттен < этого порога).
 RUINS_SPAWN_MIN_DISTANCE = 2
-WILDS_CLAIM_MULT = 2
+WILDS_CLAIM_MULT = 1
 WILDS_CLEAR_TO = (TILE_FIELD, TILE_FOREST, TILE_HILLS)
 
 # --- Усадьба / клетки ---
 TILE_HARD_CAP = 9
 CLAIM_COSTS = {
+    2: 20,
+    3: 45,
+    4: 90,
+    5: 175,
+    6: 220,
+    7: 360,
+    8: 520,
+    9: 700,
+}
+# Потолок после множителя глуши: клетка не дороже склада амбара III.
+CLAIM_COST_HARD_CAP = 800
+# Старая кривая (для ручного рефанда на VPS). Не менять.
+OLD_CLAIM_COSTS_V1 = {
     2: 20,
     3: 60,
     4: 120,
@@ -159,9 +172,12 @@ FARM_YIELD = {1: 8, 2: 14, 3: 22}
 WORKSHOP_YIELD = {1: 5, 2: 9, 3: 14}
 WATCH_DEFENSE = {1: 6, 2: 12, 3: 20}
 WATCH_MIGHT = {1: 2, 2: 4, 3: 6}
-BARN_CAP = {1: 200, 2: 400, 3: 800}
+BARN_CAP = {1: 250, 2: 450, 3: 800}
 BARN_PROTECT = {1: 0.25, 2: 0.40, 3: 0.60}
 BARN_COLLECT_BONUS_DAYS = 1  # за каждый уровень амбара
+CLAIM_STASH_TOO_SMALL = (
+    "Склад слишком мал для этой клетки - нужен больший амбар"
+)
 
 REPAIR_COST_MULT = 0.5  # от стоимости апгрейда на этот уровень
 
@@ -285,13 +301,49 @@ def claim_cost(next_tile_count: int, is_wilds: bool = False) -> int:
     base = CLAIM_COSTS.get(next_tile_count)
     if base is None:
         raise ValueError(f"Нельзя претендовать на клетку №{next_tile_count}")
-    return base * (WILDS_CLAIM_MULT if is_wilds else 1)
+    raw = base * (WILDS_CLAIM_MULT if is_wilds else 1)
+    return min(int(raw), CLAIM_COST_HARD_CAP)
+
+
+def claim_cost_refund_delta(active_tile_count: int) -> int:
+    """Сколько товаров вернуть усадьбе с N активными (не заросшими) клетками.
+
+    Только разница базовых кривых OLD_CLAIM_COSTS_V1 → CLAIM_COSTS.
+    Старый множитель глуши (×2) в истории оплаты не учитывается:
+    в БД нет состава клеток на момент каждого клейма.
+    """
+    n = int(active_tile_count)
+    if n < 2:
+        return 0
+    total = 0
+    for tile_n in range(2, min(n, TILE_HARD_CAP) + 1):
+        old = OLD_CLAIM_COSTS_V1.get(tile_n)
+        new = CLAIM_COSTS.get(tile_n)
+        if old is None or new is None:
+            continue
+        total += max(0, int(old) - int(new))
+    return total
 
 
 def stash_cap(barn_level: int) -> int:
     if barn_level <= 0:
         return DEFAULT_STASH_CAP
     return BARN_CAP.get(barn_level, DEFAULT_STASH_CAP)
+
+
+def claim_fits_stash(cost: int, barn_level: int) -> bool:
+    return int(cost) <= stash_cap(barn_level)
+
+
+def claim_stash_gate_message(cost: int, barn_level: int) -> str | None:
+    """None если занятие по складу доступно; иначе текст блокировки."""
+    cap = stash_cap(barn_level)
+    if int(cost) <= cap:
+        return None
+    return (
+        f"{CLAIM_STASH_TOO_SMALL} "
+        f"(нужно {int(cost)} тов., склад до {cap})."
+    )
 
 
 def barn_protect_frac(barn_level: int) -> float:

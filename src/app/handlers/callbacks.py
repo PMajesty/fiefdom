@@ -572,7 +572,13 @@ async def cb_claim(callback: CallbackQuery) -> None:
                 next_tile_count=next_tile_count,
                 tile_meta=tile_meta,
                 empty_text="Нет клеток для занятия.",
-                prompt_text="Выберите клетку:",
+                prompt_text=dm_mod.claim_prompt_text(
+                    engine,
+                    fief,
+                    next_tile_count,
+                    tile_meta,
+                    base="Выберите клетку:",
+                ),
             )
             await _ok(callback)
             await answer_html(callback.message, text, reply_markup=kb)

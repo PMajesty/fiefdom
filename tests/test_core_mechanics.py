@@ -34,8 +34,52 @@ def test_land_upkeep():
 
 
 def test_claim_costs():
+    assert B.CLAIM_COSTS[2] == 20
+    assert B.CLAIM_COSTS[9] == 700
+    assert B.WILDS_CLAIM_MULT == 1
     assert B.claim_cost(2) == 20
-    assert B.claim_cost(2, is_wilds=True) == 40
+    assert B.claim_cost(2, is_wilds=True) == 20
+    assert B.claim_cost(9) == 700
+    assert B.claim_cost(9, is_wilds=True) == 700
+    for n, cost in B.CLAIM_COSTS.items():
+        assert B.claim_cost(n) <= B.CLAIM_COST_HARD_CAP
+        assert B.claim_cost(n, is_wilds=True) <= B.CLAIM_COST_HARD_CAP
+        assert cost <= B.CLAIM_COST_HARD_CAP
+
+
+def test_claim_costs_fit_barn_caps():
+    assert B.stash_cap(0) == 150
+    assert B.BARN_CAP == {1: 250, 2: 450, 3: 800}
+    # Soft bands: no barn → 2..4; I → 5..6; II → 7; III → 8..9
+    assert B.claim_fits_stash(B.claim_cost(4), 0)
+    assert not B.claim_fits_stash(B.claim_cost(5), 0)
+    assert B.claim_fits_stash(B.claim_cost(6), 1)
+    assert not B.claim_fits_stash(B.claim_cost(7), 1)
+    assert B.claim_fits_stash(B.claim_cost(7), 2)
+    assert not B.claim_fits_stash(B.claim_cost(8), 2)
+    assert B.claim_fits_stash(B.claim_cost(9), 3)
+
+
+def test_claim_cost_refund_delta():
+    assert B.claim_cost_refund_delta(1) == 0
+    assert B.claim_cost_refund_delta(2) == 0
+    assert B.claim_cost_refund_delta(3) == 15
+    assert B.claim_cost_refund_delta(4) == 45
+    assert B.claim_cost_refund_delta(5) == 120
+    assert B.claim_cost_refund_delta(6) == 300
+    assert B.claim_cost_refund_delta(7) == 540
+    assert B.claim_cost_refund_delta(8) == 870
+    assert B.claim_cost_refund_delta(9) == 1320
+    assert B.claim_cost_refund_delta(99) == 1320
+
+
+def test_claim_stash_gate_message():
+    assert B.claim_stash_gate_message(90, 0) is None
+    msg = B.claim_stash_gate_message(175, 0)
+    assert msg is not None
+    assert B.CLAIM_STASH_TOO_SMALL in msg
+    assert "175" in msg
+    assert "150" in msg
 
 
 def test_map_gen_has_road_and_river():
@@ -335,6 +379,21 @@ def test_collect_respects_cap():
     assert pending[B.RES_GRAIN] == 0.0
     assert pending[B.RES_GOODS] == 0.0
     assert pending[B.RES_MIGHT] == 0.0
+
+
+def test_collect_preserves_stash_overflow():
+    over = B.DEFAULT_STASH_CAP + 200
+    stash, pending, notes = collect_pending_bags(
+        {B.RES_GRAIN: over, B.RES_GOODS: over, B.RES_MIGHT: 3},
+        {B.RES_GRAIN: 40.0, B.RES_GOODS: 40.0, B.RES_MIGHT: 2.0},
+        0,
+    )
+    assert stash[B.RES_GRAIN] == over
+    assert stash[B.RES_GOODS] == over
+    assert stash[B.RES_MIGHT] == 5
+    assert pending[B.RES_GRAIN] == 0.0
+    assert pending[B.RES_GOODS] == 0.0
+    assert notes
 
 
 def test_collect_pending_can_skip_might():

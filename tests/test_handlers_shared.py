@@ -392,7 +392,7 @@ def test_format_claim_button_field_and_wilds():
     from app import balance as B
 
     assert format_claim_button(0, 2, B.TILE_FIELD, 2) == "А3 Поле · 20 тов."
-    assert format_claim_button(0, 2, B.TILE_WILDS, 2) == "А3 Глушь · 40 тов."
+    assert format_claim_button(0, 2, B.TILE_WILDS, 2) == "А3 Глушь · 20 тов."
     assert (
         format_claim_button(0, 2, B.TILE_WILDS, 2, is_overgrown=True)
         == "А3 Глушь · 20 тов."

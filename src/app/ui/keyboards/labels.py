@@ -13,7 +13,7 @@ def format_claim_button(
     *,
     is_overgrown: bool = False,
 ) -> str:
-    """Подпись кнопки занятия: \"А3 Поле · 30 тов.\" (глушь ×2, кроме заросших)."""
+    """Подпись кнопки занятия: \"А3 Поле · 30 тов.\"."""
     name = B.TILE_NAMES_RU.get(tile_type, tile_type)
     is_wilds = (not is_overgrown) and tile_type == B.TILE_WILDS
     cost = B.claim_cost(next_tile_count, is_wilds=is_wilds)

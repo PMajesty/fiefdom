@@ -186,6 +186,7 @@ def collect_pending_bags(
     *,
     include_might: bool = True,
 ) -> tuple[ResourceBag, PendingBag, list[str]]:
+    """Принимает pending в stash. Излишек выше cap не обрезает, только не добирает."""
     notes: list[str] = []
     cap = B.stash_cap(barn_level)
     out_stash = stash_columns(stash)
@@ -195,6 +196,7 @@ def collect_pending_bags(
     truncated = False
     for key in stash_capped_keys():
         add = int(out_pending[key])
+        # held > cap → room 0: overflow сохраняется, новый урожай не входит
         room = max(0, cap - out_stash[key])
         take = min(add, room)
         if take < add:

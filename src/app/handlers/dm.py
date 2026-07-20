@@ -246,6 +246,31 @@ def claim_offer_data(engine, fief: dict) -> tuple[list[tuple[int, int]], dict, i
     return claimable, tile_meta, len(owned) + 1
 
 
+def claim_prompt_text(
+    engine,
+    fief: dict,
+    next_tile_count: int,
+    tile_meta: dict[tuple[int, int], tuple[str, bool]],
+    *,
+    base: str,
+) -> str:
+    """Промпт занятия: базовый текст + предупреждение, если склад мал."""
+    barn = engine.barn_level(int(fief["id"]))
+    costs: list[int] = []
+    for tile_type, is_overgrown in tile_meta.values():
+        is_wilds = (not is_overgrown) and tile_type == B.TILE_WILDS
+        costs.append(B.claim_cost(next_tile_count, is_wilds=is_wilds))
+    if not costs:
+        try:
+            costs.append(B.claim_cost(next_tile_count))
+        except ValueError:
+            return base
+    hint = B.claim_stash_gate_message(max(costs), barn)
+    if hint:
+        return f"{base}\n{hint}"
+    return base
+
+
 async def show_status(message: Message, fief_id: int) -> None:
     engine = get_engine()
     text = engine.status_card(fief_id)
@@ -506,7 +531,13 @@ async def _offer_claim(message: Message, engine, fief: dict) -> None:
         next_tile_count=next_tile_count,
         tile_meta=tile_meta,
         empty_text="Нет соседних клеток для занятия.",
-        prompt_text="Выберите клетку для занятия:",
+        prompt_text=claim_prompt_text(
+            engine,
+            fief,
+            next_tile_count,
+            tile_meta,
+            base="Выберите клетку для занятия:",
+        ),
     )
     await answer_html(message, text, reply_markup=kb)
 

@@ -118,6 +118,7 @@ def apply_gather_to_stash(
     *,
     cap: int,
 ) -> tuple[ResourceBag, int]:
+    """Добавляет сбор. При held > cap не обрезает остаток, только room=0."""
     if resource not in live_resource_keys():
         raise ValueError(f"Нельзя собрать: {resource}")
     out = stash_columns(stash)
@@ -136,4 +137,5 @@ def stash_amount(row: Mapping[str, Any], resource: str) -> int:
 
 
 def capped_receive_amount(held: int, amount: int, cap: int) -> int:
+    """Сколько можно принять без роста выше cap. held > cap → 0, без обрезки."""
     return min(int(amount), max(0, int(cap) - int(held)))

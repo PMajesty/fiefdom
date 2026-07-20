@@ -14,6 +14,7 @@ from app.domain.raids import loot_amounts, resolve_raid
 from app.domain.resource_bags import (
     apply_gather_to_stash,
     apply_production_to_pending,
+    capped_receive_amount,
     empty_pending,
     empty_stash,
     migrate_row_balances,
@@ -277,6 +278,23 @@ def test_apply_gather_to_stash_respects_cap():
     assert after[B.RES_GRAIN] == B.DEFAULT_STASH_CAP
     assert after[B.RES_GOODS] == 10
     assert after[B.RES_MIGHT] == 5
+
+
+def test_apply_gather_preserves_overflow_above_cap():
+    over = B.DEFAULT_STASH_CAP + 80
+    stash = {B.RES_GRAIN: over, B.RES_GOODS: over, B.RES_MIGHT: 1}
+    after, gained = apply_gather_to_stash(
+        stash, B.RES_GOODS, B.GATHER_GOODS, cap=B.DEFAULT_STASH_CAP
+    )
+    assert gained == 0
+    assert after[B.RES_GOODS] == over
+    assert after[B.RES_GRAIN] == over
+
+
+def test_capped_receive_amount_zero_when_overflow():
+    over = B.DEFAULT_STASH_CAP + 10
+    assert capped_receive_amount(over, 50, B.DEFAULT_STASH_CAP) == 0
+    assert capped_receive_amount(B.DEFAULT_STASH_CAP - 5, 50, B.DEFAULT_STASH_CAP) == 5
 
 
 def test_apply_gather_might_ignores_stash_cap():

@@ -114,7 +114,13 @@ def test_map_tile_legend_reads_naturally():
         f"памятник · Руины - разово {B.RUINS_LOOT_MIN}-{B.RUINS_LOOT_MAX} товаров"
         in text
     )
-    assert f"куст · Глушь - занятие ×{B.WILDS_CLAIM_MULT} → поле/лес/холмы" in text
+    if B.WILDS_CLAIM_MULT == 1:
+        assert "куст · Глушь - занятие → поле/лес/холмы" in text
+    else:
+        assert (
+            f"куст · Глушь - занятие ×{B.WILDS_CLAIM_MULT} → поле/лес/холмы"
+            in text
+        )
     assert "туман" not in text
     assert "🌾" not in text
     assert "Буква на клетке" not in text

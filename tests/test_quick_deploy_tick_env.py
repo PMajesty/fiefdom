@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import io
+import tarfile
 
-from deploy.quick_deploy import TICK_ENV, sync_remote_tick_env
+from deploy.quick_deploy import TICK_ENV, pack_source, sync_remote_tick_env
 
 
 class _FakeSFTP:
@@ -39,6 +40,14 @@ class _FakeSFTP:
                 return False
 
         return _Writer()
+
+
+def test_pack_source_includes_claim_cost_refund_ops():
+    data = pack_source()
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+        names = set(tar.getnames())
+    assert "deploy/claim_cost_refund.py" in names
+    assert any(n.startswith("src/") for n in names)
 
 
 def test_sync_remote_tick_env_updates_and_appends():

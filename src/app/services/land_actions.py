@@ -91,9 +91,13 @@ class LandActionService:
             raise ValueError("Клетка не соседняя")
 
         is_wilds = target["tile_type"] == B.TILE_WILDS
+        barn = self._engine.barn_level(fief_id)
         if target.get("is_overgrown"):
             prev = target.get("owner_fief_id")
             cost = B.claim_cost(n, is_wilds=False)
+            gate = B.claim_stash_gate_message(cost, barn)
+            if gate:
+                raise ValueError(gate)
             if fief["goods"] < cost:
                 raise ValueError(f"Нужно {cost} товаров")
             with self._db.transaction():
@@ -122,6 +126,9 @@ class LandActionService:
             return f"Занята заросшая клетка {coord_label(x, y)} (−{cost} товаров)."
 
         cost = B.claim_cost(n, is_wilds=is_wilds)
+        gate = B.claim_stash_gate_message(cost, barn)
+        if gate:
+            raise ValueError(gate)
         if fief["goods"] < cost:
             raise ValueError(f"Нужно {cost} товаров (у вас {fief['goods']})")
 
