@@ -350,6 +350,7 @@ def test_modifiers_from_key_helpers_match_collect():
 
 def test_engine_reads_all_live_modifier_kinds():
     assert ENGINE_CONSUMED_MODIFIER_KINDS == LIVE_READ_MODIFIER_KINDS
+    from app.services.caravans import CaravanService
     from app.services.night_raids import NightRaidResolver
     from app.services.realm_tick import RealmTickRunner
     from app.services.world_tick import WorldTickOrchestrator
@@ -359,6 +360,7 @@ def test_engine_reads_all_live_modifier_kinds():
         + inspect.getsource(RealmTickRunner)
         + inspect.getsource(NightRaidResolver)
         + inspect.getsource(WorldTickOrchestrator)
+        + inspect.getsource(CaravanService)
     )
     for kind in LIVE_READ_MODIFIER_KINDS:
         method = MODIFIER_SET_KIND_READERS[kind]
