@@ -1,8 +1,6 @@
 """Modifier layer: composition, scope, duration, providers, equivalence to old readers."""
 from __future__ import annotations
 
-import inspect
-
 import pytest
 
 from app.domain.events import (
@@ -350,9 +348,9 @@ def test_modifiers_from_key_helpers_match_collect():
 
 def test_engine_reads_all_live_modifier_kinds():
     assert ENGINE_CONSUMED_MODIFIER_KINDS == LIVE_READ_MODIFIER_KINDS
-    from tests.test_event_contracts import _live_path_source
+    from tests.live_path_scan import live_path_source
 
-    src = _live_path_source()
+    src = live_path_source()
     for kind in LIVE_READ_MODIFIER_KINDS:
         method = MODIFIER_SET_KIND_READERS[kind]
         assert f".{method}()" in src, (
