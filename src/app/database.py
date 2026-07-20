@@ -1458,6 +1458,9 @@ class Database:
     def get_pact(self, pact_id: int) -> dict | None:
         return self._fetchone("SELECT * FROM pacts WHERE id=%s;", (pact_id,))
 
+    def update_pact(self, pact_id: int, **fields: Any) -> None:
+        self._update("pacts", pact_id, fields)
+
     def pact_members(self, pact_id: int) -> list[dict]:
         return self._fetchall("SELECT * FROM fiefs WHERE pact_id=%s;", (pact_id,))
 
@@ -1913,6 +1916,12 @@ class Database:
             self.commit()
 
     # --- action intents (declare-then-resolve для набегов) ---
+    def get_action_intent(self, intent_id: int) -> dict | None:
+        return self._fetchone(
+            "SELECT * FROM action_intents WHERE id=%s;",
+            (int(intent_id),),
+        )
+
     def create_action_intent(self, **fields: Any) -> dict:
         with self.lock:
             self.cursor.execute(

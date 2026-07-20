@@ -59,7 +59,7 @@ def test_cancel_refunds_only_while_open():
         "actions": 1,
         "frozen": False,
     }
-    db._fetchone.return_value = {
+    db.get_action_intent.return_value = {
         "id": 9,
         "fief_id": 7,
         "kind": "raid",
@@ -80,7 +80,7 @@ def test_cancel_refunds_only_while_open():
     refund.assert_called_once_with(7)
 
     db.cancel_action_intent.return_value = None
-    db._fetchone.return_value = {
+    db.get_action_intent.return_value = {
         "id": 9,
         "fief_id": 7,
         "kind": "raid",

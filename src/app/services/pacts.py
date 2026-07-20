@@ -164,8 +164,8 @@ class PactService:
                 return "Вы вышли. Пакт распущен (меньше 2 участников)."
             self._db.update_fief(fief_id, pact_id=None)
             if pact and pact["founder_fief_id"] == fief_id and remaining:
-                self._db._update(
-                    "pacts", pact_id, {"founder_fief_id": remaining[0]["id"]}
+                self._db.update_pact(
+                    pact_id, founder_fief_id=remaining[0]["id"]
                 )
             return "Вы вышли из пакта."
 

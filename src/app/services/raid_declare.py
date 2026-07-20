@@ -215,10 +215,8 @@ class RaidDeclareService:
 
     def cancel_raid_intent(self, fief_id: int, intent_id: int) -> str:
         fief = self._engine.require_active_fief(fief_id)
-        intent = self._db._fetchone(
-            "SELECT * FROM action_intents WHERE id=%s;",
-            (int(intent_id),),
-        )
+        intent = self._db.get_action_intent(int(intent_id))
+
         if not intent or intent.get("kind") != "raid":
             raise ValueError("Заявка не найдена")
         if int(intent["fief_id"]) != int(fief_id):

@@ -116,3 +116,26 @@ def test_infra_must_not_import_handlers():
     assert not violations, "infra must not import handlers:\n" + "\n".join(
         violations
     )
+
+
+# Приватные хелперы Database; снаружи только публичные методы.
+_DB_PRIVATE_RE = re.compile(
+    r"\b(?:self\._db|engine\.db|eng\.db|\bdb)\._[a-zA-Z_]\w*"
+)
+_APP_SRC = ROOT / "src" / "app"
+_DB_PRIVATE_ALLOW = frozenset({"src/app/database.py"})
+
+
+def test_no_private_database_access_outside_database():
+    violations: list[str] = []
+    for path in sorted(_APP_SRC.rglob("*.py")):
+        rel = path.relative_to(ROOT).as_posix()
+        if rel in _DB_PRIVATE_ALLOW:
+            continue
+        for lineno, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            if _DB_PRIVATE_RE.search(line):
+                violations.append(f"{rel}:{lineno}: {line}")
+    assert not violations, "db._* outside database.py:\n" + "\n".join(violations)
+

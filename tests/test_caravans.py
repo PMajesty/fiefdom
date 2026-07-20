@@ -106,10 +106,9 @@ def _caravan_stateful_engine(
                 return dict(i)
         return None
 
-    def fetchone(sql, params=()):
-        iid = int(params[0])
+    def get_action_intent(iid):
         for i in intents:
-            if int(i["id"]) == iid:
+            if int(i["id"]) == int(iid):
                 return dict(i)
         return None
 
@@ -120,7 +119,8 @@ def _caravan_stateful_engine(
     db.list_caravan_intents.side_effect = list_caravan_intents
     db.claim_resolve_action_intent.side_effect = claim_resolve_action_intent
     db.cancel_action_intent.side_effect = cancel_action_intent
-    db._fetchone.side_effect = fetchone
+    db.get_action_intent.side_effect = get_action_intent
+
     db.realms_are_adjacent.return_value = True
     db.get_realm.return_value = {
         "id": 10,
