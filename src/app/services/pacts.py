@@ -9,6 +9,12 @@ class PactService:
         self._engine = engine
         self._db = engine.db
 
+    def get_pact(self, pact_id: int) -> dict | None:
+        return self._db.get_pact(pact_id)
+
+    def get_pact_invite(self, invite_id: int) -> dict | None:
+        return self._db.get_pact_invite(invite_id)
+
     def create_pact(self, fief_id: int, name: str) -> str:
         fief = self._db.get_fief(fief_id)
         if fief.get("pact_id"):

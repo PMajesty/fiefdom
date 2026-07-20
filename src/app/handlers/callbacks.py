@@ -847,8 +847,8 @@ async def cb_pact(callback: CallbackQuery) -> None:
         if action in ("acc", "dec"):
             invite_id = int(parts[3])
             if action == "acc":
-                invite = engine.db.get_pact_invite(invite_id)
-                pact = engine.db.get_pact(invite["pact_id"]) if invite else None
+                invite = engine.get_pact_invite(invite_id)
+                pact = engine.get_pact(invite["pact_id"]) if invite else None
                 msg = engine.accept_pact_invite(fief_id, invite_id)
                 await _ok(callback)
                 await reply_game(
@@ -886,7 +886,7 @@ async def cb_pact(callback: CallbackQuery) -> None:
             is_founder = False
             text = "Вы не в пакте."
             if in_pact:
-                pact = engine.db.get_pact(fief["pact_id"])
+                pact = engine.get_pact(fief["pact_id"])
                 is_founder = bool(pact and pact["founder_fief_id"] == fief_id)
                 text = f"Пакт \"{pact['name']}\"." if pact else "Пакт."
             await _ok(callback)
@@ -929,7 +929,7 @@ async def cb_pact(callback: CallbackQuery) -> None:
             return
 
         if action == "leave":
-            pact = engine.db.get_pact(fief["pact_id"]) if fief.get("pact_id") else None
+            pact = engine.get_pact(fief["pact_id"]) if fief.get("pact_id") else None
             pact_name = pact["name"] if pact else "?"
             msg = engine.leave_pact(fief_id)
             await _ok(callback)

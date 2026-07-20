@@ -888,7 +888,7 @@ async def _offer_pact(message: Message, engine, fief: dict) -> None:
     in_pact = bool(fief.get("pact_id"))
     is_founder = False
     if in_pact:
-        pact = engine.db.get_pact(fief["pact_id"])
+        pact = engine.get_pact(fief["pact_id"])
         is_founder = bool(pact and pact["founder_fief_id"] == fief["id"])
         name = pact["name"] if pact else "?"
         text = f"Пакт \"{name}\"."
@@ -1078,9 +1078,9 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
                 reply_markup=pending_cancel_kb(pending["fief_id"]),
             )
             return True
-        founder = engine.db.get_fief(pending["fief_id"])
+        founder = engine.fief_by_id(pending["fief_id"])
         pact = (
-            engine.db.get_pact(founder["pact_id"])
+            engine.get_pact(founder["pact_id"])
             if founder and founder.get("pact_id")
             else None
         )

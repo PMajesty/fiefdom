@@ -66,6 +66,9 @@ class PlayerContextService:
     def fiefs_of_user(self, user_id: int) -> list[dict]:
         return self._db.list_fiefs_by_user(user_id)
 
+    def fief_by_id(self, fief_id: int) -> dict | None:
+        return self._db.get_fief(fief_id)
+
     def require_owned_fief(self, fief_id: int, user_id: int) -> dict:
         fief = self._db.get_fief(fief_id)
         if not fief or fief["user_id"] != user_id:

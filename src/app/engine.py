@@ -309,6 +309,9 @@ class Engine:
     def fiefs_of_user(self, user_id: int) -> list[dict]:
         return PlayerContextService(self).fiefs_of_user(user_id)
 
+    def fief_by_id(self, fief_id: int) -> dict | None:
+        return PlayerContextService(self).fief_by_id(fief_id)
+
     def require_owned_fief(self, fief_id: int, user_id: int) -> dict:
         return PlayerContextService(self).require_owned_fief(fief_id, user_id)
 
@@ -956,6 +959,12 @@ class Engine:
 
 
     # ---------- pacts ----------
+    def get_pact(self, pact_id: int) -> dict | None:
+        return PactService(self).get_pact(pact_id)
+
+    def get_pact_invite(self, invite_id: int) -> dict | None:
+        return PactService(self).get_pact_invite(invite_id)
+
     def create_pact(self, fief_id: int, name: str) -> str:
         return PactService(self).create_pact(fief_id, name)
 
