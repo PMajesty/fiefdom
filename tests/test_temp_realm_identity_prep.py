@@ -317,3 +317,36 @@ async def test_cmd_start_realm_owned_sets_last_realm_after_check():
     engine.fief_of_user_in_realm.assert_called_once_with(100, 1)
     engine.remember_last_realm.assert_called_once_with(100, 1)
     status.assert_awaited_once_with(message, 7)
+
+
+def test_require_owned_fief_returns_owned():
+    fief = {"id": 7, "user_id": 100, "realm_id": 3}
+    db = MagicMock()
+    db.get_fief.return_value = fief
+    engine = Engine(db)
+    assert engine.require_owned_fief(7, 100) is fief
+    db.get_fief.assert_called_once_with(7)
+
+
+def test_require_owned_fief_rejects_foreign_or_missing():
+    db = MagicMock()
+    db.get_fief.return_value = {"id": 7, "user_id": 999, "realm_id": 3}
+    engine = Engine(db)
+    with pytest.raises(ValueError, match="не ваша усадьба"):
+        engine.require_owned_fief(7, 100)
+
+    db.get_fief.return_value = None
+    with pytest.raises(ValueError, match="не ваша усадьба"):
+        engine.require_owned_fief(7, 100)
+
+
+def test_require_owned_active_fief_checks_active_play():
+    fief = {"id": 7, "user_id": 100, "realm_id": 3}
+    db = MagicMock()
+    db.get_fief.return_value = fief
+    engine = Engine(db)
+    with patch.object(engine, "fief_is_active_play", return_value=True):
+        assert engine.require_owned_active_fief(7, 100) is fief
+    with patch.object(engine, "fief_is_active_play", return_value=False):
+        with pytest.raises(ValueError, match="активной"):
+            engine.require_owned_active_fief(7, 100)

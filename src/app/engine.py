@@ -309,6 +309,14 @@ class Engine:
     def fiefs_of_user(self, user_id: int) -> list[dict]:
         return PlayerContextService(self).fiefs_of_user(user_id)
 
+    def require_owned_fief(self, fief_id: int, user_id: int) -> dict:
+        return PlayerContextService(self).require_owned_fief(fief_id, user_id)
+
+    def require_owned_active_fief(self, fief_id: int, user_id: int) -> dict:
+        return PlayerContextService(self).require_owned_active_fief(
+            fief_id, user_id
+        )
+
     # ---------- join / onboarding ----------
     def ensure_user(self, user) -> None:
         return OnboardingService(self).ensure_user(user)

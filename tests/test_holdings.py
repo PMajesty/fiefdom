@@ -250,8 +250,7 @@ def test_engine_holdings_text_uses_fief_tiles():
 async def test_cb_holdings_shows_text_and_home():
     fief = {"id": 7, "user_id": 100, "realm_id": 3}
     engine = MagicMock()
-    engine.db.get_fief.return_value = fief
-    engine.db.set_last_realm = MagicMock()
+    engine.require_owned_fief.return_value = fief
     engine.holdings_text.return_value = "HOLDINGS"
     home_kb = object()
     callback = MagicMock()

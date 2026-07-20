@@ -65,3 +65,18 @@ class PlayerContextService:
 
     def fiefs_of_user(self, user_id: int) -> list[dict]:
         return self._db.list_fiefs_by_user(user_id)
+
+    def require_owned_fief(self, fief_id: int, user_id: int) -> dict:
+        fief = self._db.get_fief(fief_id)
+        if not fief or fief["user_id"] != user_id:
+            raise ValueError("Это не ваша усадьба")
+        return fief
+
+    def require_owned_active_fief(self, fief_id: int, user_id: int) -> dict:
+        fief = self.require_owned_fief(fief_id, user_id)
+        if not self._engine.fief_is_active_play(fief):
+            raise ValueError(
+                "Сначала выберите эту долину активной "
+                "(откройте усадьбу здесь или список в /start)"
+            )
+        return fief

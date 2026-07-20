@@ -105,7 +105,7 @@ async def cb_gather(callback: CallbackQuery) -> None:
     try:
         parts = callback.data.split(":")
         fief_id = int(parts[1])
-        _ensure_owner(engine, fief_id, callback.from_user.id)
+        engine.require_owned_fief(fief_id, callback.from_user.id)
         if len(parts) == 2:
             await _ok(callback)
             await answer_html(
@@ -141,7 +141,7 @@ async def cb_demolish(callback: CallbackQuery) -> None:
     try:
         parts = callback.data.split(":")
         fief_id = int(parts[1])
-        _ensure_owner(engine, fief_id, callback.from_user.id)
+        engine.require_owned_fief(fief_id, callback.from_user.id)
         if len(parts) == 2:
             tiles = [
                 t
@@ -172,23 +172,6 @@ async def cb_demolish(callback: CallbackQuery) -> None:
     except Exception:
         logger.exception("cb_demolish")
         await callback.answer("Ошибка", show_alert=True)
-
-
-def _ensure_owner(engine, fief_id: int, user_id: int) -> dict:
-    fief = engine.db.get_fief(fief_id)
-    if not fief or fief["user_id"] != user_id:
-        raise ValueError("Это не ваша усадьба")
-    return fief
-
-
-def _ensure_owner_active(engine, fief_id: int, user_id: int) -> dict:
-    fief = _ensure_owner(engine, fief_id, user_id)
-    if not engine.fief_is_active_play(fief):
-        raise ValueError(
-            "Сначала выберите эту долину активной "
-            "(откройте усадьбу здесь или список в /start)"
-        )
-    return fief
 
 
 async def _finish_starter_pick(callback: CallbackQuery) -> None:
@@ -229,7 +212,7 @@ async def cb_status(callback: CallbackQuery) -> None:
     engine = get_engine()
     try:
         fief_id = int(callback.data.split(":")[1])
-        fief = _ensure_owner(engine, fief_id, callback.from_user.id)
+        fief = engine.require_owned_fief(fief_id, callback.from_user.id)
         engine.remember_last_realm(callback.from_user.id, fief["realm_id"])
         await _ok(callback)
         await reply_game(
@@ -250,7 +233,7 @@ async def cb_home(callback: CallbackQuery) -> None:
     engine = get_engine()
     try:
         fief_id = int(callback.data.split(":")[1])
-        fief = _ensure_owner(engine, fief_id, callback.from_user.id)
+        fief = engine.require_owned_fief(fief_id, callback.from_user.id)
         engine.remember_last_realm(callback.from_user.id, fief["realm_id"])
         await _ok(callback)
         await reply_game(
@@ -271,7 +254,7 @@ async def cb_more(callback: CallbackQuery) -> None:
     engine = get_engine()
     try:
         fief_id = int(callback.data.split(":")[1])
-        fief = _ensure_owner(engine, fief_id, callback.from_user.id)
+        fief = engine.require_owned_fief(fief_id, callback.from_user.id)
         engine.remember_last_realm(callback.from_user.id, fief["realm_id"])
         await callback.answer("Меню обновлено")
         await reply_game(
@@ -300,7 +283,7 @@ async def cb_hub(callback: CallbackQuery) -> None:
         if kind not in {"e", "v"}:
             await callback.answer("Неизвестное меню", show_alert=True)
             return
-        fief = _ensure_owner(engine, fief_id, callback.from_user.id)
+        fief = engine.require_owned_fief(fief_id, callback.from_user.id)
         open_, hint = fief_raid_pact_state(engine, fief)
         await _ok(callback)
         if kind == "e":
@@ -336,7 +319,7 @@ async def cb_prepared_intents(callback: CallbackQuery) -> None:
     engine = get_engine()
     try:
         fief_id = int(callback.data.split(":")[1])
-        _ensure_owner(engine, fief_id, callback.from_user.id)
+        engine.require_owned_fief(fief_id, callback.from_user.id)
         await _ok(callback)
         await _reply_prepared_intents(callback.message, engine, fief_id)
     except ValueError as exc:
@@ -351,7 +334,7 @@ async def cb_rumors(callback: CallbackQuery) -> None:
     engine = get_engine()
     try:
         fief_id = int(callback.data.split(":")[1])
-        fief = _ensure_owner(engine, fief_id, callback.from_user.id)
+        fief = engine.require_owned_fief(fief_id, callback.from_user.id)
         await _ok(callback)
         await reply_game(
             callback.message,
@@ -370,7 +353,7 @@ async def cb_holdings(callback: CallbackQuery) -> None:
     engine = get_engine()
     try:
         fief_id = int(callback.data.split(":")[1])
-        _ensure_owner(engine, fief_id, callback.from_user.id)
+        engine.require_owned_fief(fief_id, callback.from_user.id)
         await _ok(callback)
         await reply_game(
             callback.message,
@@ -390,7 +373,7 @@ async def cb_force_tick_vote_removed(callback: CallbackQuery) -> None:
     engine = get_engine()
     try:
         fief_id = int(callback.data.split(":")[1])
-        _ensure_owner(engine, fief_id, callback.from_user.id)
+        engine.require_owned_fief(fief_id, callback.from_user.id)
         await callback.answer("Досрочный тик отменён. Ждите плановый ход.", show_alert=True)
         await reply_game(
             callback.message,
@@ -412,7 +395,7 @@ async def cb_lock_hint(callback: CallbackQuery) -> None:
         parts = callback.data.split(":")
         # lock:rad:{fid} | lock:pct:{fid}
         fief_id = int(parts[2])
-        fief = _ensure_owner(engine, fief_id, callback.from_user.id)
+        fief = engine.require_owned_fief(fief_id, callback.from_user.id)
         realm = engine.get_realm(fief["realm_id"])
         day_number = int(realm["day_number"]) if realm else 1
         msg = raid_pact_lock_message(
@@ -433,7 +416,7 @@ async def cb_map(callback: CallbackQuery) -> None:
     engine = get_engine()
     try:
         fief_id = int(callback.data.split(":")[1])
-        fief = _ensure_owner(engine, fief_id, callback.from_user.id)
+        fief = engine.require_owned_fief(fief_id, callback.from_user.id)
         realm = engine.get_realm(fief["realm_id"])
         world_id = realm.get("world_id") if realm else None
         if world_id is None:
@@ -468,7 +451,7 @@ async def cb_map_realm(callback: CallbackQuery) -> None:
         _, fid_s, rid_s = callback.data.split(":", 2)
         fief_id = int(fid_s)
         view_realm_id = int(rid_s)
-        fief = _ensure_owner(engine, fief_id, callback.from_user.id)
+        fief = engine.require_owned_fief(fief_id, callback.from_user.id)
         home = engine.get_realm(fief["realm_id"])
         view = engine.get_realm(view_realm_id)
         if not view:
@@ -498,7 +481,7 @@ async def cb_guide(callback: CallbackQuery) -> None:
     engine = get_engine()
     try:
         fief_id = int(callback.data.split(":")[1])
-        _ensure_owner(engine, fief_id, callback.from_user.id)
+        engine.require_owned_fief(fief_id, callback.from_user.id)
         await _ok(callback)
         await reply_guide(
             callback.message,
@@ -518,7 +501,7 @@ async def cb_claim(callback: CallbackQuery) -> None:
     try:
         parts = callback.data.split(":")
         fief_id = int(parts[1])
-        fief = _ensure_owner(engine, fief_id, callback.from_user.id)
+        fief = engine.require_owned_fief(fief_id, callback.from_user.id)
 
         if len(parts) == 2:
             views = engine.tile_views(fief["realm_id"])
@@ -576,7 +559,7 @@ async def cb_build(callback: CallbackQuery) -> None:
     try:
         parts = callback.data.split(":")
         fief_id = int(parts[1])
-        fief = _ensure_owner(engine, fief_id, callback.from_user.id)
+        fief = engine.require_owned_fief(fief_id, callback.from_user.id)
 
         if len(parts) == 2:
             tiles = [
@@ -636,7 +619,7 @@ async def cb_patrol(callback: CallbackQuery) -> None:
     try:
         parts = callback.data.split(":")
         fief_id = int(parts[1])
-        _ensure_owner(engine, fief_id, callback.from_user.id)
+        engine.require_owned_fief(fief_id, callback.from_user.id)
 
         if len(parts) == 2:
             await _ok(callback)
@@ -666,7 +649,7 @@ async def cb_pending_cancel(callback: CallbackQuery) -> None:
     engine = get_engine()
     try:
         fief_id = int(callback.data.split(":")[2])
-        _ensure_owner(engine, fief_id, callback.from_user.id)
+        engine.require_owned_fief(fief_id, callback.from_user.id)
         dm_mod.clear_pending(callback.from_user.id)
         await _ok(callback)
         await reply_game(
@@ -687,7 +670,7 @@ async def cb_raid(callback: CallbackQuery) -> None:
     try:
         parts = callback.data.split(":")
         fief_id = int(parts[1])
-        fief = _ensure_owner(engine, fief_id, callback.from_user.id)
+        fief = engine.require_owned_fief(fief_id, callback.from_user.id)
         open_, _hint = fief_raid_pact_state(engine, fief)
         if not open_:
             realm = engine.db.get_realm(fief["realm_id"])
@@ -742,7 +725,7 @@ async def cb_raid_truce_toggle(callback: CallbackQuery) -> None:
     engine = get_engine()
     try:
         fief_id = int(callback.data.split(":")[1])
-        _ensure_owner(engine, fief_id, callback.from_user.id)
+        engine.require_owned_fief(fief_id, callback.from_user.id)
         pending = dm_mod.pending_actions.get(callback.from_user.id) or {}
         if pending.get("kind") != "raid_confirm" or int(pending.get("fief_id") or 0) != fief_id:
             await callback.answer("Сначала укажите силу набега.", show_alert=True)
@@ -767,7 +750,7 @@ async def cb_raid_confirm(callback: CallbackQuery) -> None:
     engine = get_engine()
     try:
         fief_id = int(callback.data.split(":")[1])
-        _ensure_owner(engine, fief_id, callback.from_user.id)
+        engine.require_owned_fief(fief_id, callback.from_user.id)
         pending = dm_mod.pending_actions.get(callback.from_user.id) or {}
         if pending.get("kind") != "raid_confirm" or int(pending.get("fief_id") or 0) != fief_id:
             await callback.answer("Сначала укажите силу набега.", show_alert=True)
@@ -799,7 +782,7 @@ async def cb_raid_cancel_intent(callback: CallbackQuery) -> None:
         parts = callback.data.split(":")
         fief_id = int(parts[1])
         intent_id = int(parts[2])
-        _ensure_owner(engine, fief_id, callback.from_user.id)
+        engine.require_owned_fief(fief_id, callback.from_user.id)
         msg = engine.cancel_raid_intent(fief_id, intent_id)
         await _ok(callback)
         await _reply_prepared_intents(
@@ -817,7 +800,7 @@ async def cb_send(callback: CallbackQuery) -> None:
     engine = get_engine()
     try:
         fief_id = int(callback.data.split(":")[1])
-        fief = _ensure_owner(engine, fief_id, callback.from_user.id)
+        fief = engine.require_owned_fief(fief_id, callback.from_user.id)
         dm_mod.set_pending(
             callback.from_user.id,
             {
@@ -851,7 +834,7 @@ async def cb_caravan_cancel_intent(callback: CallbackQuery) -> None:
         parts = callback.data.split(":")
         fief_id = int(parts[1])
         intent_id = int(parts[2])
-        _ensure_owner(engine, fief_id, callback.from_user.id)
+        engine.require_owned_fief(fief_id, callback.from_user.id)
         msg = engine.cancel_caravan_intent(fief_id, intent_id)
         await _ok(callback)
         await _reply_prepared_intents(
@@ -876,7 +859,7 @@ async def cb_pact(callback: CallbackQuery) -> None:
             action = "menu"
             fief_id = int(parts[1])
 
-        fief = _ensure_owner(engine, fief_id, callback.from_user.id)
+        fief = engine.require_owned_fief(fief_id, callback.from_user.id)
 
         if action in ("acc", "dec"):
             invite_id = int(parts[3])

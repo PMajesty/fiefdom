@@ -22,7 +22,13 @@ def _callback(data: str, *, user_id: int = 100) -> MagicMock:
 
 def _engine_for_fief(fief: dict) -> MagicMock:
     engine = MagicMock()
-    engine.db.get_fief.return_value = fief
+
+    def require_owned_fief(fief_id: int, user_id: int) -> dict:
+        if not fief or fief["user_id"] != user_id:
+            raise ValueError("Это не ваша усадьба")
+        return fief
+
+    engine.require_owned_fief.side_effect = require_owned_fief
     engine.remember_last_realm = MagicMock()
     engine.status_card.return_value = "STATUS"
     engine.rumors_text.return_value = "RUMORS"
