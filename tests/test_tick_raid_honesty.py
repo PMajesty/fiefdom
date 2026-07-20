@@ -179,7 +179,7 @@ def test_tick_applies_harvest_mult_same_day():
     db.update_realm.side_effect = update_realm
 
     with (
-        patch("app.engine.roll_minor_event", return_value="harvest"),
+        patch("app.services.world_tick.roll_minor_event", return_value="harvest"),
         patch("app.engine.apply_fief_tick", side_effect=fake_apply),
     ):
         result = engine.run_realm_tick(1)
@@ -241,7 +241,7 @@ def test_tick_drought_applies_farm_mult_to_all_fiefs():
     engine._feud_lines = MagicMock(return_value=[])
 
     with (
-        patch("app.engine.roll_minor_event", return_value="drought"),
+        patch("app.services.world_tick.roll_minor_event", return_value="drought"),
         patch("app.engine.apply_fief_tick", side_effect=fake_apply),
     ):
         engine.run_realm_tick(1)
@@ -279,7 +279,7 @@ def test_tick_always_rerolls_minor_even_if_key_active():
     engine.maybe_grow_map = MagicMock(return_value=None)
     engine._feud_lines = MagicMock(return_value=[])
 
-    with patch("app.engine.roll_minor_event", return_value="fog") as roll:
+    with patch("app.services.world_tick.roll_minor_event", return_value="fog") as roll:
         engine.run_realm_tick(1)
         # Тик: ролл текущего минора (если pending пуст) + преролл следующего для слухов.
         assert roll.call_count == 2
@@ -390,7 +390,7 @@ def test_manual_tick_does_not_advance_schedule_markers():
         return out
 
     with (
-        patch("app.engine.roll_minor_event", return_value=None),
+        patch("app.services.world_tick.roll_minor_event", return_value=None),
         patch("app.engine.apply_fief_tick", side_effect=fake_apply),
     ):
         engine.run_realm_tick(1)
@@ -420,7 +420,7 @@ def test_scheduled_tick_writes_slot_markers():
         return out
 
     with (
-        patch("app.engine.roll_minor_event", return_value=None),
+        patch("app.services.world_tick.roll_minor_event", return_value=None),
         patch("app.engine.apply_fief_tick", side_effect=fake_apply),
     ):
         engine.run_realm_tick(1, tick_slot=0)

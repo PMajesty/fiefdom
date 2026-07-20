@@ -290,7 +290,7 @@ def test_world_clock_advance_and_realm_sync_are_atomic():
     )
 
     with (
-        patch("app.engine.roll_minor_event", return_value="fog"),
+        patch("app.services.world_tick.roll_minor_event", return_value="fog"),
         pytest.raises(RuntimeError, match="crash after world advance"),
     ):
         engine.run_world_tick(1, tick_slot=0)
@@ -349,7 +349,7 @@ def test_clock_advance_updates_world_and_sync_inside_same_transaction():
         return_value={"realm_id": 1, "digest": "d", "chat_id": -1}
     )
 
-    with patch("app.engine.roll_minor_event", return_value=None):
+    with patch("app.services.world_tick.roll_minor_event", return_value=None):
         engine.run_world_tick(1, tick_slot=0)
 
     advance = [o for o in ops if o[0] in ("update_world", "sync")]
@@ -406,7 +406,7 @@ def test_world_tick_equal_clock_and_resume_after_partial_failure():
 
     engine.run_realm_tick = MagicMock(side_effect=fake_realm_tick)
 
-    with patch("app.engine.roll_minor_event", return_value="fog"):
+    with patch("app.services.world_tick.roll_minor_event", return_value="fog"):
         first = engine.run_world_tick(1, tick_slot=0)
 
     assert world["tick_index"] == 1
@@ -418,7 +418,7 @@ def test_world_tick_equal_clock_and_resume_after_partial_failure():
     assert world.get("pending_minor_key") is None
     assert world["tick_phase"] == "economy"
 
-    with patch("app.engine.roll_minor_event", return_value="harvest"):
+    with patch("app.services.world_tick.roll_minor_event", return_value="harvest"):
         second = engine.run_world_tick(1)
 
     assert second["resumed"] is True
@@ -444,7 +444,8 @@ def test_calendar_day_bumps_once_across_same_local_date_slots():
     frozen = _freeze_msk(2026, 7, 17)
     with (
         patch("app.engine.datetime", frozen),
-        patch("app.engine.roll_minor_event", return_value=None),
+        patch("app.services.world_tick.datetime", frozen),
+        patch("app.services.world_tick.roll_minor_event", return_value=None),
     ):
         for slot in (0, 1, 2, 3):
             engine.run_world_tick(1, tick_slot=slot)
@@ -466,7 +467,8 @@ def test_calendar_day_bumps_on_new_local_date():
     frozen = _freeze_msk(2026, 7, 18, hour=10)
     with (
         patch("app.engine.datetime", frozen),
-        patch("app.engine.roll_minor_event", return_value=None),
+        patch("app.services.world_tick.datetime", frozen),
+        patch("app.services.world_tick.roll_minor_event", return_value=None),
     ):
         engine.run_world_tick(1, tick_slot=0)
 
@@ -526,14 +528,15 @@ def test_calendar_day_unchanged_on_resume_incomplete():
 
     with (
         patch("app.engine.datetime", frozen),
-        patch("app.engine.roll_minor_event", return_value="fog"),
+        patch("app.services.world_tick.datetime", frozen),
+        patch("app.services.world_tick.roll_minor_event", return_value="fog"),
     ):
         first = engine.run_world_tick(1, tick_slot=0)
     assert first["incomplete"] is True
     assert world["tick_index"] == 1
     assert world["day_number"] == 11
 
-    with patch("app.engine.roll_minor_event", return_value="harvest"):
+    with patch("app.services.world_tick.roll_minor_event", return_value="harvest"):
         second = engine.run_world_tick(1)
     assert second["resumed"] is True
     assert world["tick_index"] == 1
@@ -551,7 +554,8 @@ def test_admin_tick_without_slot_does_not_bump_day_number():
     frozen = _freeze_msk(2026, 7, 17)
     with (
         patch("app.engine.datetime", frozen),
-        patch("app.engine.roll_minor_event", return_value=None),
+        patch("app.services.world_tick.datetime", frozen),
+        patch("app.services.world_tick.roll_minor_event", return_value=None),
     ):
         engine.run_world_tick(1, tick_slot=None)
 
@@ -1348,7 +1352,7 @@ def test_stuck_economy_after_catch_up_closes_play_without_new_tick():
         side_effect=AssertionError("не должен стартовать новый fan-out")
     )
 
-    with patch("app.engine.roll_minor_event", return_value="fog"):
+    with patch("app.services.world_tick.roll_minor_event", return_value="fog"):
         result = engine.run_world_tick(1)
 
     assert result["incomplete"] is False
@@ -1425,7 +1429,7 @@ def test_world_tick_sets_play_after_successful_catch_up():
         }
     )
 
-    with patch("app.engine.roll_minor_event", return_value="fog"):
+    with patch("app.services.world_tick.roll_minor_event", return_value="fog"):
         result = engine.run_world_tick(1, tick_slot=0)
 
     assert result["incomplete"] is False
