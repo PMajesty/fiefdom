@@ -5,7 +5,7 @@ import logging
 import math
 from dataclasses import dataclass
 from random import Random
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 from app import balance as B
 from app.domain.events import (
@@ -18,15 +18,39 @@ from app.domain.events import (
 logger = logging.getLogger(__name__)
 
 
+class BarnLevelFn(Protocol):
+    def __call__(self, fief_id: int) -> int: ...
+
+
+class FiefTilesFn(Protocol):
+    def __call__(self, fief_id: int) -> list[dict[str, Any]]: ...
+
+
+class UpdateFiefFn(Protocol):
+    def __call__(self, fief_id: int, **fields: Any) -> None: ...
+
+
+class UpdateTileFn(Protocol):
+    def __call__(self, tile_id: int, **fields: Any) -> None: ...
+
+
+class GetFiefFn(Protocol):
+    def __call__(self, fief_id: int) -> dict[str, Any] | None: ...
+
+
+class UpdateEventFn(Protocol):
+    def __call__(self, event_id: int, **fields: Any) -> None: ...
+
+
 @dataclass(frozen=True)
 class InstantMinorCtx:
     """Контекст мгновенного минора: колбэки пишет Engine."""
 
     fiefs: list[dict[str, Any]]
-    barn_level: Callable[[int], int]
-    fief_tiles: Callable[[int], list[dict[str, Any]]]
-    update_fief: Callable[..., None]
-    update_tile: Callable[..., None]
+    barn_level: BarnLevelFn
+    fief_tiles: FiefTilesFn
+    update_fief: UpdateFiefFn
+    update_tile: UpdateTileFn
     rng: Random
 
 
@@ -37,9 +61,9 @@ class CatastropheResolveCtx:
     event_id: int
     fiefs: list[dict[str, Any]]
     event_actions: list[dict[str, Any]]
-    get_fief: Callable[[int], dict[str, Any] | None]
-    update_fief: Callable[..., None]
-    update_event: Callable[..., None]
+    get_fief: GetFiefFn
+    update_fief: UpdateFiefFn
+    update_event: UpdateEventFn
 
 
 def _apply_rats(eff: dict[str, Any], ctx: InstantMinorCtx) -> None:

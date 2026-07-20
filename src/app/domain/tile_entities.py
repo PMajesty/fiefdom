@@ -7,7 +7,7 @@ entity_map_marks() / map_mark_for_kind(); PNG и fingerprint уже приним
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Protocol, Sequence
 
 from app.domain.modifiers import (
     LIVE_READ_MODIFIER_KINDS,
@@ -16,6 +16,7 @@ from app.domain.modifiers import (
     Modifier,
     ModifierScope,
 )
+
 
 @dataclass(frozen=True)
 class EntityModifierDecl:
@@ -48,14 +49,26 @@ class ActiveTileEntityRef:
     expires_tick: int | None = None
 
 
+class ListActiveTileEntitiesFn(Protocol):
+    def __call__(self) -> list[dict[str, Any]]: ...
+
+
+class ExpireTileEntityFn(Protocol):
+    def __call__(self, entity_id: int) -> dict[str, Any] | None: ...
+
+
+class UpdateTileEntityFn(Protocol):
+    def __call__(self, entity_id: int, **fields: Any) -> None: ...
+
+
 @dataclass(frozen=True)
 class TileEntityResolveCtx:
     """Контекст tick-resolve: колбэки пишет Engine (без БД в домене)."""
 
     tick_index: int
-    list_active: Callable[[], list[dict[str, Any]]]
-    expire_entity: Callable[[int], dict[str, Any] | None]
-    update_entity: Callable[..., None]
+    list_active: ListActiveTileEntitiesFn
+    expire_entity: ExpireTileEntityFn
+    update_entity: UpdateTileEntityFn
 
 
 TileEntityTickHandler = Callable[
