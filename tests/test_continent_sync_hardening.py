@@ -651,6 +651,58 @@ async def test_catastrophe_advances_schedule_before_send_and_resumes_missing():
 
 
 @pytest.mark.asyncio
+async def test_catastrophe_announce_text_failure_isolates_realms():
+    """Сбой сборки текста для одной долины не отменяет create/announce остальных."""
+    engine = MagicMock()
+    world = _world(
+        tick_index=10, next_catastrophe_tick=10, next_catastrophe_key="bandit_night"
+    )
+    r1 = _realm(1, chat_id=-1)
+    r2 = _realm(2, chat_id=-2)
+    engine.db.list_realms_by_chain.return_value = [r1, r2]
+    engine.db.get_active_events.return_value = []
+
+    def list_fiefs(rid):
+        if int(rid) == 1:
+            raise RuntimeError("db blip")
+        return [{"id": 2}]
+
+    engine.db.list_fiefs.side_effect = list_fiefs
+    created = []
+
+    def create_event(**fields):
+        ev = {"id": len(created) + 1, **fields}
+        created.append(ev)
+        return ev
+
+    engine.db.create_event.side_effect = create_event
+    engine.db.update_world = MagicMock()
+    engine.db.sync_realms_clock_from_world = MagicMock()
+
+    bot = MagicMock()
+    send_calls = []
+
+    async def fake_post(bot_arg, realm_id, text, reply_markup=None):
+        send_calls.append(int(realm_id))
+
+    with (
+        patch("app.scheduler.post_realm_public", new=fake_post),
+        patch(
+            "app.services.catastrophes.pick_catastrophe",
+            return_value="cattle_plague",
+        ),
+        patch(
+            "app.services.catastrophes.next_catastrophe_delay_ticks",
+            return_value=7,
+        ),
+    ):
+        await _maybe_post_world_catastrophe(bot, engine, world)
+
+    assert len(created) == 2
+    assert send_calls == [2]
+
+
+@pytest.mark.asyncio
 async def test_catastrophe_heals_divergent_active_keys_to_canonical_wave():
     """Разные активные ключи не должны вечно стопорить fan-out."""
     engine = MagicMock()

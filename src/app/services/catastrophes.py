@@ -231,15 +231,21 @@ class CatastropheService:
                     status="active",
                     resolves_tick=resolves_tick,
                 )
-                text = self._announce_text(realm, key, narrative, window_t)
-                announces.append(
-                    CatastropheAnnounce(
-                        realm_id=int(realm["id"]),
-                        text=text,
-                        event_id=int(event["id"]),
-                        key=key,
+                try:
+                    text = self._announce_text(realm, key, narrative, window_t)
+                    announces.append(
+                        CatastropheAnnounce(
+                            realm_id=int(realm["id"]),
+                            text=text,
+                            event_id=int(event["id"]),
+                            key=key,
+                        )
                     )
-                )
+                except Exception:
+                    logger.exception(
+                        "catastrophe resume announce failed realm=%s",
+                        realm.get("id"),
+                    )
             # Если волна началась, а расписание ещё не сдвинули (упали до advance).
             if next_tick is not None and tick_index >= int(next_tick):
                 self._advance_catastrophe_schedule(world, key, tick_index)
@@ -277,22 +283,30 @@ class CatastropheService:
         self._advance_catastrophe_schedule(world, key, tick_index)
 
         for realm, event in created:
-            text = self._announce_text(realm, key, narrative, window_t)
-            announces.append(
-                CatastropheAnnounce(
-                    realm_id=int(realm["id"]),
-                    text=text,
-                    event_id=int(event["id"]),
-                    key=key,
+            try:
+                text = self._announce_text(realm, key, narrative, window_t)
+                announces.append(
+                    CatastropheAnnounce(
+                        realm_id=int(realm["id"]),
+                        text=text,
+                        event_id=int(event["id"]),
+                        key=key,
+                    )
                 )
-            )
+            except Exception:
+                logger.exception(
+                    "catastrophe announce failed realm=%s", realm.get("id")
+                )
         return announces
 
-    def resolve_expired(self, realm: dict) -> list[str]:
-        """Разрешить просроченные катастрофы долины; вернуть тексты для публичного поста."""
+    def iter_expired_resolutions(self, realm: dict):
+        """Разрешить просроченные катастрофы по одной; yield текста для публичного поста.
+
+        Resolve и пост снаружи должны чередоваться: сбой поста не закрывает
+        следующие события заранее.
+        """
         tick_index = int(realm.get("tick_index") or 0)
         events = self._db.get_active_events(realm["id"], kind="catastrophe")
-        out: list[str] = []
         for ev in events:
             resolves_tick = ev.get("resolves_tick")
             if resolves_tick is None:
@@ -313,5 +327,4 @@ class CatastropheService:
                 ),
             )
             if result_text:
-                out.append(result_text)
-        return out
+                yield result_text

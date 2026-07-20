@@ -230,6 +230,5 @@ async def _maybe_post_world_catastrophe(bot: Bot, engine, world: dict) -> None:
 
 
 async def _resolve_expired_catastrophes(bot: Bot, engine, realm: dict) -> None:
-    texts = CatastropheService(engine).resolve_expired(realm)
-    for result_text in texts:
+    for result_text in CatastropheService(engine).iter_expired_resolutions(realm):
         await post_realm_public(bot, int(realm["id"]), result_text)
