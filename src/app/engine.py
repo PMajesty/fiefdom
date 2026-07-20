@@ -100,6 +100,12 @@ from app.domain.resources import (
 from app.domain.tick import (
     collect_pending_bags,
 )
+from app.presenters.intents import (
+    PreparedCaravanView,
+    PreparedRaidView,
+    render_prepared_intent_status_lines,
+    render_prepared_intents_card,
+)
 from app.presenters.status import StatusSnapshot, render_status_card
 from app.services.night_raids import NightRaidResolver
 from app.domain.tick_pipeline import (
@@ -755,63 +761,42 @@ class Engine:
         recv = self.db.get_fief(rid) if rid else None
         return self.fief_label(recv) if recv else "?"
 
-    def _prepared_intent_status_lines(self, fief_id: int) -> list[str]:
-        raids, caravans = self.list_prepared_intents(fief_id)
-        if not raids and not caravans:
-            return []
-        lines = ["Заявки:"]
-        for intent in raids:
+    def _prepared_intent_views(
+        self, fief_id: int
+    ) -> tuple[tuple[PreparedRaidView, ...], tuple[PreparedCaravanView, ...]]:
+        raids_raw, caravans_raw = self.list_prepared_intents(fief_id)
+        raids: list[PreparedRaidView] = []
+        for intent in raids_raw:
             payload = intent.get("payload") or {}
-            target = self.raid_intent_target_label(intent)
-            st = "открыта" if intent.get("status") == "open" else "закрыта"
-            lines.append(
-                f"· набег на {target}: {int(payload.get('might') or 0)} силы ({st})"
+            raids.append(
+                PreparedRaidView(
+                    target_label=self.raid_intent_target_label(intent),
+                    might=int(payload.get("might") or 0),
+                    is_open=intent.get("status") == "open",
+                )
             )
-        for intent in caravans:
+        caravans: list[PreparedCaravanView] = []
+        for intent in caravans_raw:
             payload = intent.get("payload") or {}
-            target = self.caravan_intent_target_label(intent)
             res = str(payload.get("res") or "")
-            amt = int(payload.get("amt") or 0)
-            res_name = resource_name_ru(res) if res else "?"
-            lines.append(f"· обоз к {target}: {amt} {res_name} (в пути)")
-        return lines
+            caravans.append(
+                PreparedCaravanView(
+                    target_label=self.caravan_intent_target_label(intent),
+                    amount=int(payload.get("amt") or 0),
+                    resource_name=resource_name_ru(res) if res else "?",
+                )
+            )
+        return tuple(raids), tuple(caravans)
+
+    def _prepared_intent_status_lines(self, fief_id: int) -> list[str]:
+        """Короткие строки для статус-карточки: открытые/закрытые набеги и обозы."""
+        raids, caravans = self._prepared_intent_views(fief_id)
+        return render_prepared_intent_status_lines(raids, caravans)
 
     def prepared_intents_card(self, fief_id: int) -> str:
         """Карточка управления исходящими набегами и обозами."""
-        raids, caravans = self.list_prepared_intents(fief_id)
-        if not raids and not caravans:
-            return (
-                "Нет подготовленных заявок: ни набега, ни обоза в пути.\n"
-                "Объявить набег - в Усадьбе, обоз - в Долине."
-            )
-        lines = [
-            "<b>Заявки</b>",
-            "Открытые можно снять кнопками ниже; закрытый набег уже не отменить.",
-            "",
-        ]
-        if raids:
-            lines.append("Набеги:")
-            for intent in raids:
-                payload = intent.get("payload") or {}
-                target = self.raid_intent_target_label(intent)
-                st = "открыта" if intent.get("status") == "open" else "закрыта"
-                lines.append(
-                    f"· на {target}: {int(payload.get('might') or 0)} силы ({st})"
-                )
-            lines.append("")
-        if caravans:
-            lines.append("Обозы:")
-            for intent in caravans:
-                payload = intent.get("payload") or {}
-                target = self.caravan_intent_target_label(intent)
-                res = str(payload.get("res") or "")
-                amt = int(payload.get("amt") or 0)
-                res_name = resource_name_ru(res) if res else "?"
-                lines.append(f"· к {target}: {amt} {res_name} (можно вернуть)")
-            lines.append("")
-        while lines and lines[-1] == "":
-            lines.pop()
-        return "\n".join(lines)
+        raids, caravans = self._prepared_intent_views(fief_id)
+        return render_prepared_intents_card(raids, caravans)
 
     def holdings_text(self, fief_id: int) -> str:
         fief = self.db.get_fief(fief_id)
