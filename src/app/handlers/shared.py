@@ -12,7 +12,7 @@ from aiogram.types import InlineKeyboardMarkup, Message
 from app import balance as B
 from app.config import ADMIN_USER_ID
 from app.domain.cta import choose_primary_cta
-from app.domain.map_image import MapPhoto
+from app.rendering.map_image import MapPhoto
 from app.engine import (
     Engine,
     raid_pact_lock_hint,

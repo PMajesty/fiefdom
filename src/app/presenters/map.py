@@ -1,7 +1,7 @@
 """Текстовая и фото-карта: чистая сборка подписи/HTML."""
 from __future__ import annotations
 
-from app.domain.map_image import MapPhoto, build_map_caption
+from app.rendering.map_image import MapPhoto, build_map_caption
 
 
 def render_map_text(

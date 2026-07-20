@@ -8,7 +8,7 @@ from PIL import Image, ImageFont
 
 from app import balance as B
 from app.domain.economy import TileView
-from app.domain.map_image import (
+from app.rendering.map_image import (
     MapImageCache,
     MapPhoto,
     _FONT_PATH,
@@ -93,7 +93,7 @@ def test_unowned_cells_have_no_center_mark():
 
 
 def test_map_icon_assets_exist():
-    from app.domain.map_image import TILE_ICONS, _ICON_DIR
+    from app.rendering.map_image import TILE_ICONS, _ICON_DIR
 
     for name in TILE_ICONS.values():
         assert (_ICON_DIR / name).is_file(), name

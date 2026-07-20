@@ -17,7 +17,7 @@ from app.domain.economy import (
     render_map_parts,
 )
 from app.domain.holdings import format_holdings
-from app.domain.map_image import (
+from app.rendering.map_image import (
     MapImageCache,
     MapPhoto,
     map_fingerprint,
