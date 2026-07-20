@@ -187,3 +187,33 @@ def test_guide_mentions_pact_consent():
 
     text = game_guide()
     assert "согласия" in text.lower() or "приглашение" in text.lower()
+
+
+def test_leave_pact_founder_transfers_leadership():
+    engine, fiefs, _invites, pact = _pact_engine()
+    fiefs[2]["pact_id"] = pact["id"]
+    fiefs[3] = {
+        "id": 3,
+        "realm_id": 9,
+        "user_id": 303,
+        "name": "Третий",
+        "pact_id": pact["id"],
+        "cover_allies": False,
+    }
+    db = engine.db
+    db.get_world.return_value = {"id": 1, "tick_phase": "play"}
+    engine._world_id_for_realm = MagicMock(return_value=1)
+    engine.world_tick_incomplete = MagicMock(return_value=False)
+
+    def update_pact(pid, **fields):
+        assert int(pid) == int(pact["id"])
+        pact.update(fields)
+
+    db.update_pact.side_effect = update_pact
+
+    msg = engine.leave_pact(1)
+    assert "вышли" in msg.lower()
+    assert fiefs[1]["pact_id"] is None
+    assert pact["founder_fief_id"] == 2
+    db.update_pact.assert_called_once_with(pact["id"], founder_fief_id=2)
+    db.dissolve_pact.assert_not_called()
