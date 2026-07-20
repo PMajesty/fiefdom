@@ -346,7 +346,7 @@ def starter_tiles_kb(
 def realm_picker_kb(fiefs: list[dict], engine) -> InlineKeyboardMarkup:
     rows = []
     for f in fiefs:
-        realm = engine.db.get_realm(f["realm_id"])
+        realm = engine.get_realm(f["realm_id"])
         title = realm["title"] if realm else f"#{f['realm_id']}"
         rows.append(
             [
@@ -490,7 +490,7 @@ def raid_targets_kb(fief_id: int, others: list[dict], engine=None) -> InlineKeyb
     for o in others[:20]:
         label = engine.fief_label(o) if engine is not None else o["name"]
         if o.get("via_portal") and engine is not None:
-            realm = engine.db.get_realm(o["realm_id"]) or {}
+            realm = engine.get_realm(o["realm_id"]) or {}
             title = str(realm.get("title") or "долина")[:12]
             label = f"{title}: {label}"
         soft = might_soft_label(int(o.get("might") or 0))
@@ -814,7 +814,7 @@ async def _offer_claim(message: Message, engine, fief: dict) -> None:
         if t.owner_fief_id == fief["id"] and not t.is_overgrown
     }
     by_xy = {(t.x, t.y): t for t in views}
-    realm = engine.db.get_realm(fief["realm_id"])
+    realm = engine.get_realm(fief["realm_id"])
     claimable = sorted(
         adjacent_claimable(
             owned,
@@ -847,7 +847,7 @@ async def _offer_claim(message: Message, engine, fief: dict) -> None:
 async def _offer_raid(message: Message, engine, fief: dict) -> None:
     open_, _hint = fief_raid_pact_state(engine, fief)
     if not open_:
-        realm = engine.db.get_realm(fief["realm_id"])
+        realm = engine.get_realm(fief["realm_id"])
         day_number = int(realm["day_number"]) if realm else 1
         await answer_html(
             message,
@@ -874,7 +874,7 @@ async def _offer_raid(message: Message, engine, fief: dict) -> None:
 async def _offer_pact(message: Message, engine, fief: dict) -> None:
     open_, _hint = fief_raid_pact_state(engine, fief)
     if not open_:
-        realm = engine.db.get_realm(fief["realm_id"])
+        realm = engine.get_realm(fief["realm_id"])
         day_number = int(realm["day_number"]) if realm else 1
         await answer_html(
             message,

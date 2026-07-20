@@ -246,7 +246,6 @@ def test_engine_holdings_text_uses_fief_tiles():
     db.fief_tiles.assert_called_once_with(1)
 
 
-@pytest.mark.asyncio
 def test_build_and_demolish_options_skip_overgrown():
     active = {"id": 1, "is_overgrown": False, "building": None}
     overgrown = {"id": 2, "is_overgrown": True, "building": None}
@@ -264,6 +263,7 @@ def test_build_and_demolish_options_skip_overgrown():
     db.fief_tiles.assert_called_with(7)
 
 
+@pytest.mark.asyncio
 async def test_cb_holdings_shows_text_and_home():
     fief = {"id": 7, "user_id": 100, "realm_id": 3}
     engine = MagicMock()

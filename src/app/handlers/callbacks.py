@@ -506,7 +506,7 @@ async def cb_claim(callback: CallbackQuery) -> None:
                 if t.owner_fief_id == fief_id and not t.is_overgrown
             }
             by_xy = {(t.x, t.y): t for t in views}
-            realm = engine.db.get_realm(fief["realm_id"])
+            realm = engine.get_realm(fief["realm_id"])
             claimable = sorted(
                 adjacent_claimable(
                     owned,
@@ -656,7 +656,7 @@ async def cb_raid(callback: CallbackQuery) -> None:
         fief = engine.require_owned_fief(fief_id, callback.from_user.id)
         open_, _hint = fief_raid_pact_state(engine, fief)
         if not open_:
-            realm = engine.db.get_realm(fief["realm_id"])
+            realm = engine.get_realm(fief["realm_id"])
             day_number = int(realm["day_number"]) if realm else 1
             await callback.answer(
                 raid_pact_lock_message(
@@ -870,7 +870,7 @@ async def cb_pact(callback: CallbackQuery) -> None:
 
         open_, _hint = fief_raid_pact_state(engine, fief)
         if not open_:
-            realm = engine.db.get_realm(fief["realm_id"])
+            realm = engine.get_realm(fief["realm_id"])
             day_number = int(realm["day_number"]) if realm else 1
             await callback.answer(
                 raid_pact_lock_message(
