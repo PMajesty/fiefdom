@@ -935,6 +935,9 @@ class Engine:
 
 
     # ---------- caravans ----------
+    def resolve_target_fief(self, realm_id: int, text: str) -> dict | None:
+        return CaravanService(self).resolve_target_fief(realm_id, text)
+
     def declare_caravan(
         self,
         from_fief_id: int,

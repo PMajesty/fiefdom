@@ -965,14 +965,14 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
             reply_markup=raid_confirm_kb(
                 int(pending["fief_id"]),
                 show_truce=not bool(
-                    (engine.db.get_fief(int(pending["fief_id"])) or {}).get("pact_id")
+                    (engine.fief_by_id(int(pending["fief_id"])) or {}).get("pact_id")
                 ),
             ),
         )
         return True
 
     if kind == "send_target":
-        target = _resolve_fief_ref(engine, pending["realm_id"], text)
+        target = engine.resolve_target_fief(pending["realm_id"], text)
         if not target:
             await answer_html(
                 message,
@@ -1019,8 +1019,8 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
             )
             return True
         res, amt = parsed
-        sender = engine.db.get_fief(pending["fief_id"])
-        receiver = engine.db.get_fief(pending["target_fief_id"])
+        sender = engine.fief_by_id(pending["fief_id"])
+        receiver = engine.fief_by_id(pending["target_fief_id"])
         result = engine.declare_caravan(
             pending["fief_id"], pending["target_fief_id"], res, amt
         )
@@ -1052,7 +1052,7 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
         return True
 
     if kind == "pact_name":
-        fief = engine.db.get_fief(pending["fief_id"])
+        fief = engine.fief_by_id(pending["fief_id"])
         pact_name = text.strip()[:40]
         msg = engine.create_pact(pending["fief_id"], text)
         clear_pending(user_id)
@@ -1070,7 +1070,7 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
 
     if kind == "pact_invite":
         # id усадьбы или имя
-        target = _resolve_fief_ref(engine, pending["realm_id"], text)
+        target = engine.resolve_target_fief(pending["realm_id"], text)
         if not target:
             await answer_html(
                 message,
@@ -1127,26 +1127,3 @@ def _parse_send_line(text: str) -> tuple[str, int] | None:
         return None
     return _tradeable_res_map()[m.group(1).lower()], int(m.group(2))
 
-
-def _resolve_fief_ref(engine, realm_id: int, text: str) -> dict | None:
-    """Ищет усадьбу на всём континенте (своя долина + остальные долины мира)."""
-    text = text.strip()
-    realm_ids = {int(realm_id)}
-    for nb in engine.db.list_adjacent_realms(int(realm_id)):
-        realm_ids.add(int(nb["id"]))
-    if text.isdigit():
-        f = engine.db.get_fief(int(text))
-        if f and int(f["realm_id"]) in realm_ids:
-            return f
-        return None
-    needle = text.lower()
-    for rid in sorted(realm_ids):
-        for f in engine.db.list_fiefs(rid):
-            label = engine.fief_label(f)
-            if f["name"].lower() == needle or label.lower() == needle:
-                return f
-            user = engine.db.get_user(f["user_id"])
-            uname = (user.get("username") or "").strip().lower() if user else ""
-            if uname and needle in {uname, f"@{uname}", f"усадьба @{uname}"}:
-                return f
-    return None

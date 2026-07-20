@@ -70,7 +70,7 @@ async def test_declare_result_has_no_loot_digits_in_public_copy():
 async def test_pact_create_logs_to_group():
     engine = MagicMock()
     fief = {"id": 1, "realm_id": 7, "name": "Альфа"}
-    engine.db.get_fief = MagicMock(return_value=fief)
+    engine.fief_by_id = MagicMock(return_value=fief)
     engine.create_pact = MagicMock(return_value="Пакт создан.")
     engine.fief_label = MagicMock(return_value="Альфа")
     engine.ensure_user = MagicMock()

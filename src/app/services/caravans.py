@@ -25,6 +25,29 @@ class CaravanService:
         self._engine = engine
         self._db = engine.db
 
+    def resolve_target_fief(self, realm_id: int, text: str) -> dict | None:
+        """Ищет усадьбу на всём континенте (своя долина + остальные долины мира)."""
+        text = text.strip()
+        realm_ids = {int(realm_id)}
+        for nb in self._db.list_adjacent_realms(int(realm_id)):
+            realm_ids.add(int(nb["id"]))
+        if text.isdigit():
+            f = self._db.get_fief(int(text))
+            if f and int(f["realm_id"]) in realm_ids:
+                return f
+            return None
+        needle = text.lower()
+        for rid in sorted(realm_ids):
+            for f in self._db.list_fiefs(rid):
+                label = self._engine.fief_label(f)
+                if f["name"].lower() == needle or label.lower() == needle:
+                    return f
+                user = self._db.get_user(f["user_id"])
+                uname = (user.get("username") or "").strip().lower() if user else ""
+                if uname and needle in {uname, f"@{uname}", f"усадьба @{uname}"}:
+                    return f
+        return None
+
     def caravan_intent_target_label(self, intent: dict) -> str:
         payload = intent.get("payload") or {}
         rid = int(payload.get("receiver_id") or 0)
