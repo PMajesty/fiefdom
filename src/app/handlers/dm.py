@@ -29,14 +29,15 @@ from app.handlers.shared import (
     resolve_fief_for_user,
 )
 from app.messaging import answer_html
+from app.ui.pending import pending_store
 
 logger = logging.getLogger(__name__)
 
 router = Router(name="dm")
 router.message.filter(F.chat.type == ChatType.PRIVATE)
 
-# Простая FSM в памяти процесса: user_id -> {kind, ...}
-pending_actions: dict[int, dict] = {}
+# Переходный alias: тесты и старые импорты патчат dm.pending_actions.
+pending_actions = pending_store._actions
 
 _MENU_WORDS = {
     "статус": "status",
@@ -89,11 +90,15 @@ _MENU_WORDS = {
 
 
 def clear_pending(user_id: int) -> None:
-    pending_actions.pop(user_id, None)
+    pending_store.clear(user_id)
 
 
 def set_pending(user_id: int, data: dict) -> None:
-    pending_actions[user_id] = data
+    pending_store.set(user_id, data)
+
+
+def get_pending(user_id: int) -> dict | None:
+    return pending_store.get(user_id)
 
 
 def is_pending_cancel_text(text: str) -> bool:
@@ -684,7 +689,7 @@ async def dm_text(message: Message) -> None:
     text = message.text.strip()
     engine = get_engine()
 
-    pending = pending_actions.get(user_id)
+    pending = get_pending(user_id)
     if pending:
         try:
             handled = await _handle_pending(message, engine, pending, text)

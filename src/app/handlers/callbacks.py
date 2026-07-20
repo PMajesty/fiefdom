@@ -709,7 +709,7 @@ async def cb_raid_truce_toggle(callback: CallbackQuery) -> None:
     try:
         fief_id = int(callback.data.split(":")[1])
         engine.require_owned_fief(fief_id, callback.from_user.id)
-        pending = dm_mod.pending_actions.get(callback.from_user.id) or {}
+        pending = dm_mod.get_pending(callback.from_user.id) or {}
         if pending.get("kind") != "raid_confirm" or int(pending.get("fief_id") or 0) != fief_id:
             await callback.answer("Сначала укажите силу набега.", show_alert=True)
             return
@@ -734,7 +734,7 @@ async def cb_raid_confirm(callback: CallbackQuery) -> None:
     try:
         fief_id = int(callback.data.split(":")[1])
         engine.require_owned_fief(fief_id, callback.from_user.id)
-        pending = dm_mod.pending_actions.get(callback.from_user.id) or {}
+        pending = dm_mod.get_pending(callback.from_user.id) or {}
         if pending.get("kind") != "raid_confirm" or int(pending.get("fief_id") or 0) != fief_id:
             await callback.answer("Сначала укажите силу набега.", show_alert=True)
             return
