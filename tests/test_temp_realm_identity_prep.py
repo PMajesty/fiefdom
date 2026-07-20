@@ -267,9 +267,9 @@ async def test_cmd_start_realm_foreign_redirect_sets_owned_last_realm():
     owned = {"id": 7, "realm_id": 1, "user_id": 100, "world_id": 1}
     engine = MagicMock()
     engine.ensure_user = MagicMock()
-    engine.db.get_realm.return_value = {"id": 2, "title": "Чужая", "world_id": 1}
-    engine.db.get_fief_by_user.return_value = None
-    engine.db.get_fief_by_user_world.return_value = owned
+    engine.get_realm.return_value = {"id": 2, "title": "Чужая", "world_id": 1}
+    engine.fief_of_user_in_realm.return_value = None
+    engine.fief_of_user_in_world.return_value = owned
 
     message = MagicMock()
     message.from_user = MagicMock(id=100)
@@ -282,7 +282,7 @@ async def test_cmd_start_realm_foreign_redirect_sets_owned_last_realm():
     ):
         await dm_mod.cmd_start(message, command)
 
-    engine.db.set_last_realm.assert_called_once_with(100, 1)
+    engine.remember_last_realm.assert_called_once_with(100, 1)
     answer.assert_awaited_once()
     assert "уже есть усадьба" in answer.await_args.args[1]
     status.assert_awaited_once_with(message, 7)
@@ -297,8 +297,8 @@ async def test_cmd_start_realm_owned_sets_last_realm_after_check():
     fief = {"id": 7, "realm_id": 1, "user_id": 100, "world_id": 1}
     engine = MagicMock()
     engine.ensure_user = MagicMock()
-    engine.db.get_realm.return_value = {"id": 1, "title": "Дом", "world_id": 1}
-    engine.db.get_fief_by_user.return_value = fief
+    engine.get_realm.return_value = {"id": 1, "title": "Дом", "world_id": 1}
+    engine.fief_of_user_in_realm.return_value = fief
 
     message = MagicMock()
     message.from_user = MagicMock(id=100)
@@ -310,5 +310,5 @@ async def test_cmd_start_realm_owned_sets_last_realm_after_check():
     ):
         await dm_mod.cmd_start(message, command)
 
-    engine.db.set_last_realm.assert_called_once_with(100, 1)
+    engine.remember_last_realm.assert_called_once_with(100, 1)
     status.assert_awaited_once_with(message, 7)

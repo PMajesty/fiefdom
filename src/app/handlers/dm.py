@@ -562,23 +562,23 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
         kind, rid = parse_start_payload(command.args)
 
         if kind == "join" and rid is not None:
-            realm = engine.db.get_realm(rid)
+            realm = engine.get_realm(rid)
             if not realm:
                 await answer_html(message, "Долина не найдена.")
                 return
-            existing = engine.db.get_fief_by_user(rid, user.id)
+            existing = engine.fief_of_user_in_realm(user.id, rid)
             if existing:
-                engine.db.set_last_realm(user.id, rid)
+                engine.remember_last_realm(user.id, rid)
                 await show_status(message, existing["id"])
                 return
             world_id = realm.get("world_id")
             owned = (
-                engine.db.get_fief_by_user_world(user.id, int(world_id))
+                engine.fief_of_user_in_world(user.id, int(world_id))
                 if world_id is not None
                 else None
             )
             if owned:
-                engine.db.set_last_realm(user.id, owned["realm_id"])
+                engine.remember_last_realm(user.id, owned["realm_id"])
                 await answer_html(
                     message,
                     "У вас уже есть усадьба на континенте. "
@@ -598,23 +598,23 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
             return
 
         if kind == "realm" and rid is not None:
-            realm = engine.db.get_realm(rid)
+            realm = engine.get_realm(rid)
             if not realm:
                 await answer_html(message, "Долина не найдена.")
                 return
-            fief = engine.db.get_fief_by_user(rid, user.id)
+            fief = engine.fief_of_user_in_realm(user.id, rid)
             if fief:
-                engine.db.set_last_realm(user.id, rid)
+                engine.remember_last_realm(user.id, rid)
                 await show_status(message, fief["id"])
                 return
             world_id = realm.get("world_id")
             owned = (
-                engine.db.get_fief_by_user_world(user.id, int(world_id))
+                engine.fief_of_user_in_world(user.id, int(world_id))
                 if world_id is not None
                 else None
             )
             if owned:
-                engine.db.set_last_realm(user.id, owned["realm_id"])
+                engine.remember_last_realm(user.id, owned["realm_id"])
                 await answer_html(
                     message,
                     "У вас уже есть усадьба на континенте. "
@@ -633,7 +633,7 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
             )
             return
 
-        fiefs = engine.db.list_fiefs_by_user(user.id)
+        fiefs = engine.fiefs_of_user(user.id)
         if not fiefs:
             await answer_html(
                 message,
@@ -648,7 +648,7 @@ async def cmd_start(message: Message, command: CommandObject) -> None:
                 reply_markup=realm_picker_kb(fiefs, engine),
             )
             return
-        engine.db.set_last_realm(user.id, fiefs[0]["realm_id"])
+        engine.remember_last_realm(user.id, fiefs[0]["realm_id"])
         await show_status(message, fiefs[0]["id"])
     except ValueError as exc:
         await answer_html(message, str(exc))
@@ -722,7 +722,7 @@ async def dm_text(message: Message) -> None:
         elif key == "status":
             await show_status(message, fid)
         elif key == "map":
-            realm = engine.db.get_realm(fief["realm_id"])
+            realm = engine.get_realm(fief["realm_id"])
             world_id = realm.get("world_id") if realm else None
             if world_id is None:
                 await reply_map_photo(
@@ -732,7 +732,7 @@ async def dm_text(message: Message) -> None:
                     reply_markup=map_view_kb(fid),
                 )
             else:
-                realms = engine.db.list_realms_by_chain(int(world_id))
+                realms = engine.realms_of_world(int(world_id))
                 await reply_game(
                     message,
                     "Карты долин континента - выберите долину:",

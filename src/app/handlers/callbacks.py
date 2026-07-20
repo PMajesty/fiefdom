@@ -230,7 +230,7 @@ async def cb_status(callback: CallbackQuery) -> None:
     try:
         fief_id = int(callback.data.split(":")[1])
         fief = _ensure_owner(engine, fief_id, callback.from_user.id)
-        engine.db.set_last_realm(callback.from_user.id, fief["realm_id"])
+        engine.remember_last_realm(callback.from_user.id, fief["realm_id"])
         await _ok(callback)
         await reply_game(
             callback.message,
@@ -251,7 +251,7 @@ async def cb_home(callback: CallbackQuery) -> None:
     try:
         fief_id = int(callback.data.split(":")[1])
         fief = _ensure_owner(engine, fief_id, callback.from_user.id)
-        engine.db.set_last_realm(callback.from_user.id, fief["realm_id"])
+        engine.remember_last_realm(callback.from_user.id, fief["realm_id"])
         await _ok(callback)
         await reply_game(
             callback.message,
@@ -272,7 +272,7 @@ async def cb_more(callback: CallbackQuery) -> None:
     try:
         fief_id = int(callback.data.split(":")[1])
         fief = _ensure_owner(engine, fief_id, callback.from_user.id)
-        engine.db.set_last_realm(callback.from_user.id, fief["realm_id"])
+        engine.remember_last_realm(callback.from_user.id, fief["realm_id"])
         await callback.answer("Меню обновлено")
         await reply_game(
             callback.message,
@@ -413,7 +413,7 @@ async def cb_lock_hint(callback: CallbackQuery) -> None:
         # lock:rad:{fid} | lock:pct:{fid}
         fief_id = int(parts[2])
         fief = _ensure_owner(engine, fief_id, callback.from_user.id)
-        realm = engine.db.get_realm(fief["realm_id"])
+        realm = engine.get_realm(fief["realm_id"])
         day_number = int(realm["day_number"]) if realm else 1
         msg = raid_pact_lock_message(
             onboard_step=int(fief.get("onboard_step") or 0),
@@ -434,7 +434,7 @@ async def cb_map(callback: CallbackQuery) -> None:
     try:
         fief_id = int(callback.data.split(":")[1])
         fief = _ensure_owner(engine, fief_id, callback.from_user.id)
-        realm = engine.db.get_realm(fief["realm_id"])
+        realm = engine.get_realm(fief["realm_id"])
         world_id = realm.get("world_id") if realm else None
         if world_id is None:
             await _ok(callback)
@@ -445,7 +445,7 @@ async def cb_map(callback: CallbackQuery) -> None:
                 reply_markup=map_view_kb(fief_id),
             )
             return
-        realms = engine.db.list_realms_by_chain(int(world_id))
+        realms = engine.realms_of_world(int(world_id))
         await _ok(callback)
         await reply_game(
             callback.message,
@@ -469,8 +469,8 @@ async def cb_map_realm(callback: CallbackQuery) -> None:
         fief_id = int(fid_s)
         view_realm_id = int(rid_s)
         fief = _ensure_owner(engine, fief_id, callback.from_user.id)
-        home = engine.db.get_realm(fief["realm_id"])
-        view = engine.db.get_realm(view_realm_id)
+        home = engine.get_realm(fief["realm_id"])
+        view = engine.get_realm(view_realm_id)
         if not view:
             await callback.answer("Долина не найдена", show_alert=True)
             return

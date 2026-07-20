@@ -23,7 +23,7 @@ def _callback(data: str, *, user_id: int = 100) -> MagicMock:
 def _engine_for_fief(fief: dict) -> MagicMock:
     engine = MagicMock()
     engine.db.get_fief.return_value = fief
-    engine.db.set_last_realm = MagicMock()
+    engine.remember_last_realm = MagicMock()
     engine.status_card.return_value = "STATUS"
     engine.rumors_text.return_value = "RUMORS"
     return engine
@@ -44,7 +44,7 @@ async def test_cb_more_migrates_stale_more_button_to_new_home():
         await cb_mod.cb_more(callback)
 
     callback.answer.assert_awaited_once_with("Меню обновлено")
-    engine.db.set_last_realm.assert_called_once_with(100, 3)
+    engine.remember_last_realm.assert_called_once_with(100, 3)
     home.assert_called_once_with(engine, 7)
     reply.assert_awaited_once_with(
         callback.message,

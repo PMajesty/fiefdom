@@ -63,7 +63,7 @@ async def cmd_create_realm(message: Message, bot: Bot) -> None:
 async def cmd_map(message: Message) -> None:
     engine = get_engine()
     try:
-        realm = engine.db.get_realm_by_chat(message.chat.id)
+        realm = engine.realm_by_chat(message.chat.id)
         if not realm:
             await answer_html(message, "Долина ещё не основана. /вотчина")
             return
@@ -94,7 +94,7 @@ async def cmd_market(message: Message) -> None:
 async def cmd_digest(message: Message, bot: Bot) -> None:
     engine = get_engine()
     try:
-        realm = engine.db.get_realm_by_chat(message.chat.id)
+        realm = engine.realm_by_chat(message.chat.id)
         if not realm:
             await answer_html(message, "Долина ещё не основана. /вотчина")
             return
@@ -144,19 +144,19 @@ async def cmd_guide(message: Message) -> None:
 async def cmd_me(message: Message, bot: Bot) -> None:
     engine = get_engine()
     try:
-        realm = engine.db.get_realm_by_chat(message.chat.id)
+        realm = engine.realm_by_chat(message.chat.id)
         if not realm:
             await answer_html(message, "Долина ещё не основана. /вотчина")
             return
         username = await _bot_username(message, bot)
-        fief = engine.db.get_fief_by_user(realm["id"], message.from_user.id)
+        fief = engine.fief_of_user_in_realm(message.from_user.id, realm["id"])
         if fief:
             payload = f"realm_{realm['id']}"
             label = "Открыть усадьбу"
         else:
             world_id = realm.get("world_id")
             owned = (
-                engine.db.get_fief_by_user_world(
+                engine.fief_of_user_in_world(
                     message.from_user.id, int(world_id)
                 )
                 if world_id is not None

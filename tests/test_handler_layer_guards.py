@@ -15,10 +15,10 @@ ALIAS_RE = re.compile(
 
 # Известный долг; любой другой .py в scope без записи = 0.
 OCCURRENCE_FREEZE: dict[str, int] = {
-    "src/app/handlers/dm.py": 38,
-    "src/app/handlers/callbacks.py": 21,
+    "src/app/handlers/dm.py": 24,
+    "src/app/handlers/callbacks.py": 13,
     "src/app/handlers/admin.py": 0,
-    "src/app/handlers/group.py": 5,
+    "src/app/handlers/group.py": 0,
     "src/app/handlers/shared.py": 7,
     "src/app/scheduler.py": 0,
     "src/app/patch_announce.py": 3,
