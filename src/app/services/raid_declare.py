@@ -41,25 +41,27 @@ class RaidDeclareService:
                 item["via_portal"] = int(f["realm_id"]) != atk_realm
                 out.append(item)
         return out
+
     def raid_declare_is_open(self, world: dict) -> bool:
         local_now = self._engine._world_local_now(world)
         return raid_declare_open(local_now, self._engine.play_window_bounds_for_world(world))
+
     def format_raid_deadline(
         self, world: dict, *, midpoint: bool
     ) -> str:
         bounds = self._engine.play_window_bounds_for_world(world)
         if bounds is None:
             return "-"
-        from app.domain.tick_schedule import raid_declare_midpoint
-
         point = raid_declare_midpoint(bounds) if midpoint else bounds[1]
         return point.strftime("%d.%m %H:%M")
+
     def _refund_action(self, fief_id: int) -> None:
         fief = self._db.get_fief(fief_id)
         if not fief:
             return
         new_actions = min(B.ACTIONS_BANK_MAX, int(fief["actions"]) + 1)
         self._db.update_fief(int(fief_id), actions=new_actions)
+
     def _raid_declare_gates(
         self, attacker_id: int, victim_id: int, might: int
     ) -> tuple[dict, dict, dict, dict, int]:
@@ -115,6 +117,7 @@ class RaidDeclareService:
                 "Поздно объявлять набег: до закрытия заявок осталось меньше половины окна"
             )
         return atk, vic, realm, world, tick_index
+
     def declare_raid(
         self,
         attacker_id: int,
@@ -209,6 +212,7 @@ class RaidDeclareService:
             pact_merge_hint=pact_hint,
             dm_text=dm,
         )
+
     def cancel_raid_intent(self, fief_id: int, intent_id: int) -> str:
         fief = self._engine.require_active_fief(fief_id)
         intent = self._db._fetchone(
@@ -234,6 +238,7 @@ class RaidDeclareService:
             f"Заявка снята: {might} силы и 1 действие вернулись "
             f"({self._engine.fief_label(fief)})."
         )
+
     def maybe_lock_raids_at_midpoint(self, world_id: int) -> int:
         """Scheduler: идемпотентный lock после середины окна play."""
         world = self._engine.ensure_play_opened_at(int(world_id))
