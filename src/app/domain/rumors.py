@@ -26,7 +26,7 @@ TRUTH_FALSE = "false"
 
 RUMOR_EMPTY_PULL = (
     "👂 Слухи рынка. Площадь пока молчит.\n"
-    "Новые строки днём капают в групповом чате долины."
+    "Новые сплетни днём сами дойдут в групповом чате долины."
 )
 
 RUMOR_OPENERS = (
@@ -256,7 +256,7 @@ def _patrol_phrase(active: bool, *, fuzzy: bool) -> str:
             return "по ночам будто с факелами ходят"
         return "дозор ходит у ворот"
     if fuzzy:
-        return "у ворот будто тихо, без лишнего шуму"
+        return "у ворот будто тихо, без лишнего шума"
     return "ворота без дозора"
 
 
@@ -388,7 +388,7 @@ def compose_event_rumor(
     title = event_name_ru(hint.kind, named)
     if hint.kind == "catastrophe":
         return f"Шепчут, будто близится беда - {title}."
-    return f"Говорят, завтра долина встретит - {title}."
+    return f"Говорят, на подходе - {title}."
 
 
 def _compose_intel_line(
