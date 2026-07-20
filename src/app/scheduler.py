@@ -20,7 +20,8 @@ from app.domain.events import (
 )
 from app.domain.tick_pipeline import needs_economy_wake, needs_resolve_wake
 from app.domain.tick_schedule import due_tick_slot
-from app.handlers.shared import get_engine, post_digest, post_realm_public
+from app.wiring import get_engine
+from app.handlers.shared import post_digest, post_realm_public
 from app.patch_announce import announce_pending_patches
 
 logger = logging.getLogger(__name__)

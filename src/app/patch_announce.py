@@ -6,7 +6,8 @@ import logging
 from aiogram import Bot
 
 from app.domain.patch_notes import format_patch_announcement, pending_patch_notes
-from app.handlers.shared import get_engine, post_realm_public
+from app.wiring import get_engine
+from app.handlers.shared import post_realm_public
 
 logger = logging.getLogger(__name__)
 

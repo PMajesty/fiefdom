@@ -11,7 +11,6 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app import balance as B
 from app.config import ADMIN_USER_ID
-from app.database import get_db
 from app.engine import (
     Engine,
     raid_pact_lock_hint,
@@ -25,20 +24,12 @@ from app.messaging import (
     reply_guide_document,
     send_html,
 )
+from app.wiring import get_engine
 
 logger = logging.getLogger(__name__)
 
-_engine: Engine | None = None
-
 _START_REALM = re.compile(r"^realm_(\d+)$", re.IGNORECASE)
 _START_JOIN = re.compile(r"^join_(\d+)$", re.IGNORECASE)
-
-
-def get_engine() -> Engine:
-    global _engine
-    if _engine is None:
-        _engine = Engine(get_db())
-    return _engine
 
 
 def realm_upgrade_cost_mult(engine: Engine, realm: dict | None) -> float:
