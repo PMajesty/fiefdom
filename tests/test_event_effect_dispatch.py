@@ -394,23 +394,30 @@ def test_engine_farm_mult_uses_dispatcher():
     plague = float(catastrophe_effect("cattle_plague")["farm_mult"])
     drought = float(minor_effect("drought")["farm_mult"])
     assert plague == 0.375
-    assert engine._realm_farm_mult({"id": 1, "active_minor_key": None}) == plague
+    assert engine.realm_modifiers(
+        {"id": 1, "active_minor_key": None}
+    ).farm_mult() == plague
     assert (
-        engine._realm_farm_mult({"id": 1, "active_minor_key": "drought"})
+        engine.realm_modifiers({"id": 1, "active_minor_key": "drought"}).farm_mult()
         == drought * plague
     )
 
     db.get_active_events.return_value = [{"id": 2, "event_key": "bandit_night"}]
-    assert engine._realm_farm_mult({"id": 1, "active_minor_key": None}) == 1.0
+    assert engine.realm_modifiers(
+        {"id": 1, "active_minor_key": None}
+    ).farm_mult() == 1.0
     assert (
-        engine._realm_farm_mult({"id": 1, "active_minor_key": "harvest"}) == 1.15
+        engine.realm_modifiers({"id": 1, "active_minor_key": "harvest"}).farm_mult()
+        == 1.15
     )
 
     db.get_active_events.return_value = [
         {"id": 1, "event_key": "cattle_plague"},
         {"id": 2, "event_key": "bandit_night"},
     ]
-    assert engine._realm_farm_mult({"id": 1, "active_minor_key": None}) == plague
+    assert engine.realm_modifiers(
+        {"id": 1, "active_minor_key": None}
+    ).farm_mult() == plague
 
 
 def test_engine_instant_minor_idle_keys_no_db_writes():

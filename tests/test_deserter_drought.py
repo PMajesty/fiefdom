@@ -39,7 +39,13 @@ def test_realm_farm_mult_stacks_cattle_plague_with_minors():
     drought = float(minor_effect("drought")["farm_mult"])
     harvest = float(minor_effect("harvest")["farm_mult"])
 
-    assert engine._realm_farm_mult({"id": 1, "active_minor_key": None}) == plague
-    assert engine._realm_farm_mult({"id": 1, "active_minor_key": "drought"}) == drought * plague
-    assert engine._realm_farm_mult({"id": 1, "active_minor_key": "harvest"}) == harvest * plague
+    assert engine.realm_modifiers(
+        {"id": 1, "active_minor_key": None}
+    ).farm_mult() == plague
+    assert engine.realm_modifiers(
+        {"id": 1, "active_minor_key": "drought"}
+    ).farm_mult() == drought * plague
+    assert engine.realm_modifiers(
+        {"id": 1, "active_minor_key": "harvest"}
+    ).farm_mult() == harvest * plague
     assert "половин" not in events.CATASTROPHES["cattle_plague"]["canned_narrative"]

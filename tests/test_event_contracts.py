@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 
 import pytest
 
@@ -24,6 +25,18 @@ from app.domain.modifiers import (
     EffectKind,
 )
 from app.engine import ENGINE_CONSUMED_MODIFIER_KINDS, Engine
+
+_SERVICES_DIR = Path(__file__).resolve().parents[1] / "src" / "app" / "services"
+
+
+def _live_path_source() -> str:
+    """Постоянная поверхность: Engine + весь пакет services."""
+    chunks = [inspect.getsource(Engine)]
+    for path in sorted(_SERVICES_DIR.glob("*.py")):
+        if path.name == "__init__.py":
+            continue
+        chunks.append(path.read_text(encoding="utf-8"))
+    return "\n".join(chunks)
 
 
 def test_effect_contracts_valid():
@@ -55,20 +68,7 @@ def test_declared_ongoing_kinds_are_reachable_on_engine_paths():
         for decl in contract.modifiers
     }
     assert declared <= LIVE_READ_MODIFIER_KINDS
-    from app.services.caravans import CaravanService
-    from app.services.land_actions import LandActionService
-    from app.services.night_raids import NightRaidResolver
-    from app.services.realm_tick import RealmTickRunner
-    from app.services.world_tick import WorldTickOrchestrator
-
-    src = (
-        inspect.getsource(Engine)
-        + inspect.getsource(CaravanService)
-        + inspect.getsource(LandActionService)
-        + inspect.getsource(NightRaidResolver)
-        + inspect.getsource(RealmTickRunner)
-        + inspect.getsource(WorldTickOrchestrator)
-    )
+    src = _live_path_source()
     for kind in declared:
         method = MODIFIER_SET_KIND_READERS[kind]
         assert f".{method}()" in src

@@ -231,43 +231,57 @@ class Engine:
     def __init__(self, db: Database):
         self.db = db
         self._map_image_cache = MapImageCache()
+        # Сервисы собираются один раз; фасады делегируют в эти экземпляры.
+        self._realm_lifecycle = RealmLifecycleService(self, db)
+        self._patch_announce = PatchAnnounceService(self, db)
+        self._player_context = PlayerContextService(self, db)
+        self._onboarding = OnboardingService(self, db)
+        self._caravans = CaravanService(self, db)
+        self._land_actions = LandActionService(self, db)
+        self._catastrophes = CatastropheService(self, db)
+        self._raid_declare = RaidDeclareService(self, db)
+        self._night_raids = NightRaidResolver(self, db)
+        self._pacts = PactService(self, db)
+        self._world_tick = WorldTickOrchestrator(self, db)
+        self._realm_tick = RealmTickRunner(self, db)
+        self._rumors = RumorService(self, db)
 
     # ---------- realm ----------
     def create_realm(self, chat_id: int, title: str, creator_user_id: int) -> tuple[dict, str]:
-        return RealmLifecycleService(self, self.db).create_realm(
+        return self._realm_lifecycle.create_realm(
             chat_id, title, creator_user_id
         )
 
     def begin_wipe(self, realm_id: int) -> str:
-        return RealmLifecycleService(self, self.db).begin_wipe(realm_id)
+        return self._realm_lifecycle.begin_wipe(realm_id)
 
     def confirm_wipe(self, realm_id: int, code: str, confirm_word: str) -> str:
-        return RealmLifecycleService(self, self.db).confirm_wipe(
+        return self._realm_lifecycle.confirm_wipe(
             realm_id, code, confirm_word
         )
 
     def list_realms_with_fief_counts(
         self,
     ) -> tuple[list[dict], dict[int, int]]:
-        return RealmLifecycleService(self, self.db).list_realms_with_fief_counts()
+        return self._realm_lifecycle.list_realms_with_fief_counts()
 
     def get_realm(self, realm_id: int) -> dict | None:
-        return RealmLifecycleService(self, self.db).get_realm(realm_id)
+        return self._realm_lifecycle.get_realm(realm_id)
 
     def fiefs_of_realm(self, realm_id: int) -> list[dict]:
-        return RealmLifecycleService(self, self.db).fiefs_of_realm(realm_id)
+        return self._realm_lifecycle.fiefs_of_realm(realm_id)
 
     def adjacent_realm_ids(self, realm_id: int) -> list[int]:
-        return RealmLifecycleService(self, self.db).adjacent_realm_ids(realm_id)
+        return self._realm_lifecycle.adjacent_realm_ids(realm_id)
 
     def announced_patch_names(self) -> set[str]:
-        return PatchAnnounceService(self, self.db).announced_names()
+        return self._patch_announce.announced_names()
 
     def realms_to_announce(self) -> list[dict]:
-        return PatchAnnounceService(self, self.db).realms_to_announce()
+        return self._patch_announce.realms_to_announce()
 
     def mark_patch_announced(self, name: str) -> None:
-        return PatchAnnounceService(self, self.db).mark_announced(name)
+        return self._patch_announce.mark_announced(name)
 
     def grant_resources(
         self,
@@ -275,18 +289,18 @@ class Engine:
         fief_id: int,
         deltas: dict[str, int],
     ) -> None:
-        return RealmLifecycleService(self, self.db).grant_resources(
+        return self._realm_lifecycle.grant_resources(
             realm_id, fief_id, deltas
         )
 
     def set_fief_frozen(self, fief_id: int, frozen: bool) -> None:
-        return RealmLifecycleService(self, self.db).set_fief_frozen(fief_id, frozen)
+        return self._realm_lifecycle.set_fief_frozen(fief_id, frozen)
 
     def set_active_minor(self, realm_id: int, key: str) -> None:
-        return RealmLifecycleService(self, self.db).set_active_minor(realm_id, key)
+        return self._realm_lifecycle.set_active_minor(realm_id, key)
 
     def issue_decree(self, realm_id: int, body: str) -> int:
-        return RealmLifecycleService(self, self.db).issue_decree(realm_id, body)
+        return self._realm_lifecycle.issue_decree(realm_id, body)
 
     def default_world(self) -> dict:
         return self.db.get_or_create_world()
@@ -298,48 +312,48 @@ class Engine:
         return self.db.list_realms_by_chain(world_id)
 
     def resolve_realm_for_user(self, user_id: int, chat: Any = None) -> dict | None:
-        return PlayerContextService(self, self.db).resolve_realm_for_user(user_id, chat)
+        return self._player_context.resolve_realm_for_user(user_id, chat)
 
     def resolve_fief_for_user(
         self, user_id: int, realm_id: int | None = None
     ) -> dict | None:
-        return PlayerContextService(self, self.db).resolve_fief_for_user(user_id, realm_id)
+        return self._player_context.resolve_fief_for_user(user_id, realm_id)
 
     def remember_last_realm(self, user_id: int, realm_id: int) -> None:
-        return PlayerContextService(self, self.db).remember_last_realm(user_id, realm_id)
+        return self._player_context.remember_last_realm(user_id, realm_id)
 
     def realm_by_chat(self, chat_id: int) -> dict | None:
-        return PlayerContextService(self, self.db).realm_by_chat(chat_id)
+        return self._player_context.realm_by_chat(chat_id)
 
     def fief_of_user_in_realm(self, user_id: int, realm_id: int) -> dict | None:
-        return PlayerContextService(self, self.db).fief_of_user_in_realm(user_id, realm_id)
+        return self._player_context.fief_of_user_in_realm(user_id, realm_id)
 
     def fief_of_user_in_world(self, user_id: int, world_id: int) -> dict | None:
-        return PlayerContextService(self, self.db).fief_of_user_in_world(user_id, world_id)
+        return self._player_context.fief_of_user_in_world(user_id, world_id)
 
     def fiefs_of_user(self, user_id: int) -> list[dict]:
-        return PlayerContextService(self, self.db).fiefs_of_user(user_id)
+        return self._player_context.fiefs_of_user(user_id)
 
     def fief_by_id(self, fief_id: int) -> dict | None:
-        return PlayerContextService(self, self.db).fief_by_id(fief_id)
+        return self._player_context.fief_by_id(fief_id)
 
     def require_owned_fief(self, fief_id: int, user_id: int) -> dict:
-        return PlayerContextService(self, self.db).require_owned_fief(fief_id, user_id)
+        return self._player_context.require_owned_fief(fief_id, user_id)
 
     def require_owned_active_fief(self, fief_id: int, user_id: int) -> dict:
-        return PlayerContextService(self, self.db).require_owned_active_fief(
+        return self._player_context.require_owned_active_fief(
             fief_id, user_id
         )
 
     # ---------- join / onboarding ----------
     def ensure_user(self, user) -> None:
-        return OnboardingService(self, self.db).ensure_user(user)
+        return self._onboarding.ensure_user(user)
 
     def starter_tile_choices(self, realm_id: int, count: int = 3) -> list[dict]:
-        return OnboardingService(self, self.db).starter_tile_choices(realm_id, count)
+        return self._onboarding.starter_tile_choices(realm_id, count)
 
     def has_fief_elsewhere(self, user_id: int, realm_id: int) -> bool:
-        return OnboardingService(self, self.db).has_fief_elsewhere(user_id, realm_id)
+        return self._onboarding.has_fief_elsewhere(user_id, realm_id)
 
     def join_fief(
         self,
@@ -347,7 +361,7 @@ class Engine:
         user,
         tile_id: int,
     ) -> tuple[dict, str]:
-        return OnboardingService(self, self.db).join_fief(realm_id, user, tile_id)
+        return self._onboarding.join_fief(realm_id, user, tile_id)
 
 
     def fief_label(self, fief: dict | None) -> str:
@@ -549,7 +563,7 @@ class Engine:
         return self.fief_label(vic) if vic else "?"
 
     def caravan_intent_target_label(self, intent: dict) -> str:
-        return CaravanService(self, self.db).caravan_intent_target_label(intent)
+        return self._caravans.caravan_intent_target_label(intent)
 
     def _prepared_intent_views(
         self, fief_id: int
@@ -756,48 +770,48 @@ class Engine:
 
 
     def demolish_options(self, fief_id: int) -> list[dict]:
-        return LandActionService(self, self.db).demolish_options(fief_id)
+        return self._land_actions.demolish_options(fief_id)
 
     def build_options(self, fief_id: int) -> tuple[list[dict], float]:
-        return LandActionService(self, self.db).build_options(fief_id)
+        return self._land_actions.build_options(fief_id)
 
     def claim_tile(self, fief_id: int, x: int, y: int) -> str:
-        return LandActionService(self, self.db).claim_tile(fief_id, x, y)
+        return self._land_actions.claim_tile(fief_id, x, y)
 
     def build_or_upgrade(self, fief_id: int, x: int, y: int, building: str) -> str:
-        return LandActionService(self, self.db).build_or_upgrade(fief_id, x, y, building)
+        return self._land_actions.build_or_upgrade(fief_id, x, y, building)
 
     def demolish_building(self, fief_id: int, x: int, y: int) -> str:
-        return LandActionService(self, self.db).demolish_building(fief_id, x, y)
+        return self._land_actions.demolish_building(fief_id, x, y)
 
     def gather_resource(self, fief_id: int, resource: str) -> str:
-        return LandActionService(self, self.db).gather_resource(fief_id, resource)
+        return self._land_actions.gather_resource(fief_id, resource)
 
     def _onboard_claim(self, fief_id: int) -> None:
-        return LandActionService(self, self.db)._onboard_claim(fief_id)
+        return self._land_actions._onboard_claim(fief_id)
 
     def _onboard_build(self, fief_id: int) -> None:
-        return LandActionService(self, self.db)._onboard_build(fief_id)
+        return self._land_actions._onboard_build(fief_id)
 
     def patrol(self, fief_id: int) -> str:
-        return LandActionService(self, self.db).patrol(fief_id)
+        return self._land_actions.patrol(fief_id)
 
 
     def contribute_catastrophe_might(
         self, event_id: int, user_id: int, amount: int = 5
     ) -> int:
-        return CatastropheService(self, self.db).contribute_catastrophe_might(
+        return self._catastrophes.contribute_catastrophe_might(
             event_id, user_id, amount
         )
 
     def plan_world_catastrophe(self, world: dict):
-        return CatastropheService(self, self.db).plan_world_catastrophe(world)
+        return self._catastrophes.plan_world_catastrophe(world)
 
     def iter_expired_catastrophe_resolutions(self, realm: dict):
-        return CatastropheService(self, self.db).iter_expired_resolutions(realm)
+        return self._catastrophes.iter_expired_resolutions(realm)
 
     def list_raid_target_fiefs(self, attacker_fief_id: int) -> list[dict]:
-        return RaidDeclareService(self, self.db).list_raid_target_fiefs(attacker_fief_id)
+        return self._raid_declare.list_raid_target_fiefs(attacker_fief_id)
 
     def _world_local_now(self, world: dict) -> datetime:
         try:
@@ -847,10 +861,10 @@ class Engine:
         return play_window_bounds(opened_local, next_at)
 
     def raid_declare_is_open(self, world: dict) -> bool:
-        return RaidDeclareService(self, self.db).raid_declare_is_open(world)
+        return self._raid_declare.raid_declare_is_open(world)
 
     def format_raid_deadline(self, world: dict, *, midpoint: bool) -> str:
-        return RaidDeclareService(self, self.db).format_raid_deadline(
+        return self._raid_declare.format_raid_deadline(
             world, midpoint=midpoint
         )
 
@@ -858,12 +872,12 @@ class Engine:
         return self.format_raid_deadline(world, midpoint=midpoint)
 
     def _refund_action(self, fief_id: int) -> None:
-        return RaidDeclareService(self, self.db)._refund_action(fief_id)
+        return self._raid_declare._refund_action(fief_id)
 
     def _raid_declare_gates(
         self, attacker_id: int, victim_id: int, might: int
     ) -> tuple[dict, dict, dict, dict, int]:
-        return RaidDeclareService(self, self.db)._raid_declare_gates(
+        return self._raid_declare._raid_declare_gates(
             attacker_id, victim_id, might
         )
 
@@ -875,12 +889,12 @@ class Engine:
         *,
         open_truce: bool = False,
     ) -> DeclareRaidResult:
-        return RaidDeclareService(self, self.db).declare_raid(
+        return self._raid_declare.declare_raid(
             attacker_id, victim_id, might, open_truce=open_truce
         )
 
     def cancel_raid_intent(self, fief_id: int, intent_id: int) -> str:
-        return RaidDeclareService(self, self.db).cancel_raid_intent(fief_id, intent_id)
+        return self._raid_declare.cancel_raid_intent(fief_id, intent_id)
 
     def lock_open_raid_intents(self, world_id: int) -> int:
         world = self.db.get_world(world_id) or {}
@@ -888,7 +902,7 @@ class Engine:
         return self.db.lock_action_intents(int(world_id), tick_index, kind="raid")
 
     def maybe_lock_raids_at_midpoint(self, world_id: int) -> int:
-        return RaidDeclareService(self, self.db).maybe_lock_raids_at_midpoint(world_id)
+        return self._raid_declare.maybe_lock_raids_at_midpoint(world_id)
 
 
     def _append_pending_raid_line(self, realm_id: int, line: str) -> None:
@@ -903,7 +917,7 @@ class Engine:
     def _pick_raid_interceptor(
         self, vic: dict, *, incomplete_world: bool
     ) -> dict | None:
-        return NightRaidResolver(self, self.db)._pick_raid_interceptor(
+        return self._night_raids._pick_raid_interceptor(
             vic, incomplete_world=incomplete_world
         )
 
@@ -917,7 +931,7 @@ class Engine:
         victim_might: int,
         intercept: bool,
     ) -> bool:
-        return NightRaidResolver(self, self.db)._siege_probe_would_succeed(
+        return self._night_raids._siege_probe_would_succeed(
             attack_might=attack_might,
             watch_def=watch_def,
             patrol=patrol,
@@ -929,7 +943,7 @@ class Engine:
     def resolve_pending_raids(
         self, world_id: int, tick_index: int
     ) -> ResolveNightReport:
-        return NightRaidResolver(self, self.db).resolve_pending_raids(world_id, tick_index)
+        return self._night_raids.resolve_pending_raids(world_id, tick_index)
 
     def _resolve_victim_night(
         self,
@@ -940,7 +954,7 @@ class Engine:
         intents: list[dict],
         report: ResolveNightReport,
     ) -> None:
-        return NightRaidResolver(self, self.db)._resolve_victim_night(
+        return self._night_raids._resolve_victim_night(
             world_id=world_id,
             tick_index=tick_index,
             victim_id=victim_id,
@@ -952,7 +966,7 @@ class Engine:
 
     # ---------- caravans ----------
     def resolve_target_fief(self, realm_id: int, text: str) -> dict | None:
-        return CaravanService(self, self.db).resolve_target_fief(realm_id, text)
+        return self._caravans.resolve_target_fief(realm_id, text)
 
     def declare_caravan(
         self,
@@ -961,17 +975,17 @@ class Engine:
         res: str,
         amt: int,
     ) -> DeclareCaravanResult:
-        return CaravanService(self, self.db).declare_caravan(
+        return self._caravans.declare_caravan(
             from_fief_id, to_fief_id, res, amt
         )
 
     def cancel_caravan_intent(self, fief_id: int, intent_id: int) -> str:
-        return CaravanService(self, self.db).cancel_caravan_intent(fief_id, intent_id)
+        return self._caravans.cancel_caravan_intent(fief_id, intent_id)
 
     def resolve_pending_caravans(
         self, world_id: int, tick_index: int
     ) -> ResolveCaravanReport:
-        return CaravanService(self, self.db).resolve_pending_caravans(
+        return self._caravans.resolve_pending_caravans(
             world_id, tick_index
         )
 
@@ -979,28 +993,28 @@ class Engine:
 
     # ---------- pacts ----------
     def get_pact(self, pact_id: int) -> dict | None:
-        return PactService(self, self.db).get_pact(pact_id)
+        return self._pacts.get_pact(pact_id)
 
     def get_pact_invite(self, invite_id: int) -> dict | None:
-        return PactService(self, self.db).get_pact_invite(invite_id)
+        return self._pacts.get_pact_invite(invite_id)
 
     def create_pact(self, fief_id: int, name: str) -> str:
-        return PactService(self, self.db).create_pact(fief_id, name)
+        return self._pacts.create_pact(fief_id, name)
 
     def invite_to_pact(self, founder_fief_id: int, target_fief_id: int) -> dict:
-        return PactService(self, self.db).invite_to_pact(founder_fief_id, target_fief_id)
+        return self._pacts.invite_to_pact(founder_fief_id, target_fief_id)
 
     def accept_pact_invite(self, target_fief_id: int, invite_id: int) -> str:
-        return PactService(self, self.db).accept_pact_invite(target_fief_id, invite_id)
+        return self._pacts.accept_pact_invite(target_fief_id, invite_id)
 
     def decline_pact_invite(self, actor_fief_id: int, invite_id: int) -> str:
-        return PactService(self, self.db).decline_pact_invite(actor_fief_id, invite_id)
+        return self._pacts.decline_pact_invite(actor_fief_id, invite_id)
 
     def leave_pact(self, fief_id: int) -> str:
-        return PactService(self, self.db).leave_pact(fief_id)
+        return self._pacts.leave_pact(fief_id)
 
     def set_cover(self, fief_id: int, enabled: bool) -> str:
-        return PactService(self, self.db).set_cover(fief_id, enabled)
+        return self._pacts.set_cover(fief_id, enabled)
 
 
 
@@ -1035,10 +1049,10 @@ class Engine:
         return "Разведчики открыли новые земли."
 
     def apply_absence(self, realm_id: int) -> None:
-        return RealmTickRunner(self, self.db).apply_absence(realm_id)
+        return self._realm_tick.apply_absence(realm_id)
 
     def world_id_for_realm(self, realm_id: int) -> int:
-        return RealmLifecycleService(self, self.db).world_id_for_realm(realm_id)
+        return self._realm_lifecycle.world_id_for_realm(realm_id)
 
     def _world_id_for_realm(self, realm_id: int) -> int:
         return self.world_id_for_realm(realm_id)
@@ -1069,9 +1083,6 @@ class Engine:
             incomplete=self.world_tick_incomplete(wid),
         )
 
-    def _require_continent_caught_up(self, realm_id: int) -> None:
-        """Мутации запрещены, пока тик континента не завершён (фаза play)."""
-        self._require_action_window(int(realm_id))
 
     def _require_cross_valley_caught_up(
         self, realm_a: int, realm_b: int
@@ -1087,7 +1098,7 @@ class Engine:
         world_id: int | None = None,
         tick_slot: int | None = None,
     ) -> dict:
-        return WorldTickOrchestrator(self, self.db).run_world_tick(world_id, tick_slot)
+        return self._world_tick.run_world_tick(world_id, tick_slot)
 
 
     def run_realm_tick(
@@ -1097,7 +1108,7 @@ class Engine:
         *,
         advance_clock: bool = True,
     ) -> dict:
-        return RealmTickRunner(self, self.db).run_realm_tick(
+        return self._realm_tick.run_realm_tick(
             realm_id, tick_slot=tick_slot, advance_clock=advance_clock
         )
 
@@ -1107,7 +1118,7 @@ class Engine:
         *,
         consume_pending: bool = True,
     ) -> str | None:
-        return RealmTickRunner(self, self.db)._prepare_tick_minor(
+        return self._realm_tick._prepare_tick_minor(
             realm_id, consume_pending=consume_pending
         )
 
@@ -1137,7 +1148,7 @@ class Engine:
     def _resolve_tile_entities(
         self, realm_id: int, tick_index: int
     ) -> tuple[list[str], tuple[ActiveTileEntityRef, ...]]:
-        return RealmTickRunner(self, self.db)._resolve_tile_entities(realm_id, tick_index)
+        return self._realm_tick._resolve_tile_entities(realm_id, tick_index)
 
     def realm_modifiers(
         self,
@@ -1162,26 +1173,19 @@ class Engine:
             )
         )
 
-    def _realm_farm_mult(self, realm: dict) -> float:
-        return self.realm_modifiers(realm).farm_mult()
 
-    def _active_cattle_plague(self, realm_id: int) -> dict | None:
-        for ev in self.db.get_active_events(realm_id, kind="catastrophe"):
-            if ev.get("event_key") == "cattle_plague":
-                return ev
-        return None
 
     def _resolve_active_minor_events(self, realm_id: int) -> None:
-        return RealmTickRunner(self, self.db)._resolve_active_minor_events(realm_id)
+        return self._realm_tick._resolve_active_minor_events(realm_id)
 
     def _apply_instant_minor(self, realm_id: int, key: str) -> None:
-        return RealmTickRunner(self, self.db)._apply_instant_minor(realm_id, key)
+        return self._realm_tick._apply_instant_minor(realm_id, key)
 
     def _feud_lines(self, realm_id: int) -> list[str]:
-        return RealmTickRunner(self, self.db)._feud_lines(realm_id)
+        return self._realm_tick._feud_lines(realm_id)
 
     def _sunday_extra(self, realm_id: int) -> str:
-        return RealmTickRunner(self, self.db)._sunday_extra(realm_id)
+        return self._realm_tick._sunday_extra(realm_id)
 
 
     def _rumor_snapshots(
@@ -1190,32 +1194,32 @@ class Engine:
         *,
         realm_title: str | None = None,
     ) -> list[FiefRumorSnapshot]:
-        return RumorService(self, self.db)._rumor_snapshots(
+        return self._rumors._rumor_snapshots(
             realm_id, realm_title=realm_title
         )
 
     def _foreign_rumor_snapshots(self, realm_id: int) -> list[FiefRumorSnapshot]:
-        return RumorService(self, self.db)._foreign_rumor_snapshots(realm_id)
+        return self._rumors._foreign_rumor_snapshots(realm_id)
 
     def _roll_rumor_line_for_realm(self, realm_id: int) -> str | None:
-        return RumorService(self, self.db)._roll_rumor_line_for_realm(realm_id)
+        return self._rumors._roll_rumor_line_for_realm(realm_id)
 
     def _upcoming_event_hints(self, realm_id: int) -> list[UpcomingEventHint]:
-        return RumorService(self, self.db)._upcoming_event_hints(realm_id)
+        return self._rumors._upcoming_event_hints(realm_id)
 
     def _same_play_opened_mark(self, left: Any, right: Any) -> bool:
-        return RumorService(self, self.db)._same_play_opened_mark(left, right)
+        return self._rumors._same_play_opened_mark(left, right)
 
     def plan_world_rumor_queues(self, world_id: int) -> None:
-        return RumorService(self, self.db).plan_world_rumor_queues(world_id)
+        return self._rumors.plan_world_rumor_queues(world_id)
 
     def ensure_rumor_queues_planned(self, world_id: int) -> None:
-        return RumorService(self, self.db).ensure_rumor_queues_planned(world_id)
+        return self._rumors.ensure_rumor_queues_planned(world_id)
 
     def maybe_due_rumors(
         self, world_id: int, local_now: datetime
     ) -> list[dict[str, Any]]:
-        return RumorService(self, self.db).maybe_due_rumors(world_id, local_now)
+        return self._rumors.maybe_due_rumors(world_id, local_now)
 
     def acknowledge_rumor_posted(
         self,
@@ -1223,12 +1227,12 @@ class Engine:
         due_iso: str,
         text: str | None,
     ) -> None:
-        return RumorService(self, self.db).acknowledge_rumor_posted(
+        return self._rumors.acknowledge_rumor_posted(
             realm_id, due_iso, text
         )
 
     def rumors_text(self, realm_id: int) -> str:
-        return RumorService(self, self.db).rumors_text(realm_id)
+        return self._rumors.rumors_text(realm_id)
 
 
     def help_text(self) -> str:

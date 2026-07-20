@@ -81,8 +81,6 @@ def test_inactive_fief_skips_tick_economy():
     engine.maybe_grow_map = MagicMock(return_value=None)
     engine._feud_lines = MagicMock(return_value=[])
     engine._prepare_tick_minor = MagicMock(return_value=None)
-    engine._realm_farm_mult = MagicMock(return_value=1.0)
-    engine._active_cattle_plague = MagicMock(return_value=None)
     engine._sunday_extra = MagicMock(return_value=None)
 
     engine.run_realm_tick(2, advance_clock=False)
