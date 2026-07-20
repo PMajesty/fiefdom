@@ -119,11 +119,27 @@ def test_infra_must_not_import_handlers():
 
 
 # Приватные хелперы Database; снаружи только публичные методы.
+# Ratchet по частым формам (self._db._* / db._* / engine.db._*);
+# не ловит alias/getattr; комментарии после # вне кавычек игнорируются.
 _DB_PRIVATE_RE = re.compile(
-    r"\b(?:self\._db|engine\.db|eng\.db|\bdb)\._[a-zA-Z_]\w*"
+    r"(?:self\._db|engine\.db|eng\.db|(?<![\w.])db)\._[a-zA-Z_]\w*"
 )
 _APP_SRC = ROOT / "src" / "app"
 _DB_PRIVATE_ALLOW = frozenset({"src/app/database.py"})
+
+
+def _code_without_comment(line: str) -> str:
+    """Убирает # комментарий вне кавычек (упрощённо для ratchet)."""
+    in_squote = False
+    in_dquote = False
+    for i, ch in enumerate(line):
+        if ch == "'" and not in_dquote:
+            in_squote = not in_squote
+        elif ch == '"' and not in_squote:
+            in_dquote = not in_dquote
+        elif ch == "#" and not in_squote and not in_dquote:
+            return line[:i]
+    return line
 
 
 def test_no_private_database_access_outside_database():
@@ -135,7 +151,8 @@ def test_no_private_database_access_outside_database():
         for lineno, line in enumerate(
             path.read_text(encoding="utf-8").splitlines(), start=1
         ):
-            if _DB_PRIVATE_RE.search(line):
+            code = _code_without_comment(line)
+            if _DB_PRIVATE_RE.search(code):
                 violations.append(f"{rel}:{lineno}: {line}")
     assert not violations, "db._* outside database.py:\n" + "\n".join(violations)
 
