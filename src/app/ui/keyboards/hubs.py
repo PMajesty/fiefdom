@@ -57,6 +57,7 @@ def home_kb(
     primary_callback: str,
     *,
     prepared_count: int = 0,
+    early_tick_label: str | None = None,
 ) -> InlineKeyboardMarkup:
     """Дом: primary CTA + два хаба (Усадьба / Долина) + карта и устав."""
     fid = int(fief_id)
@@ -73,6 +74,15 @@ def home_kb(
             ),
         ],
     ]
+    if early_tick_label:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=str(early_tick_label)[:28],
+                    callback_data=f"etv:{fid}",
+                )
+            ]
+        )
     if int(prepared_count) > 0:
         rows.append(
             [
@@ -303,12 +313,17 @@ def main_menu_kb(
     min_build_cost: int | None = None,
     next_claim_cost: int | None = None,
     prepared_count: int = 0,
+    early_tick_label: str | None = None,
 ) -> InlineKeyboardMarkup:
     """Домашняя клавиатура усадьбы (status-first). Без снимка fief - безопасный CTA."""
     fid = int(fief_id)
     if fief is None:
         return home_kb(
-            fid, "Обновить статус", f"st:{fid}", prepared_count=prepared_count
+            fid,
+            "Обновить статус",
+            f"st:{fid}",
+            prepared_count=prepared_count,
+            early_tick_label=early_tick_label,
         )
     label, cb = choose_primary_cta(
         fid,
@@ -321,5 +336,11 @@ def main_menu_kb(
         min_build_cost=min_build_cost,
         next_claim_cost=next_claim_cost,
     )
-    return home_kb(fid, label, cb, prepared_count=prepared_count)
+    return home_kb(
+        fid,
+        label,
+        cb,
+        prepared_count=prepared_count,
+        early_tick_label=early_tick_label,
+    )
 

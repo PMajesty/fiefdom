@@ -19,6 +19,7 @@ def compose_services(engine: Engine, db: Database) -> None:
     from app.services.caravans import CaravanService
     from app.services.catastrophes import CatastropheService
     from app.services.cover_stances import CoverStanceService
+    from app.services.early_tick_vote import EarlyTickVoteService
     from app.services.land_actions import LandActionService
     from app.services.night_raids import NightRaidResolver
     from app.services.onboarding import OnboardingService
@@ -39,6 +40,7 @@ def compose_services(engine: Engine, db: Database) -> None:
     engine._land_actions = LandActionService(engine, db)
     engine._catastrophes = CatastropheService(engine, db)
     engine._raid_declare = RaidDeclareService(engine, db)
+    engine._early_tick_vote = EarlyTickVoteService(engine, db)
     engine._night_raids = NightRaidResolver(engine, db)
     engine._cover_stances = CoverStanceService(engine, db)
     engine._pacts = PactService(engine, db)

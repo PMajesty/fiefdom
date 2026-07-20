@@ -640,6 +640,27 @@ class Database(
             "ALTER TABLE worlds ADD COLUMN IF NOT EXISTS resolve_tick_index INT;"
         )
         self.cursor.execute(
+            "ALTER TABLE worlds ADD COLUMN IF NOT EXISTS early_tick_at TIMESTAMPTZ;"
+        )
+        self.cursor.execute(
+            "ALTER TABLE worlds ADD COLUMN IF NOT EXISTS "
+            "declare_midpoint_at TIMESTAMPTZ;"
+        )
+        self.cursor.execute(
+            "ALTER TABLE worlds ADD COLUMN IF NOT EXISTS "
+            "early_tick_pending_slot INT;"
+        )
+        self.cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS early_tick_votes (
+                world_id BIGINT NOT NULL REFERENCES worlds(id) ON DELETE CASCADE,
+                user_id BIGINT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (world_id, user_id)
+            );
+            """
+        )
+        self.cursor.execute(
             "ALTER TABLE realms ADD COLUMN IF NOT EXISTS realm_kind "
             "TEXT NOT NULL DEFAULT 'valley';"
         )
@@ -1356,6 +1377,59 @@ class Database(
             "SELECT * FROM fiefs WHERE user_id=%s ORDER BY id;",
             (user_id,),
         )
+
+    def list_fiefs_by_world(self, world_id: int) -> list[dict]:
+        return self._fetchall(
+            "SELECT * FROM fiefs WHERE world_id=%s ORDER BY id;",
+            (int(world_id),),
+        )
+
+    def list_early_tick_votes(self, world_id: int) -> list[int]:
+        rows = self._fetchall(
+            "SELECT user_id FROM early_tick_votes WHERE world_id=%s "
+            "ORDER BY created_at, user_id;",
+            (int(world_id),),
+        )
+        return [int(r["user_id"]) for r in rows]
+
+    def add_early_tick_vote(self, world_id: int, user_id: int) -> bool:
+        """True если голос новый."""
+        with self.lock:
+            self.cursor.execute(
+                """
+                INSERT INTO early_tick_votes (world_id, user_id)
+                VALUES (%s, %s)
+                ON CONFLICT (world_id, user_id) DO NOTHING
+                RETURNING user_id;
+                """,
+                (int(world_id), int(user_id)),
+            )
+            row = self.cursor.fetchone()
+            self.commit()
+            return row is not None
+
+    def remove_early_tick_vote(self, world_id: int, user_id: int) -> bool:
+        """True если голос был снят."""
+        with self.lock:
+            self.cursor.execute(
+                """
+                DELETE FROM early_tick_votes
+                WHERE world_id=%s AND user_id=%s
+                RETURNING user_id;
+                """,
+                (int(world_id), int(user_id)),
+            )
+            row = self.cursor.fetchone()
+            self.commit()
+            return row is not None
+
+    def clear_early_tick_votes(self, world_id: int) -> None:
+        with self.lock:
+            self.cursor.execute(
+                "DELETE FROM early_tick_votes WHERE world_id=%s;",
+                (int(world_id),),
+            )
+            self.commit()
 
     def update_fief(self, fief_id: int, **fields: Any) -> None:
         self._update("fiefs", fief_id, fields)

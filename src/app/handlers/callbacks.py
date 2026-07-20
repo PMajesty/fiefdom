@@ -28,7 +28,7 @@ from app.handlers.shared import (
     reply_map_photo,
     valley_hub_kb,
 )
-from app.messaging import answer_html
+from app.messaging import answer_html, send_game
 from app.ui.flows import (
     claim_offer,
     pact_menu_offer,
@@ -371,12 +371,12 @@ async def cb_holdings(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("ftv:"))
 async def cb_force_tick_vote_removed(callback: CallbackQuery) -> None:
-    """Старые кнопки \"Тик сейчас\": сообщить об отмене и обновить дом."""
+    """Старые кнопки \"Тик сейчас\": обновить дом под новую кнопку etv."""
     engine = get_engine()
     try:
         fief_id = int(callback.data.split(":")[1])
         engine.require_owned_fief(fief_id, callback.from_user.id)
-        await callback.answer("Досрочный тик отменён. Ждите плановый ход.", show_alert=True)
+        await callback.answer("Голосование снова в меню дома.", show_alert=True)
         await reply_game(
             callback.message,
             engine.status_card(fief_id),
@@ -386,6 +386,46 @@ async def cb_force_tick_vote_removed(callback: CallbackQuery) -> None:
         await callback.answer(str(exc), show_alert=True)
     except Exception:
         logger.exception("cb_force_tick_vote_removed")
+        await callback.answer("Ошибка", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("etv:"))
+async def cb_early_tick_vote(callback: CallbackQuery) -> None:
+    """Голос / снятие голоса за досрочный тик континента."""
+    engine = get_engine()
+    try:
+        fief_id = int(callback.data.split(":")[1])
+        result = engine.toggle_early_tick_vote(fief_id, callback.from_user.id)
+        await callback.answer(result.alert, show_alert=True)
+        if result.locked and result.early_tick_at is not None:
+            fief = engine.fief_by_id(fief_id) or {}
+            realm = engine.get_realm(fief.get("realm_id")) or {}
+            world = None
+            if realm.get("world_id") is not None:
+                world = engine.world(int(realm["world_id"]))
+            if world is not None:
+                text = engine.early_tick_lock_announcement(
+                    result.early_tick_at, world
+                )
+                bot = callback.bot
+                for uid in result.notify_user_ids:
+                    try:
+                        await send_game(bot, int(uid), text)
+                    except Exception:
+                        logger.warning(
+                            "early tick notify failed user=%s",
+                            uid,
+                            exc_info=True,
+                        )
+        await reply_game(
+            callback.message,
+            engine.status_card(fief_id),
+            reply_markup=fief_home_kb(engine, fief_id),
+        )
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+    except Exception:
+        logger.exception("cb_early_tick_vote")
         await callback.answer("Ошибка", show_alert=True)
 
 

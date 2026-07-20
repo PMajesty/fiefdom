@@ -196,6 +196,8 @@ def fief_home_kb(engine: Engine, fief_id: int) -> InlineKeyboardMarkup:
             next_claim = B.claim_cost(n + 1)
         except ValueError:
             next_claim = None
+    vote = engine.early_tick_vote_view(fief_id)
+    early_label = vote.label if vote.show_button else None
     return main_menu_kb(
         fief_id,
         fief=fief,
@@ -204,6 +206,7 @@ def fief_home_kb(engine: Engine, fief_id: int) -> InlineKeyboardMarkup:
         min_build_cost=min_build,
         next_claim_cost=next_claim,
         prepared_count=engine.prepared_intents_count(fief_id),
+        early_tick_label=early_label,
     )
 
 

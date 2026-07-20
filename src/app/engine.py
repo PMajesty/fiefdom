@@ -497,6 +497,15 @@ class Engine:
             last_tick_slot=int(last_slot) if last_slot is not None else None,
             slots=tick_slots(),
         )
+        world = None
+        if realm.get("world_id") is not None:
+            world = self.db.get_world(int(realm["world_id"]))
+        if world is not None:
+            early = self._as_aware_utc(world.get("early_tick_at"))
+            if early is not None:
+                early_local = early.astimezone(local_now.tzinfo)
+                if next_at is None or early_local <= next_at:
+                    next_at = early_local
         return StatusSnapshot(
             fief_label=self.fief_label(fief),
             day_number=int(realm["day_number"]),
@@ -862,6 +871,11 @@ class Engine:
             ),
             slots=tick_slots(),
         )
+        early = self._as_aware_utc(world.get("early_tick_at"))
+        if early is not None:
+            early_local = early.astimezone(local_now.tzinfo)
+            if next_at is None or early_local <= next_at:
+                next_at = early_local
         return play_window_bounds(opened_local, next_at)
 
     def raid_declare_is_open(self, world: dict) -> bool:
@@ -925,6 +939,33 @@ class Engine:
 
     def maybe_lock_raids_at_midpoint(self, world_id: int) -> int:
         return self._raid_declare.maybe_lock_raids_at_midpoint(world_id)
+
+    def early_tick_vote_view(self, fief_id: int):
+        return self._early_tick_vote.vote_view(fief_id)
+
+    def toggle_early_tick_vote(self, fief_id: int, user_id: int):
+        return self._early_tick_vote.toggle_vote(fief_id, user_id)
+
+    def reconcile_early_tick_quorum(self, world_id: int):
+        return self._early_tick_vote.reconcile_quorum(world_id)
+
+    def clear_early_tick_vote_state(self, world_id: int) -> None:
+        return self._early_tick_vote.clear_vote_state(world_id)
+
+    def early_tick_due(self, world: dict, *, utc_now=None) -> bool:
+        return self._early_tick_vote.early_tick_due(world, utc_now=utc_now)
+
+    def tick_slot_for_early_fire(self, world: dict) -> int | None:
+        return self._early_tick_vote.tick_slot_for_early_fire(world)
+
+    def arm_early_tick_fire(self, world_id: int, tick_slot: int | None) -> None:
+        return self._early_tick_vote.arm_early_tick_fire(world_id, tick_slot)
+
+    def pending_early_tick_slot(self, world: dict) -> int | None:
+        return self._early_tick_vote.pending_early_tick_slot(world)
+
+    def early_tick_lock_announcement(self, early_tick_at, world: dict) -> str:
+        return self._early_tick_vote.lock_announcement_text(early_tick_at, world)
 
 
     def _append_pending_raid_line(self, realm_id: int, line: str) -> None:

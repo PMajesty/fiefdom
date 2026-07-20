@@ -6,8 +6,8 @@ from app.repos import RaidDeclareRepos
 from app import balance as B
 from app.domain.raids import DeclareRaidResult
 from app.domain.tick_pipeline import TICK_PHASE_PLAY, normalize_tick_phase
+from app.domain.early_tick_vote import effective_declare_midpoint
 from app.domain.tick_schedule import (
-    raid_declare_midpoint,
     raid_declare_open,
     raid_lock_due,
 )
@@ -55,9 +55,23 @@ class RaidDeclareService:
                 out.append(item)
         return out
 
+    def _declare_midpoint_local(self, world: dict):
+        local_now = self._engine._world_local_now(world)
+        bounds = self._engine.play_window_bounds_for_world(world)
+        override = self._engine._as_aware_utc(world.get("declare_midpoint_at"))
+        override_local = (
+            override.astimezone(local_now.tzinfo) if override is not None else None
+        )
+        return effective_declare_midpoint(bounds, override_local)
+
     def raid_declare_is_open(self, world: dict) -> bool:
         local_now = self._engine._world_local_now(world)
-        return raid_declare_open(local_now, self._engine.play_window_bounds_for_world(world))
+        bounds = self._engine.play_window_bounds_for_world(world)
+        return raid_declare_open(
+            local_now,
+            bounds,
+            midpoint=self._declare_midpoint_local(world),
+        )
 
     def format_raid_deadline(
         self, world: dict, *, midpoint: bool
@@ -65,7 +79,9 @@ class RaidDeclareService:
         bounds = self._engine.play_window_bounds_for_world(world)
         if bounds is None:
             return "-"
-        point = raid_declare_midpoint(bounds) if midpoint else bounds[1]
+        point = self._declare_midpoint_local(world) if midpoint else bounds[1]
+        if point is None:
+            return "-"
         return point.strftime("%d.%m %H:%M")
 
     def _refund_action(self, fief_id: int) -> None:
@@ -286,6 +302,11 @@ class RaidDeclareService:
         if self._engine.world_tick_incomplete(int(world_id)):
             return 0
         local_now = self._engine._world_local_now(world)
-        if not raid_lock_due(local_now, self._engine.play_window_bounds_for_world(world)):
+        bounds = self._engine.play_window_bounds_for_world(world)
+        if not raid_lock_due(
+            local_now,
+            bounds,
+            midpoint=self._declare_midpoint_local(world),
+        ):
             return 0
         return self._engine.lock_open_travel_intents(int(world_id))

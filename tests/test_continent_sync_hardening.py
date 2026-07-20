@@ -1562,6 +1562,8 @@ async def test_scheduler_economy_wake_calls_run_world_tick_without_slot():
     engine.world.return_value = world
     engine.realms_of_world.return_value = []
     engine.world_tick_incomplete.return_value = False
+    engine.early_tick_due.return_value = False
+    engine.pending_early_tick_slot.return_value = None
     engine.run_world_tick.return_value = {
         "world_id": 1,
         "realms": [],

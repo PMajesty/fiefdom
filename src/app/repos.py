@@ -44,6 +44,17 @@ class WorldRepo(Protocol):
 
 
 @runtime_checkable
+class EarlyTickVoteStore(Protocol):
+    def list_early_tick_votes(self, world_id: int) -> list[int]: ...
+
+    def add_early_tick_vote(self, world_id: int, user_id: int) -> bool: ...
+
+    def remove_early_tick_vote(self, world_id: int, user_id: int) -> bool: ...
+
+    def clear_early_tick_votes(self, world_id: int) -> None: ...
+
+
+@runtime_checkable
 class RealmRepo(Protocol):
     def list_realms_by_chain(self, world_id: int) -> list[dict]: ...
 
@@ -144,6 +155,8 @@ class FiefRepo(Protocol):
     def list_fiefs(self, realm_id: int) -> list[dict]: ...
 
     def list_fiefs_by_user(self, user_id: int) -> list[dict]: ...
+
+    def list_fiefs_by_world(self, world_id: int) -> list[dict]: ...
 
     def update_fief(self, fief_id: int, **fields: Any) -> None: ...
 
@@ -476,6 +489,18 @@ class PatchAnnounceRepos(PatchAnnounceRepo, RealmRepo, Protocol):
 @runtime_checkable
 class WorldTickRepos(WorldRepo, RealmRepo, UnitOfWork, Protocol):
     """Persistence surface для WorldTickOrchestrator."""
+
+
+@runtime_checkable
+class EarlyTickVoteRepos(
+    WorldRepo,
+    RealmRepo,
+    FiefRepo,
+    EarlyTickVoteStore,
+    UnitOfWork,
+    Protocol,
+):
+    """Persistence surface для EarlyTickVoteService."""
 
 
 @runtime_checkable

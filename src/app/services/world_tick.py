@@ -68,6 +68,7 @@ class WorldTickOrchestrator:
             and world.get("play_opened_at") is not None
         ):
             return
+        self._engine.clear_early_tick_vote_state(int(world_id))
         fields = {
             **TickPipeline.play_fields(),
             "play_opened_at": _utcnow(),
@@ -76,7 +77,14 @@ class WorldTickOrchestrator:
         }
         self._db.update_world(int(world_id), **fields)
         if world is not None:
-            world.update(fields)
+            world.update(
+                {
+                    **fields,
+                    "early_tick_at": None,
+                    "declare_midpoint_at": None,
+                    "early_tick_pending_slot": None,
+                }
+            )
 
     def _close_play_day_raids(
         self, world_id: int, tick_index: int, world: dict

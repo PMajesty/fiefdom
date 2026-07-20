@@ -11,6 +11,7 @@ from aiogram import Bot
 from app.config import TIMEZONE, tick_slots
 from app.domain.tick_pipeline import needs_economy_wake, needs_resolve_wake
 from app.domain.tick_schedule import due_tick_slot
+from app.messaging import send_game
 from app.notifier import post_digest, post_realm_public
 from app.patch_announce import announce_pending_patches
 from app.services.catastrophes import CatastropheAnnounce
@@ -103,25 +104,38 @@ async def _scheduler_tick(bot: Bot) -> None:
         tz = ZoneInfo(TIMEZONE)
 
     local_now = datetime.now(tz)
-    slot_index = due_tick_slot(
-        local_now=local_now,
-        last_tick_local_date=_as_date(world.get("last_tick_local_date")),
-        last_tick_slot=(
-            int(world["last_tick_slot"]) if world.get("last_tick_slot") is not None else None
-        ),
-        slots=tick_slots(),
-    )
+    # Пока закреплён досрок, плановый слот не трогаем - ждём early_tick_at.
+    if world.get("early_tick_at") is not None:
+        slot_index = None
+    else:
+        slot_index = due_tick_slot(
+            local_now=local_now,
+            last_tick_local_date=_as_date(world.get("last_tick_local_date")),
+            last_tick_slot=(
+                int(world["last_tick_slot"])
+                if world.get("last_tick_slot") is not None
+                else None
+            ),
+            slots=tick_slots(),
+        )
     incomplete = engine.world_tick_incomplete(int(world["id"]))
     # economy/resolve без incomplete: добить после crash, не открывая новый слот.
     phase_economy = needs_economy_wake(world)
     phase_resolve = needs_resolve_wake(world)
+    early_due = (
+        not incomplete
+        and not phase_economy
+        and not phase_resolve
+        and engine.early_tick_due(world)
+    )
     # Mid-play: half-tick lock заявок набега + капельные слухи.
-    # slot_index is not None: тик уже due - слухи не мешаем в тот же poll.
+    # slot_index/early_due: тик уже due - слухи не мешаем в тот же poll.
     if (
         not incomplete
         and not phase_economy
         and not phase_resolve
         and slot_index is None
+        and not early_due
     ):
         try:
             engine.ensure_play_opened_at(int(world["id"]))
@@ -135,6 +149,28 @@ async def _scheduler_tick(bot: Bot) -> None:
                 )
         except Exception:
             logger.exception("travel midpoint lock failed")
+        try:
+            early_lock = engine.reconcile_early_tick_quorum(int(world["id"]))
+            if (
+                early_lock is not None
+                and early_lock.locked
+                and early_lock.early_tick_at is not None
+            ):
+                world = engine.world(int(world["id"])) or world
+                text = engine.early_tick_lock_announcement(
+                    early_lock.early_tick_at, world
+                )
+                for uid in early_lock.notify_user_ids:
+                    try:
+                        await send_game(bot, int(uid), text)
+                    except Exception:
+                        logger.warning(
+                            "early tick notify failed user=%s",
+                            uid,
+                            exc_info=True,
+                        )
+        except Exception:
+            logger.exception("early tick quorum reconcile failed")
         try:
             for item in engine.maybe_due_rumors(int(world["id"]), local_now):
                 text = item.get("text")
@@ -157,15 +193,27 @@ async def _scheduler_tick(bot: Bot) -> None:
         except Exception:
             logger.exception("rumor drip failed")
 
-    if incomplete or phase_economy or phase_resolve or slot_index is not None:
-        # incomplete/economy/resolve: догоняем/закрываем без нового слота; иначе due.
+    if (
+        incomplete
+        or phase_economy
+        or phase_resolve
+        or slot_index is not None
+        or early_due
+    ):
+        # incomplete/economy/resolve: догоняем/закрываем без нового слота;
+        # early_due: полный тик; слот только если досрок съедает конец окна.
+        if incomplete or phase_economy or phase_resolve:
+            # Досрок мог записать pending_slot до crash mid-resolve.
+            tick_slot = engine.pending_early_tick_slot(world)
+        elif early_due:
+            # Пока тик incomplete, early_due выключен - повторного запуска нет.
+            tick_slot = engine.tick_slot_for_early_fire(world)
+            engine.arm_early_tick_fire(int(world["id"]), tick_slot)
+        else:
+            tick_slot = slot_index
         result = engine.run_world_tick(
             int(world["id"]),
-            tick_slot=(
-                None
-                if (incomplete or phase_economy or phase_resolve)
-                else slot_index
-            ),
+            tick_slot=tick_slot,
         )
         await _deliver_raid_notices(bot, result.get("raid_notices") or [])
         for item in result.get("realms") or []:
@@ -177,11 +225,12 @@ async def _scheduler_tick(bot: Bot) -> None:
             if digest and chat_id and realm_id:
                 await post_digest(bot, chat_id, int(realm_id), digest)
         logger.info(
-            "World tick slot %s posted for %s realms (resumed=%s incomplete=%s)",
-            slot_index,
+            "World tick slot %s posted for %s realms (resumed=%s incomplete=%s early=%s)",
+            tick_slot,
             len([x for x in (result.get("realms") or []) if not x.get("skipped")]),
             result.get("resumed"),
             result.get("incomplete"),
+            early_due,
         )
         world = engine.world(int(world["id"])) or world
 

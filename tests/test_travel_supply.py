@@ -356,7 +356,7 @@ def test_status_card_says_home_militia():
             day_number=1,
             alerts=(),
             actions=1,
-            actions_max=3,
+            actions_max=B.ACTIONS_BANK_MAX,
             tile_count=1,
             tile_cap=9,
             stash_line="Склад",

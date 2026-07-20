@@ -207,18 +207,24 @@ def raid_declare_midpoint(bounds: tuple[datetime, datetime]) -> datetime:
 def raid_declare_open(
     now: datetime,
     bounds: tuple[datetime, datetime] | None,
+    *,
+    midpoint: datetime | None = None,
 ) -> bool:
     """True до середины окна play. Без границ - закрыто (осторожный дефолт)."""
     if bounds is None:
         return False
-    return now < raid_declare_midpoint(bounds)
+    point = midpoint if midpoint is not None else raid_declare_midpoint(bounds)
+    return now < point
 
 
 def raid_lock_due(
     now: datetime,
     bounds: tuple[datetime, datetime] | None,
+    *,
+    midpoint: datetime | None = None,
 ) -> bool:
     """True после середины окна play."""
     if bounds is None:
         return False
-    return now >= raid_declare_midpoint(bounds)
+    point = midpoint if midpoint is not None else raid_declare_midpoint(bounds)
+    return now >= point
