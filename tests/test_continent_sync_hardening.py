@@ -615,8 +615,8 @@ async def test_catastrophe_advances_schedule_before_send_and_resumes_missing():
 
     with (
         patch("app.scheduler.post_realm_public", new=fake_post),
-        patch("app.scheduler.pick_catastrophe", return_value="cattle_plague"),
-        patch("app.scheduler.next_catastrophe_delay_ticks", return_value=7),
+        patch("app.services.catastrophes.pick_catastrophe", return_value="cattle_plague"),
+        patch("app.services.catastrophes.next_catastrophe_delay_ticks", return_value=7),
     ):
         await _maybe_post_world_catastrophe(bot, engine, world)
 
@@ -694,8 +694,8 @@ async def test_catastrophe_heals_divergent_active_keys_to_canonical_wave():
     bot = MagicMock()
     with (
         patch("app.scheduler.post_realm_public", new=AsyncMock()),
-        patch("app.scheduler.pick_catastrophe", return_value="cattle_plague"),
-        patch("app.scheduler.next_catastrophe_delay_ticks", return_value=7),
+        patch("app.services.catastrophes.pick_catastrophe", return_value="cattle_plague"),
+        patch("app.services.catastrophes.next_catastrophe_delay_ticks", return_value=7),
     ):
         await _maybe_post_world_catastrophe(bot, engine, world)
 

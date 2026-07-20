@@ -225,6 +225,7 @@ def raid_pact_lock_message(*, onboard_step: int, day_number: int) -> str:
     return f"Набег и пакт - {hint} долины."
 
 
+from app.services.catastrophes import CatastropheService
 from app.services.raid_declare import RaidDeclareService
 from app.services.realm_admin import RealmLifecycleService
 from app.services.rumors import RumorService
@@ -727,29 +728,9 @@ class Engine:
     def contribute_catastrophe_might(
         self, event_id: int, user_id: int, amount: int = 5
     ) -> int:
-        """Вклад силы в активную катастрофу. Возвращает сумму в котле."""
-        amt = int(amount)
-        if amt <= 0:
-            raise ValueError("Недостаточно силы")
-        ev = self.db.get_event(event_id)
-        if not ev or ev.get("status") != "active":
-            raise ValueError("Событие уже завершено")
-        fief = self.db.get_fief_by_user(ev["realm_id"], user_id)
-        if not fief:
-            raise ValueError("Сначала получите усадьбу в личке")
-        self._require_action_window(int(fief["realm_id"]))
-        with self.db.transaction():
-            ev = self.db.get_event(event_id)
-            if not ev or ev.get("status") != "active":
-                raise ValueError("Событие уже завершено")
-            self._require_action_window(int(fief["realm_id"]))
-            if not self.db.debit_fief_resources(int(fief["id"]), might=amt):
-                raise ValueError("Недостаточно силы")
-            self.db.bump_event_action(event_id, int(fief["id"]), "might", amt)
-            total = sum(
-                int(a.get("amount") or 0) for a in self.db.event_actions(event_id)
-            )
-        return total
+        return CatastropheService(self).contribute_catastrophe_might(
+            event_id, user_id, amount
+        )
 
 
     def list_raid_target_fiefs(self, attacker_fief_id: int) -> list[dict]:
