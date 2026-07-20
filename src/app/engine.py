@@ -279,6 +279,12 @@ class Engine:
     def default_world(self) -> dict:
         return self.db.get_or_create_world()
 
+    def world(self, world_id: int) -> dict | None:
+        return self.db.get_world(world_id)
+
+    def realms_of_world(self, world_id: int) -> list[dict]:
+        return self.db.list_realms_by_chain(world_id)
+
     # ---------- join / onboarding ----------
     def ensure_user(self, user) -> None:
         return OnboardingService(self).ensure_user(user)

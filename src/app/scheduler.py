@@ -95,7 +95,7 @@ async def scheduler_loop(bot: Bot, stop_event: asyncio.Event | None = None) -> N
 
 async def _scheduler_tick(bot: Bot) -> None:
     engine = get_engine()
-    world = engine.db.get_or_create_world()
+    world = engine.default_world()
     tz_name = world.get("timezone") or TIMEZONE
     try:
         tz = ZoneInfo(tz_name)
@@ -178,7 +178,7 @@ async def _scheduler_tick(bot: Bot) -> None:
             result.get("resumed"),
             result.get("incomplete"),
         )
-        world = engine.db.get_world(int(world["id"])) or world
+        world = engine.world(int(world["id"])) or world
 
     try:
         await _maybe_post_world_catastrophe(bot, engine, world)
@@ -190,7 +190,7 @@ async def _scheduler_tick(bot: Bot) -> None:
     except Exception:
         logger.exception("patch announce failed")
 
-    for realm in engine.db.list_realms_by_chain(int(world["id"])):
+    for realm in engine.realms_of_world(int(world["id"])):
         try:
             await _resolve_expired_catastrophes(bot, engine, realm)
         except Exception:

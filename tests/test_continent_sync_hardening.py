@@ -1540,9 +1540,9 @@ async def test_scheduler_economy_wake_calls_run_world_tick_without_slot():
         last_tick_slot=0,
     )
     engine = MagicMock()
-    engine.db.get_or_create_world.return_value = world
-    engine.db.get_world.return_value = world
-    engine.db.list_realms_by_chain.return_value = []
+    engine.default_world.return_value = world
+    engine.world.return_value = world
+    engine.realms_of_world.return_value = []
     engine.world_tick_incomplete.return_value = False
     engine.run_world_tick.return_value = {
         "world_id": 1,
