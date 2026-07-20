@@ -1,6 +1,8 @@
 """Оркестрация тика континента: ночь -> часы -> economy -> play."""
 from __future__ import annotations
 
+from app.repos import WorldTickRepos
+
 import logging
 import random
 from datetime import datetime
@@ -23,9 +25,9 @@ logger = logging.getLogger(__name__)
 
 
 class WorldTickOrchestrator:
-    def __init__(self, engine) -> None:
+    def __init__(self, engine, db: WorldTickRepos | None = None) -> None:
         self._engine = engine
-        self._db = engine.db
+        self._db = db if db is not None else engine.db
 
     def _enter_tick_economy(
         self, world_id: int, world: dict | None = None

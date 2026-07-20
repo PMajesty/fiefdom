@@ -1,6 +1,8 @@
 """Ночной resolve набегов: дорога -> осада."""
 from __future__ import annotations
 
+from app.repos import NightRaidRepos
+
 import random
 
 from app import balance as B
@@ -34,9 +36,9 @@ from app.resource_schema import raid_stolen_fields
 
 
 class NightRaidResolver:
-    def __init__(self, engine) -> None:
+    def __init__(self, engine, db: NightRaidRepos | None = None) -> None:
         self._engine = engine
-        self._db = engine.db
+        self._db = db if db is not None else engine.db
 
     def _pick_raid_interceptor(
         self, vic: dict, *, incomplete_world: bool

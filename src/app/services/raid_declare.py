@@ -1,6 +1,8 @@
 """Объявление и отмена набегов, midpoint lock."""
 from __future__ import annotations
 
+from app.repos import RaidDeclareRepos
+
 from app import balance as B
 from app.domain.raids import DeclareRaidResult
 from app.domain.tick_pipeline import TICK_PHASE_PLAY, normalize_tick_phase
@@ -14,9 +16,9 @@ from app.engine import _utcnow, raid_pact_lock_message, raid_pact_unlocked
 
 
 class RaidDeclareService:
-    def __init__(self, engine) -> None:
+    def __init__(self, engine, db: RaidDeclareRepos | None = None) -> None:
         self._engine = engine
-        self._db = engine.db
+        self._db = db if db is not None else engine.db
 
     def list_raid_target_fiefs(self, attacker_fief_id: int) -> list[dict]:
         """Цели на всём континенте (без своей user_id)."""

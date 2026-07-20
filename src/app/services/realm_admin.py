@@ -1,6 +1,8 @@
 """Админ/lifecycle долины: основание, вайп, выдачи, указы, списки."""
 from __future__ import annotations
 
+from app.repos import RealmLifecycleRepos
+
 import logging
 import random
 import secrets
@@ -21,9 +23,9 @@ logger = logging.getLogger(__name__)
 
 
 class RealmLifecycleService:
-    def __init__(self, engine) -> None:
+    def __init__(self, engine, db: RealmLifecycleRepos | None = None) -> None:
         self._engine = engine
-        self._db = engine.db
+        self._db = db if db is not None else engine.db
 
     def world_id_for_realm(self, realm_id: int) -> int:
         realm = self._db.get_realm(realm_id) or {}

@@ -1,6 +1,8 @@
 """Катастрофы континента: волны, heal, resolve, вклад силы."""
 from __future__ import annotations
 
+from app.repos import CatastropheRepos
+
 import logging
 import math
 import random
@@ -26,9 +28,9 @@ class CatastropheAnnounce:
 
 
 class CatastropheService:
-    def __init__(self, engine) -> None:
+    def __init__(self, engine, db: CatastropheRepos | None = None) -> None:
         self._engine = engine
-        self._db = engine.db
+        self._db = db if db is not None else engine.db
 
     def contribute_catastrophe_might(
         self, event_id: int, user_id: int, amount: int = 5

@@ -1,11 +1,13 @@
 """Патч-вестники: учёт объявленных имён и список долин для рассылки."""
 from __future__ import annotations
 
+from app.repos import PatchAnnounceRepos
+
 
 class PatchAnnounceService:
-    def __init__(self, engine) -> None:
+    def __init__(self, engine, db: PatchAnnounceRepos | None = None) -> None:
         self._engine = engine
-        self._db = engine.db
+        self._db = db if db is not None else engine.db
 
     def announced_names(self) -> set[str]:
         return self._db.list_announced_patch_names()

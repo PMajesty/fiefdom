@@ -1,6 +1,8 @@
 """Обозы: объявление, отмена, ночной resolve."""
 from __future__ import annotations
 
+from app.repos import CaravanRepos
+
 from app import balance as B
 from app.domain.caravans import (
     DeclareCaravanResult,
@@ -17,9 +19,9 @@ from app.domain.resource_registry import tradeable_keys
 
 
 class CaravanService:
-    def __init__(self, engine) -> None:
+    def __init__(self, engine, db: CaravanRepos | None = None) -> None:
         self._engine = engine
-        self._db = engine.db
+        self._db = db if db is not None else engine.db
 
     def resolve_target_fief(self, realm_id: int, text: str) -> dict | None:
         """Ищет усадьбу на всём континенте (своя долина + остальные долины мира)."""

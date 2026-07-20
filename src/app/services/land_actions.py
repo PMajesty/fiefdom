@@ -1,6 +1,8 @@
 """Земля и постройки: claim/build/demolish/gather/patrol + онбординг-квесты."""
 from __future__ import annotations
 
+from app.repos import LandActionRepos
+
 import random
 
 from app import balance as B
@@ -38,9 +40,9 @@ def try_complete_onboard_build(fief: dict) -> dict | None:
 
 
 class LandActionService:
-    def __init__(self, engine) -> None:
+    def __init__(self, engine, db: LandActionRepos | None = None) -> None:
         self._engine = engine
-        self._db = engine.db
+        self._db = db if db is not None else engine.db
 
     def demolish_options(self, fief_id: int) -> list[dict]:
         """Незаросшие клетки усадьбы для UI сноса."""

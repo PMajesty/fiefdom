@@ -1,13 +1,15 @@
 """Контекст игрока: выбор долины/усадьбы и last_realm."""
 from __future__ import annotations
 
+from app.repos import PlayerContextRepos
+
 from typing import Any
 
 
 class PlayerContextService:
-    def __init__(self, engine) -> None:
+    def __init__(self, engine, db: PlayerContextRepos | None = None) -> None:
         self._engine = engine
-        self._db = engine.db
+        self._db = db if db is not None else engine.db
 
     def resolve_realm_for_user(
         self, user_id: int, chat: Any = None

@@ -1,6 +1,8 @@
 """Слухи: план очереди, due-ролл, архив catch-up."""
 from __future__ import annotations
 
+from app.repos import RumorRepos
+
 import random
 from datetime import datetime
 from typing import Any
@@ -24,9 +26,9 @@ from app.domain.ticks import tick_active
 
 
 class RumorService:
-    def __init__(self, engine) -> None:
+    def __init__(self, engine, db: RumorRepos | None = None) -> None:
         self._engine = engine
-        self._db = engine.db
+        self._db = db if db is not None else engine.db
 
     def _rumor_snapshots(
         self,

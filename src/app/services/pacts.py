@@ -1,13 +1,15 @@
 """Пакты: создание, приглашения, выход, прикрытие."""
 from __future__ import annotations
 
+from app.repos import PactRepos
+
 from app import balance as B
 
 
 class PactService:
-    def __init__(self, engine) -> None:
+    def __init__(self, engine, db: PactRepos | None = None) -> None:
         self._engine = engine
-        self._db = engine.db
+        self._db = db if db is not None else engine.db
 
     def get_pact(self, pact_id: int) -> dict | None:
         return self._db.get_pact(pact_id)

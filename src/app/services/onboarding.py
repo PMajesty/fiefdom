@@ -4,6 +4,8 @@
 """
 from __future__ import annotations
 
+from app.repos import OnboardingRepos
+
 from app import balance as B
 from app.domain.map_geometry import pick_max_separated_tiles, too_close_to_ruins
 
@@ -13,9 +15,9 @@ from app.engine import fief_name_for_user
 
 
 class OnboardingService:
-    def __init__(self, engine) -> None:
+    def __init__(self, engine, db: OnboardingRepos | None = None) -> None:
         self._engine = engine
-        self._db = engine.db
+        self._db = db if db is not None else engine.db
 
     def ensure_user(self, user) -> None:
         name = (user.full_name or user.first_name or "Путник").strip()

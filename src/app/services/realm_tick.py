@@ -1,6 +1,8 @@
 """Тик одной долины: absence, минор, экономика усадеб, digest."""
 from __future__ import annotations
 
+from app.repos import RealmTickRepos
+
 import random
 from datetime import datetime
 from typing import Any
@@ -30,9 +32,9 @@ from app.domain.tile_entities import (
 
 
 class RealmTickRunner:
-    def __init__(self, engine) -> None:
+    def __init__(self, engine, db: RealmTickRepos | None = None) -> None:
         self._engine = engine
-        self._db = engine.db
+        self._db = db if db is not None else engine.db
 
     def apply_absence(self, realm_id: int) -> None:
         realm = self._db.get_realm(realm_id) or {}

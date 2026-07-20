@@ -27,6 +27,21 @@ from app.resource_schema import (
     raids_stolen_ddl_lines,
 )
 from app.domain.tick_schedule import LEGACY_TWO_TICK_SLOTS, remap_last_tick_slot
+from app.repos import (
+    ActionIntentRepo,
+    DecreeRepo,
+    EventRepo,
+    FiefRepo,
+    PactRepo,
+    PatchAnnounceRepo,
+    RaidLogRepo,
+    RealmRepo,
+    TileEntityRepo,
+    TradeRepo,
+    UnitOfWork,
+    UserRepo,
+    WorldRepo,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +50,21 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class Database:
+class Database(
+    WorldRepo,
+    RealmRepo,
+    UserRepo,
+    FiefRepo,
+    PactRepo,
+    TradeRepo,
+    RaidLogRepo,
+    EventRepo,
+    TileEntityRepo,
+    ActionIntentRepo,
+    PatchAnnounceRepo,
+    DecreeRepo,
+    UnitOfWork,
+):
     def __init__(self, connect: bool = True):
         self.lock = threading.RLock()
         self.connection = None
