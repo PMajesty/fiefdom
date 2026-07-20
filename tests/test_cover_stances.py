@@ -324,7 +324,7 @@ def test_lock_travel_locks_raid_caravan_and_cover_without_telegraph():
     assert not hasattr(engine, "take_pending_lock_notices")
 
 
-def test_pact_rejoin_cooldown_after_leave():
+def test_pact_rejoin_allowed_same_tick_after_leave():
     from tests.test_pact_invites import _pact_engine
 
     engine, fiefs, _invites, pact = _pact_engine()
@@ -333,9 +333,9 @@ def test_pact_rejoin_cooldown_after_leave():
     engine._world_id_for_realm = MagicMock(return_value=1)
     engine.world_tick_incomplete = MagicMock(return_value=False)
     engine.leave_pact(2)
-    assert fiefs[2].get("pact_left_tick") == 5
-    with pytest.raises(ValueError, match="подождите"):
-        engine.create_pact(2, "Новый")
+    assert fiefs[2].get("pact_id") is None
+    msg = engine.create_pact(2, "Новый")
+    assert "создан" in msg.lower()
 
 
 def _leave_pact_cover_engine():
@@ -440,10 +440,9 @@ def test_dissolve_refunds_locked_cover_of_prior_leaver():
         for i in engine._intents
         if i["kind"] == "cover_stance"
     )
-    assert engine._fiefs[2].get("pact_left_tick") == 10
     assert engine._fiefs[2]["cover_allies"] is False
-    with pytest.raises(ValueError, match="подождите"):
-        engine.create_pact(2, "Снова")
+    msg = engine.create_pact(2, "Снова")
+    assert "создан" in msg.lower()
 
 
 def test_create_pact_founder_starts_stand_down():

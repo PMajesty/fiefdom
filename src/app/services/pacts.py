@@ -18,24 +18,10 @@ class PactService:
     def get_pact_invite(self, invite_id: int) -> dict | None:
         return self._db.get_pact_invite(invite_id)
 
-    def _require_rejoin_cooldown(self, fief: dict) -> None:
-        left_tick = fief.get("pact_left_tick")
-        if left_tick is None:
-            return
-        realm = self._db.get_realm(int(fief["realm_id"])) or {}
-        tick_index = int(realm.get("tick_index") or 0)
-        ready_at = int(left_tick) + int(B.COVER_PACT_REJOIN_COOLDOWN_TICKS)
-        if tick_index < ready_at:
-            raise ValueError(
-                f"После выхода из пакта подождите "
-                f"{B.COVER_PACT_REJOIN_COOLDOWN_TICKS} тик(а)"
-            )
-
     def create_pact(self, fief_id: int, name: str) -> str:
         fief = self._db.get_fief(fief_id)
         if fief.get("pact_id"):
             raise ValueError("Вы уже в пакте")
-        self._require_rejoin_cooldown(fief)
         self._engine._require_action_window(int(fief["realm_id"]))
         name = name.strip()[:40]
         if not name:
@@ -106,7 +92,6 @@ class PactService:
             raise ValueError("Усадьба не найдена")
         if target.get("pact_id"):
             raise ValueError("Вы уже в пакте")
-        self._require_rejoin_cooldown(target)
         pact = self._db.get_pact(invite["pact_id"])
         if not pact:
             raise ValueError("Пакт распущен")
@@ -127,7 +112,6 @@ class PactService:
                 raise ValueError("Усадьба не найдена")
             if not pact:
                 raise ValueError("Пакт распущен")
-            self._require_rejoin_cooldown(target)
             self._engine._require_cross_valley_caught_up(
                 int(target["realm_id"]), int(pact["realm_id"])
             )
@@ -190,13 +174,11 @@ class PactService:
                 for member in remaining:
                     self._db.update_fief(
                         int(member["id"]),
-                        pact_left_tick=tick_index,
                         cover_allies=False,
                     )
                 self._db.update_fief(
                     fief_id,
                     pact_id=None,
-                    pact_left_tick=tick_index,
                     cover_allies=False,
                 )
                 self._db.dissolve_pact(pact_id)
@@ -208,7 +190,6 @@ class PactService:
             self._db.update_fief(
                 fief_id,
                 pact_id=None,
-                pact_left_tick=tick_index,
                 cover_allies=False,
             )
             if pact and pact["founder_fief_id"] == fief_id and remaining:
