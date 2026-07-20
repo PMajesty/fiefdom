@@ -192,11 +192,9 @@ async def test_cb_send_target_opens_resource_step():
 
 
 @pytest.mark.asyncio
-async def test_finish_transfer_declare_dms_and_public():
-    """Confirm path: escrow + receiver DM + public announce."""
+async def test_finish_transfer_declare_sender_only():
+    """Declare path: escrow confirm to sender; no receiver/public yet."""
     engine = MagicMock()
-    sender = {"id": 1, "realm_id": 10, "user_id": 100}
-    receiver = {"id": 2, "realm_id": 10, "user_id": 200}
     result = DeclareCaravanResult(
         intent_id=8,
         receiver_fief_id=2,
@@ -205,12 +203,8 @@ async def test_finish_transfer_declare_dms_and_public():
         amt=B.CARAVAN_PUBLIC_AMOUNT,
         is_public=True,
         dm_text="Обоз ушёл.",
-        receiver_dm_text="Обоз идёт.",
-        public_declare_text="📦 Обоз: Альфа шлёт товары.",
     )
-    engine.fief_by_id.side_effect = lambda fid: {1: sender, 2: receiver}.get(int(fid))
     engine.declare_caravan.return_value = result
-    engine.ensure_user = MagicMock()
 
     callback = MagicMock()
     callback.from_user = MagicMock(id=100)
@@ -220,7 +214,6 @@ async def test_finish_transfer_declare_dms_and_public():
     with (
         patch.object(cb_mod, "reply_game", new_callable=AsyncMock) as reply,
         patch.object(cb_mod, "send_game", new_callable=AsyncMock) as send,
-        patch.object(cb_mod, "post_continent_public", new_callable=AsyncMock) as post_pub,
         patch.object(cb_mod.dm_mod, "clear_pending") as clear,
         patch.object(cb_mod.dm_mod, "caravan_cancel_intent_kb", return_value="kb"),
     ):
@@ -239,12 +232,7 @@ async def test_finish_transfer_declare_dms_and_public():
     clear.assert_called_once_with(100)
     reply.assert_awaited_once()
     assert reply.await_args.args[1] == result.dm_text
-    send.assert_awaited_once()
-    assert send.await_args.args[1] == 200
-    assert send.await_args.args[2] == result.receiver_dm_text
-    post_pub.assert_awaited_once_with(
-        callback.bot, 10, result.public_declare_text
-    )
+    send.assert_not_awaited()
 
 
 def _engine_pair(*, grain_from=50, goods_from=40, grain_to=5, goods_to=5, barn=0):

@@ -12,7 +12,7 @@ from app.config import TIMEZONE, tick_slots
 from app.domain.tick_pipeline import needs_economy_wake, needs_resolve_wake
 from app.domain.tick_schedule import due_tick_slot
 from app.messaging import send_game
-from app.notifier import post_digest, post_realm_public
+from app.notifier import post_continent_public, post_digest, post_realm_public
 from app.patch_announce import announce_pending_patches
 from app.services.catastrophes import CatastropheAnnounce
 from app.wiring import get_engine
@@ -22,9 +22,37 @@ logger = logging.getLogger(__name__)
 POLL_SECONDS = 30
 
 
-async def _deliver_raid_notices(bot: Bot, notices: list) -> None:
-    """Лички и групповые строки после ночного resolve."""
+async def _finalize_caravan_lock_announce(bot: Bot, engine, world_id: int) -> None:
+    """Mid-play: доставить midday-обозы, затем всегда закоммитить флаги."""
+    lock_announce = engine.announce_locked_caravans(int(world_id))
+    if lock_announce.notices:
+        delivered = await _deliver_raid_notices(bot, lock_announce.notices)
+        if not delivered:
+            logger.warning(
+                "caravan lock announce delivery had failures world=%s",
+                world_id,
+            )
+    # Commit всегда после попытки: иначе retry спамит continent.
+    if lock_announce.intent_ids:
+        engine.commit_locked_caravan_announcements(
+            lock_announce.intent_ids,
+            public_ids=lock_announce.public_ids,
+        )
+        logger.info(
+            "Announced %s locked caravan intents world=%s",
+            lock_announce.announced_intent_count,
+            world_id,
+        )
+
+
+async def _deliver_raid_notices(bot: Bot, notices: list) -> bool:
+    """Лички и групповые строки (ночь + midday-confirm обозов).
+
+    False если хотя бы одна доставка упала (только для логов; commit не зависит).
+    """
+    ok = True
     seen_public: set[tuple[int, str]] = set()
+    seen_continent: set[tuple[int, str]] = set()
     for notice in notices:
         kind = getattr(notice, "kind", None) or (
             notice.get("kind") if isinstance(notice, dict) else None
@@ -42,9 +70,32 @@ async def _deliver_raid_notices(bot: Bot, notices: list) -> None:
                 try:
                     await bot.send_message(int(user_id), str(text))
                 except Exception:
+                    ok = False
                     logger.warning(
                         "raid night dm failed user=%s", user_id, exc_info=True
                     )
+            continue
+        if kind == "continent":
+            realm_id = getattr(notice, "realm_id", None) or (
+                notice.get("realm_id") if isinstance(notice, dict) else None
+            )
+            if not realm_id:
+                continue
+            key = (int(realm_id), str(text))
+            if key in seen_continent:
+                continue
+            seen_continent.add(key)
+            try:
+                posted = await post_continent_public(
+                    bot, int(realm_id), str(text)
+                )
+                if not posted:
+                    ok = False
+            except Exception:
+                ok = False
+                logger.exception(
+                    "caravan continent public failed realm=%s", realm_id
+                )
             continue
         if kind == "public":
             realm_id = getattr(notice, "realm_id", None) or (
@@ -57,9 +108,13 @@ async def _deliver_raid_notices(bot: Bot, notices: list) -> None:
                 continue
             seen_public.add(key)
             try:
-                await post_realm_public(bot, int(realm_id), str(text))
+                posted = await post_realm_public(bot, int(realm_id), str(text))
+                if not posted:
+                    ok = False
             except Exception:
+                ok = False
                 logger.exception("raid night public failed realm=%s", realm_id)
+    return ok
 
 
 def _utcnow() -> datetime:
@@ -147,6 +202,9 @@ async def _scheduler_tick(bot: Bot) -> None:
                     locked,
                     world.get("id"),
                 )
+            await _finalize_caravan_lock_announce(
+                bot, engine, int(world["id"])
+            )
         except Exception:
             logger.exception("travel midpoint lock failed")
         try:

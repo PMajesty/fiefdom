@@ -1,10 +1,11 @@
 """Half-tick окно declare/cancel для набегов."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from app.domain.tick_schedule import (
+    last_tick_datetime,
     play_window_bounds,
     raid_declare_midpoint,
     raid_declare_open,
@@ -24,6 +25,25 @@ def test_midpoint_helpers():
     assert not raid_declare_open(mid, bounds)
     assert raid_lock_due(mid, bounds)
     assert not raid_lock_due(mid - timedelta(seconds=1), bounds)
+
+
+def test_last_tick_datetime_from_slot_anchor():
+    got = last_tick_datetime(
+        last_tick_local_date=date(2026, 7, 17),
+        last_tick_slot=1,
+        slots=[(10, 0), (13, 0), (16, 0)],
+        tzinfo=timezone.utc,
+    )
+    assert got == datetime(2026, 7, 17, 13, 0, tzinfo=timezone.utc)
+    assert (
+        last_tick_datetime(
+            last_tick_local_date=None,
+            last_tick_slot=0,
+            slots=[(10, 0)],
+            tzinfo=timezone.utc,
+        )
+        is None
+    )
 
 
 def test_declare_refused_after_midpoint():
@@ -98,9 +118,40 @@ def test_cancel_refunds_only_while_open():
 def test_ensure_play_opened_at_backfills_live_world():
     db = MagicMock()
     engine = Engine(db)
-    world = {"id": 1, "tick_phase": "play", "play_opened_at": None}
+    world = {
+        "id": 1,
+        "tick_phase": "play",
+        "play_opened_at": None,
+        "timezone": "UTC",
+        "last_tick_local_date": date(2026, 7, 17),
+        "last_tick_slot": 0,
+    }
     db.get_world.return_value = world
-    out = engine.ensure_play_opened_at(1)
-    assert out.get("play_opened_at") is not None
+    with patch.object(
+        engine,
+        "_world_local_now",
+        return_value=datetime(2026, 7, 17, 11, 30, tzinfo=timezone.utc),
+    ):
+        with patch("app.engine.tick_slots", return_value=[(10, 0), (13, 0)]):
+            out = engine.ensure_play_opened_at(1)
+    opened = out.get("play_opened_at")
+    assert opened == datetime(2026, 7, 17, 10, 0, tzinfo=timezone.utc)
     db.update_world.assert_called()
-    assert "play_opened_at" in db.update_world.call_args.kwargs or True
+    assert db.update_world.call_args.kwargs["play_opened_at"] == opened
+
+
+def test_ensure_play_opened_at_falls_back_to_now_without_last_tick():
+    db = MagicMock()
+    engine = Engine(db)
+    world = {
+        "id": 1,
+        "tick_phase": "play",
+        "play_opened_at": None,
+        "timezone": "UTC",
+    }
+    db.get_world.return_value = world
+    fixed = datetime(2026, 7, 17, 11, 0, tzinfo=timezone.utc)
+    with patch("app.engine._utcnow", return_value=fixed):
+        with patch.object(engine, "_world_local_now", return_value=fixed):
+            out = engine.ensure_play_opened_at(1)
+    assert out.get("play_opened_at") == fixed

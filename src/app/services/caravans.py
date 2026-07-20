@@ -1,4 +1,4 @@
-"""Обозы: объявление, отмена, ночной resolve."""
+"""Обозы: объявление, midday-confirm, отмена, ночной resolve."""
 from __future__ import annotations
 
 from app.repos import CaravanRepos
@@ -6,11 +6,16 @@ from app.repos import CaravanRepos
 from app import balance as B
 from app.domain.caravans import (
     DeclareCaravanResult,
+    LockCaravanReport,
     ResolveCaravanReport,
     caravan_is_public,
+    caravan_lock_notified,
     format_caravan_bounce_public,
-    format_caravan_declare_public,
+    format_caravan_cargo_parts,
     format_caravan_land_public,
+    format_caravan_lock_public,
+    format_caravan_lock_receiver_dm,
+    group_caravan_routes,
 )
 from app.domain.raids import RaidNightPartyNotice
 from app.domain.resource_bags import capped_receive_amount, stash_amount
@@ -135,7 +140,6 @@ class CaravanService:
             )
         res_name = resource_name_ru(res)
         receiver_name = self._engine.fief_label(receiver)
-        sender_name = self._engine.fief_label(sender)
         is_public = caravan_is_public(amt)
         lock_text = self._engine._format_raid_deadline(world, midpoint=True)
         resolve_text = self._engine._format_raid_deadline(world, midpoint=False)
@@ -167,23 +171,16 @@ class CaravanService:
                     "sender_realm_id": int(sender["realm_id"]),
                     "receiver_realm_id": int(receiver["realm_id"]),
                     "is_public": is_public,
+                    "lock_notified": False,
                 },
             )
 
         dm = (
             f"Обоз ушёл к {receiver_name}: {amt} {res_name} в пути. "
-            f"Вернуть можно до {lock_text}. "
+            f"До {lock_text} его видите только вы - можно вернуть. "
+            f"После середины окна заявка закроется, адресат узнает о грузе. "
             f"Доставка после колокола тика около {resolve_text}."
         )
-        recv_dm = (
-            f"К вам идёт обоз от {sender_name}: {amt} {res_name}. "
-            f"Прибудет после колокола тика."
-        )
-        public_text = None
-        if is_public:
-            public_text = format_caravan_declare_public(
-                sender_name, receiver_name, amt, res_name
-            )
         return DeclareCaravanResult(
             intent_id=int(intent["id"]),
             receiver_fief_id=int(to_fief_id),
@@ -192,9 +189,106 @@ class CaravanService:
             amt=int(amt),
             is_public=is_public,
             dm_text=dm,
-            receiver_dm_text=recv_dm,
-            public_declare_text=public_text,
         )
+
+    def announce_locked_caravans(self, world_id: int) -> LockCaravanReport:
+        """Собрать midday-уведомления по locked обозам без lock_notified.
+
+        Флаги пишет commit_locked_caravan_announcements после попытки доставки
+        (даже если Telegram упал - иначе retry спамит continent).
+        """
+        report = LockCaravanReport()
+        if self._engine.world_tick_incomplete(int(world_id)):
+            return report
+        world = self._db.get_world(int(world_id)) or {}
+        tick_index = int(world.get("tick_index") or 0)
+        intents = self._db.list_caravan_intents(
+            int(world_id), tick_index, statuses=("locked",)
+        )
+        pending = [
+            i
+            for i in intents
+            if not caravan_lock_notified(i.get("payload") or {})
+        ]
+        if not pending:
+            return report
+
+        all_ids: list[int] = []
+        public_ids: list[int] = []
+        routes = group_caravan_routes(pending)
+        for route in routes:
+            sender = self._db.get_fief(route.sender_fief_id)
+            receiver = self._db.get_fief(route.receiver_fief_id)
+            sender_name = (
+                self._engine.fief_label(sender) if sender else "Усадьба"
+            )
+            receiver_name = (
+                self._engine.fief_label(receiver) if receiver else "Усадьба"
+            )
+            cargo = format_caravan_cargo_parts(route.amounts)
+            is_public = caravan_is_public(route.total_amt)
+            all_ids.extend(int(i) for i in route.intent_ids)
+            if is_public:
+                public_ids.extend(int(i) for i in route.intent_ids)
+
+            if receiver and receiver.get("user_id"):
+                report.notices.append(
+                    RaidNightPartyNotice(
+                        user_id=int(receiver["user_id"]),
+                        realm_id=None,
+                        text=format_caravan_lock_receiver_dm(
+                            sender_name, cargo
+                        ),
+                        kind="dm",
+                    )
+                )
+            if is_public:
+                anchor = route.sender_realm_id or int(
+                    (sender or {}).get("realm_id") or 0
+                )
+                if anchor:
+                    report.notices.append(
+                        RaidNightPartyNotice(
+                            user_id=None,
+                            realm_id=int(anchor),
+                            text=format_caravan_lock_public(
+                                sender_name, receiver_name, cargo
+                            ),
+                            kind="continent",
+                        )
+                    )
+        report.announced_intent_count = len(all_ids)
+        report.intent_ids = tuple(all_ids)
+        report.public_ids = tuple(public_ids)
+        return report
+
+    def commit_locked_caravan_announcements(
+        self,
+        intent_ids: list[int] | tuple[int, ...],
+        *,
+        public_ids: list[int] | tuple[int, ...] = (),
+    ) -> int:
+        """После попытки доставки: атомарно lock_notified (+ is_public)."""
+        return self._db.mark_caravan_lock_announced(
+            intent_ids, public_ids=public_ids
+        )
+
+    def upgrade_stacked_caravan_public(self, world_id: int) -> int:
+        """is_public по сумме маршрута для locked обозов (игнор lock_notified)."""
+        if self._engine.world_tick_incomplete(int(world_id)):
+            return 0
+        world = self._db.get_world(int(world_id)) or {}
+        tick_index = int(world.get("tick_index") or 0)
+        intents = self._db.list_caravan_intents(
+            int(world_id), tick_index, statuses=("locked",)
+        )
+        public_ids: list[int] = []
+        for route in group_caravan_routes(intents):
+            if caravan_is_public(route.total_amt):
+                public_ids.extend(int(i) for i in route.intent_ids)
+        if not public_ids:
+            return 0
+        return self._db.mark_caravan_route_public(public_ids)
 
     def cancel_caravan_intent(self, fief_id: int, intent_id: int) -> str:
         fief = self._engine.require_active_fief(fief_id)

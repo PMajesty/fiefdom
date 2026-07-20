@@ -466,6 +466,7 @@ class Database(
             self._ensure_world_schema()
             self._apply_patch_annul_open_trades()
             self._apply_patch_remap_tick_slots_2_to_4()
+            self._apply_patch_caravan_lock_notified_backfill()
 
     def _apply_patch_annul_open_trades(self) -> None:
         """Разовые возвраты эскроу при смене правил рынка."""
@@ -567,6 +568,39 @@ class Database(
                 "UPDATE realms SET last_tick_slot=%s WHERE id=%s;",
                 (new_slot, int(realm_id)),
             )
+        self.cursor.execute(
+            "INSERT INTO applied_patches (name) VALUES (%s);",
+            (patch_name,),
+        )
+        logger.info("applied patch %s", patch_name)
+
+    def _apply_patch_caravan_lock_notified_backfill(self) -> None:
+        """Легаси-обозы уже светились на declare - не слать midday повторно."""
+        self.cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS applied_patches (
+                name TEXT PRIMARY KEY,
+                applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+        patch_name = "caravan_lock_notified_backfill_v1"
+        self.cursor.execute(
+            "SELECT 1 FROM applied_patches WHERE name=%s;",
+            (patch_name,),
+        )
+        if self.cursor.fetchone() is not None:
+            return
+        self.cursor.execute(
+            """
+            UPDATE action_intents
+            SET payload = COALESCE(payload, '{}'::jsonb)
+                || '{"lock_notified": true}'::jsonb
+            WHERE kind = 'caravan'
+              AND status IN ('open', 'locked')
+              AND COALESCE(payload->>'lock_notified', 'false') <> 'true';
+            """
+        )
         self.cursor.execute(
             "INSERT INTO applied_patches (name) VALUES (%s);",
             (patch_name,),
@@ -2273,6 +2307,68 @@ class Database(
                 (json.dumps(payload or {}), int(intent_id)),
             )
             self.commit()
+
+    def mark_caravan_lock_announced(
+        self,
+        intent_ids: list[int] | tuple[int, ...],
+        *,
+        public_ids: list[int] | tuple[int, ...] = (),
+    ) -> int:
+        """Атомарно: lock_notified (+ is_public для public_ids) на пачке обозов."""
+        ids = sorted({int(x) for x in intent_ids if int(x) > 0})
+        if not ids:
+            return 0
+        public = sorted({int(x) for x in public_ids if int(x) > 0})
+        public_set = set(public)
+
+        def _mark(id_list: list[int], patch_json: str) -> None:
+            if not id_list:
+                return
+            placeholders = ", ".join(["%s"] * len(id_list))
+            self.cursor.execute(
+                f"""
+                UPDATE action_intents
+                SET payload = COALESCE(payload, '{{}}'::jsonb)
+                    || %s::jsonb
+                WHERE kind = 'caravan'
+                  AND id IN ({placeholders});
+                """,
+                (patch_json, *id_list),
+            )
+
+        with self.lock:
+            _mark(
+                public,
+                '{"lock_notified": true, "is_public": true}',
+            )
+            _mark(
+                [i for i in ids if i not in public_set],
+                '{"lock_notified": true}',
+            )
+            self.commit()
+        return len(ids)
+
+    def mark_caravan_route_public(
+        self, intent_ids: list[int] | tuple[int, ...]
+    ) -> int:
+        """Только is_public=true (для stacked upgrade до resolve)."""
+        ids = sorted({int(x) for x in intent_ids if int(x) > 0})
+        if not ids:
+            return 0
+        placeholders = ", ".join(["%s"] * len(ids))
+        with self.lock:
+            self.cursor.execute(
+                f"""
+                UPDATE action_intents
+                SET payload = COALESCE(payload, '{{}}'::jsonb)
+                    || '{{"is_public": true}}'::jsonb
+                WHERE kind = 'caravan'
+                  AND id IN ({placeholders});
+                """,
+                tuple(ids),
+            )
+            self.commit()
+        return len(ids)
 
     def update_open_action_intent_payload(
         self, intent_id: int, payload: dict

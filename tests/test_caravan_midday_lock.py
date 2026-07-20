@@ -41,8 +41,9 @@ def test_cancel_caravan_refused_when_locked():
 def test_declare_caravan_dm_mentions_lock_deadline():
     engine, _fiefs, _intents = _caravan_stateful_engine()
     result = engine.declare_caravan(1, 2, B.RES_GRAIN, 8)
-    assert "Вернуть можно до 17.07 12:00" in result.dm_text
+    assert "17.07 12:00" in result.dm_text
     assert "17.07 18:00" in result.dm_text
+    assert "можно вернуть" in result.dm_text.lower()
 
 
 def test_lock_open_travel_intents_counts_raids_caravans_and_cover():
@@ -160,12 +161,27 @@ def test_locked_caravan_still_delivers_at_resolve():
 
 def test_close_play_force_locks_travel_intents():
     from app.services.world_tick import WorldTickOrchestrator
+    from app.domain.caravans import LockCaravanReport
+    from app.domain.raids import RaidNightPartyNotice
 
     db = MagicMock()
     engine = Engine(db)
     world = {"id": 1, "tick_index": 4, "tick_phase": "play"}
     engine.world_tick_incomplete = MagicMock(return_value=False)
     engine.lock_open_travel_intents = MagicMock(return_value=3)
+    lock_dm = RaidNightPartyNotice(
+        user_id=200, realm_id=None, text="обоз подтверждён", kind="dm"
+    )
+    engine.announce_locked_caravans = MagicMock(
+        return_value=LockCaravanReport(
+            announced_intent_count=1,
+            notices=[lock_dm],
+            intent_ids=(9,),
+            public_ids=(9,),
+        )
+    )
+    engine.upgrade_stacked_caravan_public = MagicMock(return_value=0)
+    engine.commit_locked_caravan_announcements = MagicMock(return_value=1)
     night_notice = MagicMock(text="ночь")
     night = MagicMock(notices=[night_notice])
     engine.resolve_pending_raids = MagicMock(return_value=night)
@@ -176,13 +192,54 @@ def test_close_play_force_locks_travel_intents():
     orch = WorldTickOrchestrator(engine, db)
     report = orch._close_play_day_raids(1, 4, world)
     engine.lock_open_travel_intents.assert_called_once_with(1)
+    engine.upgrade_stacked_caravan_public.assert_called_once_with(1)
+    engine.announce_locked_caravans.assert_called_once_with(1)
+    engine.commit_locked_caravan_announcements.assert_called_once_with(
+        (9,), public_ids=(9,)
+    )
     engine.resolve_pending_raids.assert_called_once_with(1, 4)
     engine.resolve_remaining_cover_stances.assert_called_once_with(1, 4)
     engine.resolve_pending_caravans.assert_called_once_with(1, 4)
+    # Close-play не шлёт midday "в пути" - только ночные строки.
     assert report.notices[0] is night_notice
+
+
+def test_close_play_aggregate_public_flags_before_resolve():
+    """Сумма ниже порога по штукам, но вместе публична - флаг до resolve."""
+    engine, _fiefs, intents = _caravan_stateful_engine(grain_from=100)
+    engine.declare_caravan(1, 2, B.RES_GRAIN, 20)
+    engine.declare_caravan(1, 2, B.RES_GRAIN, 15)
+    for row in intents:
+        row["status"] = "locked"
+    report = engine.announce_locked_caravans(1)
+    assert report.public_ids == (1, 2)
+    engine.commit_locked_caravan_announcements(
+        report.intent_ids, public_ids=report.public_ids
+    )
+    assert all(i["payload"]["is_public"] is True for i in intents)
+    night = engine.resolve_pending_caravans(1, 5)
+    assert any(n.kind == "public" for n in night.notices)
+
+
+def test_upgrade_stacked_public_ignores_lock_notified_backfill():
+    """Легаси backfill: lock_notified уже true, но сумма всё ещё поднимает is_public."""
+    engine, _fiefs, intents = _caravan_stateful_engine(grain_from=100)
+    engine.declare_caravan(1, 2, B.RES_GRAIN, 20)
+    engine.declare_caravan(1, 2, B.RES_GRAIN, 15)
+    for row in intents:
+        row["status"] = "locked"
+        row["payload"]["lock_notified"] = True
+        row["payload"]["is_public"] = False
+    assert engine.announce_locked_caravans(1).intent_ids == ()
+    n = engine.upgrade_stacked_caravan_public(1)
+    assert n == 2
+    assert all(i["payload"]["is_public"] is True for i in intents)
+    night = engine.resolve_pending_caravans(1, 5)
+    assert any(n.kind == "public" for n in night.notices)
 
 
 def test_guide_notes_shared_declare_window():
     text = game_guide()
     assert "первой половине окна тика, что и набег" in text
     assert "вернуть воз кнопкой можно до середины окна" in text
+    assert "После закрытия заявок адресат узнаёт о грузе" in text

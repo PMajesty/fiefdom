@@ -370,6 +370,17 @@ class ActionIntentRepo(Protocol):
         self, intent_id: int, payload: dict
     ) -> dict | None: ...
 
+    def mark_caravan_lock_announced(
+        self,
+        intent_ids: list[int] | tuple[int, ...],
+        *,
+        public_ids: list[int] | tuple[int, ...] = (),
+    ) -> int: ...
+
+    def mark_caravan_route_public(
+        self, intent_ids: list[int] | tuple[int, ...]
+    ) -> int: ...
+
 
 @runtime_checkable
 class PatchAnnounceRepo(Protocol):

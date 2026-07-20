@@ -49,7 +49,7 @@ class RaidNightPartyNotice:
     user_id: int | None
     realm_id: int | None
     text: str
-    kind: str  # "dm" | "public"
+    kind: str  # "dm" | "public" | "continent"
 
 
 @dataclass

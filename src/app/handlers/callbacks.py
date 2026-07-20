@@ -21,7 +21,6 @@ from app.handlers.shared import (
     get_engine,
     map_realms_kb,
     map_view_kb,
-    post_continent_public,
     post_realm_public,
     prepared_intents_kb,
     reply_game,
@@ -835,8 +834,6 @@ async def _finish_transfer_declare(
     res: str,
     amt: int,
 ) -> None:
-    sender = engine.fief_by_id(fief_id)
-    receiver = engine.fief_by_id(target_fief_id)
     result = engine.declare_caravan(fief_id, target_fief_id, res, amt)
     dm_mod.clear_pending(callback.from_user.id)
     await reply_game(
@@ -844,24 +841,6 @@ async def _finish_transfer_declare(
         result.dm_text,
         reply_markup=dm_mod.caravan_cancel_intent_kb(fief_id, result.intent_id),
     )
-    if receiver:
-        engine.ensure_user(callback.from_user)
-        try:
-            await send_game(
-                callback.bot,
-                int(receiver["user_id"]),
-                result.receiver_dm_text,
-            )
-        except Exception:
-            logger.warning(
-                "caravan DM to receiver %s failed", receiver.get("user_id")
-            )
-    if sender and result.is_public and result.public_declare_text:
-        await post_continent_public(
-            callback.bot,
-            sender["realm_id"],
-            result.public_declare_text,
-        )
 
 
 @router.callback_query(F.data.startswith("snd:"))

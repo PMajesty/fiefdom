@@ -180,15 +180,12 @@ def transfer_confirm_summary(
     resolve_text: str,
 ) -> str:
     res_name = resource_name_ru(res)
-    public_note = ""
-    if int(amt) >= int(B.CARAVAN_PUBLIC_AMOUNT):
-        public_note = (
-            f" Отправка от {int(B.CARAVAN_PUBLIC_AMOUNT)} видна в долине."
-        )
     return (
         f"Кому: <b>{receiver_label}</b>\n"
         f"Что: {int(amt)} {res_name}\n"
         f"Вернуть можно до {lock_text}. "
-        f"Доставка после колокола около {resolve_text}."
-        f"{public_note}"
+        f"Доставка после колокола около {resolve_text}. "
+        f"До середины окна груз видите только вы; потом узнает адресат. "
+        f"Несколько обозов одному двору складываются - "
+        f"от {int(B.CARAVAN_PUBLIC_AMOUNT)} континент видит выезд."
     )

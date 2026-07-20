@@ -113,6 +113,60 @@ def _caravan_stateful_engine(
                 return dict(i)
         return None
 
+    def update_open_action_intent_payload(iid, payload):
+        for i in intents:
+            if int(i["id"]) == int(iid) and i["status"] in ("open", "locked"):
+                i["payload"] = dict(payload)
+                return dict(i)
+        return None
+
+    def update_action_intent_payload(iid, payload):
+        for i in intents:
+            if int(i["id"]) == int(iid):
+                i["payload"] = dict(payload)
+                return None
+        return None
+
+    def mark_caravan_lock_announced(intent_ids, *, public_ids=()):
+        public_set = {int(x) for x in public_ids}
+        n = 0
+        for iid in intent_ids:
+            for i in intents:
+                if int(i["id"]) != int(iid) or i.get("kind") != "caravan":
+                    continue
+                payload = dict(i.get("payload") or {})
+                payload["lock_notified"] = True
+                if int(iid) in public_set:
+                    payload["is_public"] = True
+                i["payload"] = payload
+                n += 1
+        return n
+
+    def mark_caravan_route_public(intent_ids):
+        n = 0
+        for iid in intent_ids:
+            for i in intents:
+                if int(i["id"]) != int(iid) or i.get("kind") != "caravan":
+                    continue
+                payload = dict(i.get("payload") or {})
+                payload["is_public"] = True
+                i["payload"] = payload
+                n += 1
+        return n
+
+    def lock_action_intents(wid, tick, *, kind="raid"):
+        n = 0
+        for i in intents:
+            if (
+                int(i["world_id"]) == int(wid)
+                and int(i["tick_index"]) == int(tick)
+                and i["kind"] == kind
+                and i["status"] == "open"
+            ):
+                i["status"] = "locked"
+                n += 1
+        return n
+
     db.get_fief.side_effect = get_fief
     db.debit_fief_resources.side_effect = debit_fief_resources
     db.credit_fief_resources.side_effect = credit_fief_resources
@@ -121,6 +175,13 @@ def _caravan_stateful_engine(
     db.claim_resolve_action_intent.side_effect = claim_resolve_action_intent
     db.cancel_action_intent.side_effect = cancel_action_intent
     db.get_action_intent.side_effect = get_action_intent
+    db.update_open_action_intent_payload.side_effect = (
+        update_open_action_intent_payload
+    )
+    db.update_action_intent_payload.side_effect = update_action_intent_payload
+    db.mark_caravan_lock_announced.side_effect = mark_caravan_lock_announced
+    db.mark_caravan_route_public.side_effect = mark_caravan_route_public
+    db.lock_action_intents.side_effect = lock_action_intents
     db.get_world.return_value = {
         "id": 1,
         "tick_index": 5,
@@ -163,8 +224,7 @@ def test_declare_caravan_success_escrow_and_intent_payload():
     assert result.intent_id == 1
     assert result.is_public is False
     assert "Бета" in result.dm_text
-    assert "Альфа" in result.receiver_dm_text
-    assert result.public_declare_text is None
+    assert "только вы" in result.dm_text
     assert len(intents) == 1
     payload = intents[0]["payload"]
     assert payload == {
@@ -175,6 +235,7 @@ def test_declare_caravan_success_escrow_and_intent_payload():
         "sender_realm_id": 10,
         "receiver_realm_id": 10,
         "is_public": False,
+        "lock_notified": False,
     }
     engine.db.create_action_intent.assert_called_once()
     kwargs = engine.db.create_action_intent.call_args.kwargs
@@ -248,14 +309,65 @@ def test_caravan_is_public_threshold():
     assert caravan_is_public(B.CARAVAN_PUBLIC_AMOUNT + 5) is True
 
 
-def test_declare_public_caravan_sets_flag_and_text():
+def test_declare_public_caravan_sets_flag_without_announce_text():
     engine, _fiefs, intents = _caravan_stateful_engine(grain_from=100)
     amt = B.CARAVAN_PUBLIC_AMOUNT
     result = engine.declare_caravan(1, 2, B.RES_GRAIN, amt)
     assert result.is_public is True
-    assert result.public_declare_text is not None
-    assert "Обоз" in result.public_declare_text
     assert intents[0]["payload"]["is_public"] is True
+    assert intents[0]["payload"]["lock_notified"] is False
+
+
+def test_announce_locked_caravans_aggregates_route_and_is_idempotent():
+    engine, _fiefs, intents = _caravan_stateful_engine(grain_from=100, goods_from=80)
+    engine.declare_caravan(1, 2, B.RES_GRAIN, 20)
+    engine.declare_caravan(1, 2, B.RES_GOODS, 15)
+    for row in intents:
+        row["status"] = "locked"
+    report = engine.announce_locked_caravans(1)
+    assert report.announced_intent_count == 2
+    assert report.intent_ids == (1, 2)
+    dm = [n for n in report.notices if n.kind == "dm"]
+    continent = [n for n in report.notices if n.kind == "continent"]
+    assert len(dm) == 1
+    assert dm[0].user_id == 200
+    assert "20" in dm[0].text and "15" in dm[0].text
+    assert len(continent) == 1
+    assert "Альфа" in continent[0].text and "Бета" in continent[0].text
+    assert all(i["payload"]["lock_notified"] is False for i in intents)
+
+    engine.commit_locked_caravan_announcements(
+        report.intent_ids, public_ids=report.public_ids
+    )
+    assert all(i["payload"]["lock_notified"] is True for i in intents)
+    assert all(i["payload"]["is_public"] is True for i in intents)
+
+    again = engine.announce_locked_caravans(1)
+    assert again.announced_intent_count == 0
+    assert again.notices == []
+
+
+def test_announce_locked_caravans_private_when_route_total_below_threshold():
+    engine, _fiefs, intents = _caravan_stateful_engine()
+    engine.declare_caravan(1, 2, B.RES_GRAIN, 10)
+    engine.declare_caravan(1, 2, B.RES_GRAIN, 8)
+    for row in intents:
+        row["status"] = "locked"
+    report = engine.announce_locked_caravans(1)
+    assert report.announced_intent_count == 2
+    assert any(n.kind == "dm" for n in report.notices)
+    assert not any(n.kind == "continent" for n in report.notices)
+    engine.commit_locked_caravan_announcements(report.intent_ids)
+    assert all(i["payload"]["lock_notified"] is True for i in intents)
+
+
+def test_announce_treats_missing_lock_notified_as_pending():
+    engine, _fiefs, intents = _caravan_stateful_engine()
+    engine.declare_caravan(1, 2, B.RES_GRAIN, 5)
+    intents[0]["status"] = "locked"
+    intents[0]["payload"].pop("lock_notified", None)
+    report = engine.announce_locked_caravans(1)
+    assert report.announced_intent_count == 1
 
 
 def test_resolve_public_caravan_adds_public_notices():

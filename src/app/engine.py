@@ -41,6 +41,7 @@ from app.domain.ticks import tick_active
 from app.domain.map_gen import GenTile, append_strip
 from app.domain.caravans import (
     DeclareCaravanResult,
+    LockCaravanReport,
     ResolveCaravanReport,
 )
 from app.domain.cta import raid_pact_unlocked
@@ -86,6 +87,7 @@ from app.domain.tick_pipeline import (
 )
 from app.domain.tick_schedule import (
     format_next_tick_line,
+    last_tick_datetime,
     next_tick_datetime,
     play_window_bounds,
 )
@@ -841,15 +843,29 @@ class Engine:
         return value
 
     def ensure_play_opened_at(self, world_id: int) -> dict:
-        """Для живых миров без метки: старт окна с сейчас (деплой mid-play)."""
+        """Для живых миров без метки: старт окна = последний слот (деплой mid-play)."""
         world = self.db.get_world(world_id) or {}
         if world.get("play_opened_at") is not None:
             return world
         if normalize_tick_phase(world.get("tick_phase")) != TICK_PHASE_PLAY:
             return world
-        now = _utcnow()
-        self.db.update_world(int(world_id), play_opened_at=now)
-        world["play_opened_at"] = now
+        local_now = self._world_local_now(world)
+        opened_local = last_tick_datetime(
+            last_tick_local_date=_as_date(world.get("last_tick_local_date")),
+            last_tick_slot=(
+                int(world["last_tick_slot"])
+                if world.get("last_tick_slot") is not None
+                else None
+            ),
+            slots=tick_slots(),
+            tzinfo=local_now.tzinfo,
+        )
+        if opened_local is not None and opened_local <= local_now:
+            opened = opened_local.astimezone(timezone.utc)
+        else:
+            opened = _utcnow()
+        self.db.update_world(int(world_id), play_opened_at=opened)
+        world["play_opened_at"] = opened
         return world
 
     def play_window_bounds_for_world(
@@ -1053,6 +1069,22 @@ class Engine:
 
     def cancel_caravan_intent(self, fief_id: int, intent_id: int) -> str:
         return self._caravans.cancel_caravan_intent(fief_id, intent_id)
+
+    def announce_locked_caravans(self, world_id: int) -> LockCaravanReport:
+        return self._caravans.announce_locked_caravans(world_id)
+
+    def commit_locked_caravan_announcements(
+        self,
+        intent_ids: list[int] | tuple[int, ...],
+        *,
+        public_ids: list[int] | tuple[int, ...] = (),
+    ) -> int:
+        return self._caravans.commit_locked_caravan_announcements(
+            intent_ids, public_ids=public_ids
+        )
+
+    def upgrade_stacked_caravan_public(self, world_id: int) -> int:
+        return self._caravans.upgrade_stacked_caravan_public(world_id)
 
     def resolve_pending_caravans(
         self, world_id: int, tick_index: int

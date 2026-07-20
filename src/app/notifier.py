@@ -121,11 +121,12 @@ async def announce_continent(
 
 async def post_continent_public(
     bot, realm_id: int, text: str, *, reply_markup=None
-) -> None:
+) -> bool:
     """Крупный обоз: в групповые чаты всех долин континента."""
     if not text:
-        return
+        return False
     seen: set[int] = set()
+    any_ok = False
     try:
         engine = get_engine()
         targets = [int(realm_id), *engine.adjacent_realm_ids(int(realm_id))]
@@ -133,8 +134,13 @@ async def post_continent_public(
             if rid in seen:
                 continue
             seen.add(rid)
-            await post_realm_public(bot, rid, text, reply_markup=reply_markup)
+            if await post_realm_public(
+                bot, rid, text, reply_markup=reply_markup
+            ):
+                any_ok = True
     except Exception:
         logger.warning(
             "post_continent_public failed realm_id=%s", realm_id, exc_info=True
         )
+        return False
+    return any_ok

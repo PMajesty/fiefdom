@@ -94,6 +94,15 @@ class WorldTickOrchestrator:
             return ResolveNightReport()
         self._enter_tick_resolve(int(world_id), int(tick_index), world)
         self._engine.lock_open_travel_intents(int(world_id))
+        # Close-play: без midday-текстов "в пути" (сразу resolve).
+        # Stacked is_public - отдельно от lock_notified (легаси backfill).
+        self._engine.upgrade_stacked_caravan_public(int(world_id))
+        lock_announce = self._engine.announce_locked_caravans(int(world_id))
+        if lock_announce.intent_ids:
+            self._engine.commit_locked_caravan_announcements(
+                lock_announce.intent_ids,
+                public_ids=lock_announce.public_ids,
+            )
         report = self._engine.resolve_pending_raids(int(world_id), int(tick_index))
         cover_left = self._engine.resolve_remaining_cover_stances(
             int(world_id), int(tick_index)

@@ -132,6 +132,30 @@ def due_tick_slot(
     return None
 
 
+def last_tick_datetime(
+    *,
+    last_tick_local_date: date | None,
+    last_tick_slot: int | None,
+    slots: list[tuple[int, int]],
+    tzinfo,
+) -> datetime | None:
+    """Wall-clock время последнего завершённого слота (старт текущего play)."""
+    if last_tick_local_date is None or last_tick_slot is None or not slots:
+        return None
+    idx = int(last_tick_slot)
+    if idx < 0 or idx >= len(slots):
+        return None
+    hour, minute = slots[idx]
+    return datetime(
+        last_tick_local_date.year,
+        last_tick_local_date.month,
+        last_tick_local_date.day,
+        hour,
+        minute,
+        tzinfo=tzinfo,
+    )
+
+
 def next_tick_datetime(
     *,
     local_now: datetime,
