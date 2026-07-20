@@ -5,10 +5,15 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+HANDLERS_DIR = ROOT / "src" / "app" / "handlers"
 
 OCCURRENCE_RE = re.compile(r"\bengine\.db\b|\beng\.db\b|\bengine\._[a-zA-Z_]+")
-ALIAS_RE = re.compile(r"=\s*engine\.db\s*(?:#|$)")
+# Конец RHS: bare / скобки / точка с запятой; не method-call после .db
+ALIAS_RE = re.compile(
+    r"=\s*(?:\(\s*)?(?:engine|eng)\.db\s*(?:\)\s*)?(?:#|;|$)"
+)
 
+# Известный долг; любой другой .py в scope без записи = 0.
 OCCURRENCE_FREEZE: dict[str, int] = {
     "src/app/handlers/dm.py": 38,
     "src/app/handlers/callbacks.py": 21,
@@ -23,19 +28,10 @@ OCCURRENCE_FREEZE: dict[str, int] = {
 }
 
 ALIAS_FREEZE: dict[str, int] = {
-    "src/app/handlers/dm.py": 0,
-    "src/app/handlers/callbacks.py": 0,
-    "src/app/handlers/admin.py": 0,
-    "src/app/handlers/group.py": 0,
     "src/app/handlers/shared.py": 2,
-    "src/app/scheduler.py": 0,
-    "src/app/patch_announce.py": 0,
-    "src/app/notifier.py": 0,
-    "src/app/wiring.py": 0,
-    "src/app/messaging.py": 0,
 }
 
-NO_HANDLERS_IMPORT = (
+INFRA_FILES = (
     "src/app/scheduler.py",
     "src/app/patch_announce.py",
     "src/app/notifier.py",
@@ -43,12 +39,22 @@ NO_HANDLERS_IMPORT = (
     "src/app/messaging.py",
 )
 
-_HANDLERS_IMPORT_RE = re.compile(r"from app\.handlers|import app\.handlers")
+_HANDLERS_IMPORT_RE = re.compile(
+    r"(?:from app\.handlers(?:\s|\.|$)|import app\.handlers\b|from app import handlers\b)"
+)
+
+
+def _scoped_rels() -> list[str]:
+    rels = {p.relative_to(ROOT).as_posix() for p in HANDLERS_DIR.glob("*.py")}
+    rels.update(INFRA_FILES)
+    rels.update(OCCURRENCE_FREEZE)
+    rels.update(ALIAS_FREEZE)
+    return sorted(rels)
 
 
 def _read(rel: str) -> str:
     path = ROOT / rel
-    assert path.is_file(), f"Freeze file missing: {rel}"
+    assert path.is_file(), f"Scoped file missing: {rel}"
     return path.read_text(encoding="utf-8")
 
 
@@ -70,7 +76,8 @@ def _alias_hits(rel: str, text: str) -> list[str]:
 
 def test_engine_db_occurrence_freeze():
     violations: list[str] = []
-    for rel, expected in OCCURRENCE_FREEZE.items():
+    for rel in _scoped_rels():
+        expected = OCCURRENCE_FREEZE.get(rel, 0)
         text = _read(rel)
         hits = _occurrence_hits(rel, text)
         actual = len(hits)
@@ -86,7 +93,8 @@ def test_engine_db_occurrence_freeze():
 
 def test_no_new_engine_db_aliases():
     violations: list[str] = []
-    for rel, expected in ALIAS_FREEZE.items():
+    for rel in _scoped_rels():
+        expected = ALIAS_FREEZE.get(rel, 0)
         text = _read(rel)
         hits = _alias_hits(rel, text)
         actual = len(hits)
@@ -102,7 +110,7 @@ def test_no_new_engine_db_aliases():
 
 def test_infra_must_not_import_handlers():
     violations: list[str] = []
-    for rel in NO_HANDLERS_IMPORT:
+    for rel in INFRA_FILES:
         text = _read(rel)
         for lineno, line in enumerate(text.splitlines(), start=1):
             if _HANDLERS_IMPORT_RE.search(line):
