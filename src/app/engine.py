@@ -100,6 +100,7 @@ from app.domain.resources import (
 from app.domain.tick import (
     collect_pending_bags,
 )
+from app.presenters.status import StatusSnapshot, render_status_card
 from app.services.night_raids import NightRaidResolver
 from app.domain.tick_pipeline import (
     ActionWindow,
@@ -631,7 +632,8 @@ class Engine:
         )
         return notes
 
-    def status_card(self, fief_id: int) -> str:
+    def status_snapshot(self, fief_id: int) -> StatusSnapshot:
+        """Мутации + часы + defense; HTML собирает presenters.status."""
         notes = self.collect_for_fief(fief_id)
         fief = self.db.get_fief(fief_id)
         # Старые усадьбы, застрявшие на шаге 1 до починки онбординга.
@@ -661,10 +663,6 @@ class Engine:
             flags.append("Дремлет")
         militia = B.militia_upkeep_grain(fief["might"])
         land = B.land_upkeep(len([t for t in tiles if not t.get("is_overgrown")]))
-        lines = [
-            f"🏡 <b>{self.fief_label(fief)}</b> · день {realm['day_number']}",
-            "",
-        ]
         active_tiles = [t for t in tiles if not t.get("is_overgrown")]
         # Уже расширились, но квест на клейм ещё висит (старые усадьбы / сбой).
         if int(fief.get("onboard_step") or 0) == 2 and len(active_tiles) >= 2:
@@ -691,28 +689,11 @@ class Engine:
                 alerts.append(f"Набег и пакт - {hint}.")
         if flags:
             alerts.append(f"Статусы: {', '.join(flags)}")
-        if alerts:
-            lines.extend(alerts)
-            lines.append("")
         defense = standing_raid_defense(
             watch_defense=prod.defense,
             victim_might=int(fief.get("might") or 0),
             patrol_active=tick_active(fief.get("patrol_until_tick"), tick_index),
             fog_ignores_patrol=self.realm_modifiers(realm).fog_ignores_patrol(),
-        )
-        lines.extend(
-            [
-                (
-                    f"⚡ Действия: {fief['actions']}/{B.ACTIONS_BANK_MAX} · "
-                    f"Клетки: {len(tiles)}/{B.TILE_HARD_CAP}"
-                ),
-                format_status_stash_line(fief, defense=defense),
-                _stash_status_line(barn),
-                "",
-                format_daily_production_line(prod.resources()),
-                f"Корм: земля {land}, дружина {militia}",
-                "",
-            ]
         )
         tz_name = realm.get("timezone") or TIMEZONE
         try:
@@ -727,14 +708,26 @@ class Engine:
             last_tick_slot=int(last_slot) if last_slot is not None else None,
             slots=tick_slots(),
         )
-        lines.append(format_next_tick_line(next_at, local_now=local_now))
-        prep_lines = self._prepared_intent_status_lines(fief_id)
-        if prep_lines:
-            lines.append("")
-            lines.extend(prep_lines)
-        if notes:
-            lines.append("· " + " · ".join(notes))
-        return "\n".join(lines)
+        return StatusSnapshot(
+            fief_label=self.fief_label(fief),
+            day_number=int(realm["day_number"]),
+            alerts=tuple(alerts),
+            actions=int(fief["actions"]),
+            actions_max=int(B.ACTIONS_BANK_MAX),
+            tile_count=len(tiles),
+            tile_cap=int(B.TILE_HARD_CAP),
+            stash_line=format_status_stash_line(fief, defense=defense),
+            barn_line=_stash_status_line(barn),
+            production_line=format_daily_production_line(prod.resources()),
+            land_upkeep=int(land),
+            militia_upkeep=int(militia),
+            next_tick_line=format_next_tick_line(next_at, local_now=local_now),
+            prep_lines=tuple(self._prepared_intent_status_lines(fief_id)),
+            notes=tuple(notes),
+        )
+
+    def status_card(self, fief_id: int) -> str:
+        return render_status_card(self.status_snapshot(fief_id))
 
     def list_prepared_intents(
         self, fief_id: int
