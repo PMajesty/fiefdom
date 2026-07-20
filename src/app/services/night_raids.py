@@ -6,6 +6,13 @@ from app.repos import NightRaidRepos
 import random
 
 from app import balance as B
+from app.domain.caravans import (
+    ROAD_CARAVAN_STATUSES,
+    format_caravan_intercepted_gate_line,
+    open_caravan_escrow_bag,
+    plan_caravan_escrow_debits,
+)
+from app.domain.gate_clash import resolve_gate_clash
 from app.domain.raids import (
     RaidActionResult,
     RaidNightPartyNotice,
@@ -13,6 +20,7 @@ from app.domain.raids import (
     own_headcount_rumor,
     own_loss_rumor_band,
     resolve_raid,
+    split_loot_prefer_escrow,
     standing_raid_defense,
 )
 from app.domain.road_skirmish import (
@@ -40,6 +48,51 @@ class NightRaidResolver:
         self._engine = engine
         self._db = db
 
+    def _apply_caravan_escrow_loot(
+        self,
+        *,
+        caravan_by_id: dict[int, dict],
+        live_escrow: dict[str, int],
+        want: dict[str, int],
+    ) -> dict[str, int]:
+        """Списать want с обозов в пути (open/locked); обновить payload / отменить пустые."""
+        road_rows = [
+            row
+            for row in caravan_by_id.values()
+            if str(row.get("status") or "") in ROAD_CARAVAN_STATUSES
+        ]
+        plan = plan_caravan_escrow_debits(road_rows, want)
+        taken: dict[str, int] = {k: 0 for k in want}
+        for step in plan:
+            row = caravan_by_id.get(int(step.intent_id))
+            if not row or str(row.get("status") or "") not in ROAD_CARAVAN_STATUSES:
+                continue
+            payload = dict(row.get("payload") or {})
+            payload["amt"] = int(step.remaining_amt)
+            claimed = self._db.update_open_action_intent_payload(
+                int(step.intent_id), payload
+            )
+            if not claimed:
+                # Гонка с отменой игрока (только open) или параллельным resolve.
+                row["status"] = "cancelled"
+                gone = int(step.taken) + int(step.remaining_amt)
+                live_escrow[step.res] = max(
+                    0, int(live_escrow.get(step.res, 0) or 0) - gone
+                )
+                continue
+            row["payload"] = payload
+            if step.remaining_amt <= 0:
+                self._db.cancel_action_intent(
+                    int(step.intent_id),
+                    statuses=("open", "locked"),
+                )
+                row["status"] = "cancelled"
+            taken[step.res] = int(taken.get(step.res, 0) or 0) + int(step.taken)
+            live_escrow[step.res] = max(
+                0, int(live_escrow.get(step.res, 0) or 0) - int(step.taken)
+            )
+        return {k: v for k, v in taken.items() if v > 0}
+
     def _pick_raid_interceptor(
         self, vic: dict, *, incomplete_world: bool
     ) -> dict | None:
@@ -65,6 +118,7 @@ class NightRaidResolver:
         fog: bool,
         victim_might: int,
         intercept: bool,
+        reinforce_might: int = 0,
     ) -> bool:
         defense = standing_raid_defense(
             watch_defense=watch_def,
@@ -72,6 +126,7 @@ class NightRaidResolver:
             patrol_active=patrol,
             fog_ignores_patrol=fog,
             intercept=intercept,
+            reinforce_might=reinforce_might,
         )
         from app.domain.raids import raid_ratio
 
@@ -436,9 +491,18 @@ class NightRaidResolver:
         watch_def = self._engine.fief_prod(vic).defense
         patrol = tick_active(vic.get("patrol_until_tick"), tick_index)
         incomplete_world = self._engine.world_tick_incomplete(world_id)
-        interceptor = self._engine._pick_raid_interceptor(
-            vic, incomplete_world=incomplete_world
+        cover_deployment = self._engine._cover_stances.deploy_for_victim(
+            world_id=int(world_id),
+            tick_index=int(tick_index),
+            victim=vic,
+            incomplete_world=incomplete_world,
         )
+        reinforce_might = int(cover_deployment.total) if cover_deployment else 0
+        interceptor = None
+        if reinforce_might <= 0:
+            interceptor = self._engine._pick_raid_interceptor(
+                vic, incomplete_world=incomplete_world
+            )
 
         lead_fief = leader.lead_fief_id
         rng = random.Random(
@@ -452,10 +516,14 @@ class NightRaidResolver:
         atk_label = ", ".join(atk_names) if atk_names else "Отряд"
         vic_label = self._engine.fief_label(vic)
         vic_prod = self._engine.fief_prod(vic)
+        open_caravans = list(
+            self._db.list_road_caravan_intents_for_fief(victim_id) or []
+        )
+        escrow_bag = open_caravan_escrow_bag(open_caravans)
 
-        # Сначала проба без перехвата: chip-fail не тратит INTERCEPT_MIGHT.
+        # Авто-перехват только если deployed cover == 0; chip-fail не тратит might.
         use_intercept = False
-        if interceptor is not None:
+        if reinforce_might <= 0 and interceptor is not None:
             if self._engine._siege_probe_would_succeed(
                 attack_might=attack_pool,
                 watch_def=watch_def,
@@ -463,11 +531,13 @@ class NightRaidResolver:
                 fog=fog,
                 victim_might=int(vic.get("might") or 0),
                 intercept=False,
+                reinforce_might=0,
             ):
                 use_intercept = True
             else:
                 interceptor = None
 
+        victim_home_might = int(vic.get("might") or 0)
         result = resolve_raid(
             attacker_name=atk_label,
             victim_name=vic_label,
@@ -479,11 +549,13 @@ class NightRaidResolver:
             barn_level=self._engine.barn_level(victim_id),
             victim_daily=vic_prod.resources(),
             fog_ignores_patrol=fog,
-            victim_might=int(vic.get("might") or 0),
+            victim_might=victim_home_might,
+            escrow_stash=escrow_bag,
+            reinforce_might=reinforce_might,
             rng=rng,
         )
 
-        # Осада одной жертвы: перехват + все claim/credit/лут/щит в одной tx
+        # Осада одной жертвы: перехват/застава + claim/credit/лут/щит в одной tx
         # (crash mid-victim не оставляет половину intents resolved).
         commits = {
             f.fief_id: post_road_by_fief[f.fief_id] for f in siege_members
@@ -491,13 +563,18 @@ class NightRaidResolver:
         member_settle: list[dict] = []
         any_success = False
         applied_total: dict[str, int] = {}
+        escrow_looted = False
+        cover_receipt = ""
 
         with self._db.transaction():
+            intercept_live = bool(use_intercept and interceptor is not None)
+            reinforce_live = int(reinforce_might)
             if use_intercept and interceptor is not None:
                 if not self._db.debit_fief_resources(
                     int(interceptor["id"]), might=int(B.INTERCEPT_MIGHT)
                 ):
                     interceptor = None
+                    intercept_live = False
                     result = resolve_raid(
                         attacker_name=atk_label,
                         victim_name=vic_label,
@@ -509,9 +586,58 @@ class NightRaidResolver:
                         barn_level=self._engine.barn_level(victim_id),
                         victim_daily=self._engine.fief_prod(vic).resources(),
                         fog_ignores_patrol=fog,
-                        victim_might=int(vic.get("might") or 0),
+                        victim_might=victim_home_might,
+                        escrow_stash=escrow_bag,
+                        reinforce_might=0,
                         rng=rng,
                     )
+
+            cover_by_intent: dict[int, int] = {}
+            if cover_deployment is not None:
+                for helper in cover_deployment.helpers:
+                    iid = int(helper.intent_id)
+                    cover_by_intent[iid] = cover_by_intent.get(iid, 0) + int(
+                        helper.budget
+                    )
+            gate = resolve_gate_clash(
+                attack_pool=int(attack_pool),
+                defense=standing_raid_defense(
+                    watch_defense=watch_def,
+                    victim_might=victim_home_might,
+                    patrol_active=patrol,
+                    fog_ignores_patrol=fog,
+                    intercept=intercept_live,
+                    reinforce_might=reinforce_live,
+                ),
+                home_might=victim_home_might,
+                cover_by_intent=cover_by_intent,
+            )
+            if gate.applied:
+                result.might_lost = int(gate.attacker_deaths)
+                if gate.home_deaths > 0:
+                    self._db.debit_fief_resources(
+                        int(victim_id), might=int(gate.home_deaths)
+                    )
+                    vic = self._db.get_fief(victim_id) or vic
+
+            if cover_deployment is not None and (
+                cover_deployment.helpers or cover_deployment.trimmed
+            ):
+                members = list(self._db.pact_members(vic["pact_id"]) or [])
+                refund_by_intent = None
+                if gate.applied:
+                    refund_by_intent = {
+                        iid: gate.cover_refund(iid, deployed)
+                        for iid, deployed in cover_by_intent.items()
+                    }
+                cover_receipt = self._engine._cover_stances.settle_deployment(
+                    deployment=cover_deployment,
+                    raid_success=bool(result.success),
+                    pact_members=members,
+                    victim_id=int(victim_id),
+                    report_notices=report.notices,
+                    battle_refund_by_intent=refund_by_intent,
+                )
 
             ordered_ids = sorted(commits.keys(), key=lambda i: (-commits[i], i))
             loss_parts = _split_pool_proportional(
@@ -525,6 +651,10 @@ class NightRaidResolver:
                 if result.success
                 else {fid: {k: 0 for k in result.stolen} for fid in commits}
             )
+            live_escrow = dict(escrow_bag)
+            caravan_by_id = {
+                int(row["id"]): row for row in open_caravans
+            }
 
             for fate in siege_members:
                 post_road = post_road_by_fief[fate.fief_id]
@@ -555,29 +685,67 @@ class NightRaidResolver:
                     if atk_live:
                         barn = self._engine.barn_level(fate.fief_id)
                         cap = B.stash_cap(barn)
-                        take_bag: dict[str, int] = {}
-                        for key, amt in stolen_bag.items():
-                            take = capped_receive_amount(
-                                stash_amount(atk_live, key), int(amt), cap
+                        from_escrow, from_stash = split_loot_prefer_escrow(
+                            stolen_bag, live_escrow
+                        )
+                        take_escrow: dict[str, int] = {}
+                        take_stash: dict[str, int] = {}
+                        for key, want_total in stolen_bag.items():
+                            room = capped_receive_amount(
+                                stash_amount(atk_live, key),
+                                int(want_total),
+                                cap,
                             )
-                            take = min(
-                                take, stash_amount(vic_live, key), int(amt)
+                            if room <= 0:
+                                take_escrow[key] = 0
+                                take_stash[key] = 0
+                                continue
+                            gate = min(
+                                room, int(from_escrow.get(key, 0) or 0)
                             )
-                            take_bag[key] = max(0, take)
-                        debit = {
-                            k: v for k, v in take_bag.items() if v > 0
+                            yard = min(
+                                room - gate,
+                                int(from_stash.get(key, 0) or 0),
+                                stash_amount(vic_live, key),
+                            )
+                            take_escrow[key] = max(0, gate)
+                            take_stash[key] = max(0, yard)
+                        applied_escrow = self._apply_caravan_escrow_loot(
+                            caravan_by_id=caravan_by_id,
+                            live_escrow=live_escrow,
+                            want=take_escrow,
+                        )
+                        if sum(applied_escrow.values()) > 0:
+                            escrow_looted = True
+                        stash_debit = {
+                            k: v for k, v in take_stash.items() if v > 0
                         }
-                        if debit and self._db.debit_fief_resources(
-                            victim_id, debit
+                        applied_stash: dict[str, int] = {}
+                        if stash_debit and self._db.debit_fief_resources(
+                            victim_id, stash_debit
                         ):
-                            self._db.credit_fief_resources(fate.fief_id, debit)
-                            applied = debit
+                            applied_stash = stash_debit
+                            vic = self._db.get_fief(victim_id) or vic
+                        credit = {
+                            key: int(applied_escrow.get(key, 0) or 0)
+                            + int(applied_stash.get(key, 0) or 0)
+                            for key in stolen_bag
+                        }
+                        credit = {k: v for k, v in credit.items() if v > 0}
+                        if credit:
+                            self._db.credit_fief_resources(fate.fief_id, credit)
+                            applied = {
+                                k: int(credit.get(k, 0) or 0)
+                                for k in stolen_bag
+                            }
                             any_success = True
-                            for key, amt in debit.items():
+                            for key, amt in credit.items():
                                 applied_total[key] = (
                                     int(applied_total.get(key, 0)) + int(amt)
                                 )
-                            vic = self._db.get_fief(victim_id) or vic
+                            atk_live = (
+                                self._db.get_fief(fate.fief_id) or atk_live
+                            )
 
                 self._db.update_action_intent_payload(fate.intent_id, payload)
                 report.resolved_count += 1
@@ -707,30 +875,48 @@ class NightRaidResolver:
                 )
 
         if result.success and any_success:
+            victim_dm = (
+                f"Ночью на ваш хутор ходили! "
+                f"{format_victim_loot_sentence(applied_total)}"
+            )
+            if escrow_looted:
+                gate = format_caravan_intercepted_gate_line()
+                victim_dm = f"{victim_dm} {gate}"
+                self._engine._append_pending_raid_line(
+                    int(vic["realm_id"]), gate
+                )
+                report.notices.append(
+                    RaidNightPartyNotice(
+                        user_id=None,
+                        realm_id=int(vic["realm_id"]),
+                        text=f"⚔️ {gate}",
+                        kind="public",
+                    )
+                )
+            if cover_receipt:
+                victim_dm = f"{victim_dm} {cover_receipt}"
             report.notices.append(
                 RaidNightPartyNotice(
                     user_id=int(vic["user_id"]),
                     realm_id=None,
-                    text=(
-                        f"Ночью на ваш хутор ходили! "
-                        f"{format_victim_loot_sentence(applied_total)}"
-                    ),
+                    text=victim_dm,
                     kind="dm",
                 )
             )
         elif not result.success:
+            if result.intercept_applied:
+                refuse = "Ночью набег на ваш хутор отбит у ворот (союзник перехватил)."
+            elif reinforce_might > 0:
+                refuse = "Ночью набег на ваш хутор отбит у ворот (застава пакта)."
+            else:
+                refuse = "Ночью набег на ваш хутор отбит у ворот."
+            if cover_receipt:
+                refuse = f"{refuse} {cover_receipt}"
             report.notices.append(
                 RaidNightPartyNotice(
                     user_id=int(vic["user_id"]),
                     realm_id=None,
-                    text=(
-                        f"Ночью набег на ваш хутор отбит у ворот"
-                        + (
-                            " (союзник перехватил)."
-                            if result.intercept_applied
-                            else "."
-                        )
-                    ),
+                    text=refuse,
                     kind="dm",
                 )
             )

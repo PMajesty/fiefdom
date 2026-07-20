@@ -65,8 +65,10 @@ from app.domain.resource_registry import fief_balance_columns
 from app.domain.tick import (
     collect_pending_bags,
 )
+from app.domain.cover import COVER_MODE_LABELS, COVER_MODE_SPECIFIC
 from app.presenters.intents import (
     PreparedCaravanView,
+    PreparedCoverView,
     PreparedRaidView,
     render_prepared_intent_status_lines,
     render_prepared_intents_card,
@@ -518,17 +520,19 @@ class Engine:
 
     def list_prepared_intents(
         self, fief_id: int
-    ) -> tuple[list[dict], list[dict]]:
-        """Исходящие заявки усадьбы: (набеги open/locked, обозы open)."""
+    ) -> tuple[list[dict], list[dict], list[dict]]:
+        """Исходящие заявки: набеги, обозы и застава (open/locked)."""
         raids_raw = self.db.list_open_raid_intents_for_fief(int(fief_id))
-        caravans_raw = self.db.list_open_caravan_intents_for_fief(int(fief_id))
+        caravans_raw = self.db.list_road_caravan_intents_for_fief(int(fief_id))
+        covers_raw = self.db.list_open_cover_stance_intents_for_fief(int(fief_id))
         raids = list(raids_raw) if raids_raw else []
         caravans = list(caravans_raw) if caravans_raw else []
-        return raids, caravans
+        covers = list(covers_raw) if covers_raw else []
+        return raids, caravans, covers
 
     def prepared_intents_count(self, fief_id: int) -> int:
-        raids, caravans = self.list_prepared_intents(fief_id)
-        return len(raids) + len(caravans)
+        raids, caravans, covers = self.list_prepared_intents(fief_id)
+        return len(raids) + len(caravans) + len(covers)
 
     def raid_intent_target_label(self, intent: dict) -> str:
         payload = intent.get("payload") or {}
@@ -539,10 +543,25 @@ class Engine:
     def caravan_intent_target_label(self, intent: dict) -> str:
         return self._caravans.caravan_intent_target_label(intent)
 
+    def cover_intent_stance_label(self, intent: dict) -> str:
+        payload = intent.get("payload") or {}
+        mode = str(payload.get("mode") or "")
+        base = COVER_MODE_LABELS.get(mode, "Застава")
+        if mode != COVER_MODE_SPECIFIC:
+            return base
+        tid = int(payload.get("target_fief_id") or 0)
+        tgt = self.db.get_fief(tid) if tid else None
+        who = self.fief_label(tgt) if tgt else "?"
+        return f"{base}: {who}"
+
     def _prepared_intent_views(
         self, fief_id: int
-    ) -> tuple[tuple[PreparedRaidView, ...], tuple[PreparedCaravanView, ...]]:
-        raids_raw, caravans_raw = self.list_prepared_intents(fief_id)
+    ) -> tuple[
+        tuple[PreparedRaidView, ...],
+        tuple[PreparedCaravanView, ...],
+        tuple[PreparedCoverView, ...],
+    ]:
+        raids_raw, caravans_raw, covers_raw = self.list_prepared_intents(fief_id)
         raids: list[PreparedRaidView] = []
         for intent in raids_raw:
             payload = intent.get("payload") or {}
@@ -562,19 +581,30 @@ class Engine:
                     target_label=self.caravan_intent_target_label(intent),
                     amount=int(payload.get("amt") or 0),
                     resource_name=resource_name_ru(res) if res else "?",
+                    is_open=intent.get("status") == "open",
                 )
             )
-        return tuple(raids), tuple(caravans)
+        covers: list[PreparedCoverView] = []
+        for intent in covers_raw:
+            payload = intent.get("payload") or {}
+            covers.append(
+                PreparedCoverView(
+                    stance_label=self.cover_intent_stance_label(intent),
+                    budget=int(payload.get("budget") or 0),
+                    is_open=intent.get("status") == "open",
+                )
+            )
+        return tuple(raids), tuple(caravans), tuple(covers)
 
     def _prepared_intent_status_lines(self, fief_id: int) -> list[str]:
-        """Короткие строки для статус-карточки: открытые/закрытые набеги и обозы."""
-        raids, caravans = self._prepared_intent_views(fief_id)
-        return render_prepared_intent_status_lines(raids, caravans)
+        """Короткие строки для статус-карточки: набеги, обозы, застава."""
+        raids, caravans, covers = self._prepared_intent_views(fief_id)
+        return render_prepared_intent_status_lines(raids, caravans, covers)
 
     def prepared_intents_card(self, fief_id: int) -> str:
-        """Карточка управления исходящими набегами и обозами."""
-        raids, caravans = self._prepared_intent_views(fief_id)
-        return render_prepared_intents_card(raids, caravans)
+        """Карточка управления исходящими набегами, обозами и заставой."""
+        raids, caravans, covers = self._prepared_intent_views(fief_id)
+        return render_prepared_intents_card(raids, caravans, covers)
 
     def holdings_text(self, fief_id: int) -> str:
         fief = self.db.get_fief(fief_id)
@@ -875,6 +905,24 @@ class Engine:
         tick_index = int(world.get("tick_index") or 0)
         return self.db.lock_action_intents(int(world_id), tick_index, kind="raid")
 
+    def lock_open_caravan_intents(self, world_id: int) -> int:
+        world = self.db.get_world(world_id) or {}
+        tick_index = int(world.get("tick_index") or 0)
+        return self.db.lock_action_intents(
+            int(world_id), tick_index, kind="caravan"
+        )
+
+    def lock_open_cover_stance_intents(self, world_id: int) -> int:
+        return self._cover_stances.lock_open_cover_stance_intents(int(world_id))
+
+    def lock_open_travel_intents(self, world_id: int) -> int:
+        """open→locked для набегов, обозов и заставы текущего тика мира."""
+        return (
+            self.lock_open_raid_intents(int(world_id))
+            + self.lock_open_caravan_intents(int(world_id))
+            + self.lock_open_cover_stance_intents(int(world_id))
+        )
+
     def maybe_lock_raids_at_midpoint(self, world_id: int) -> int:
         return self._raid_declare.maybe_lock_raids_at_midpoint(world_id)
 
@@ -904,6 +952,7 @@ class Engine:
         fog: bool,
         victim_might: int,
         intercept: bool,
+        reinforce_might: int = 0,
     ) -> bool:
         return self._night_raids._siege_probe_would_succeed(
             attack_might=attack_might,
@@ -912,6 +961,7 @@ class Engine:
             fog=fog,
             victim_might=victim_might,
             intercept=intercept,
+            reinforce_might=reinforce_might,
         )
 
     def resolve_pending_raids(
@@ -988,9 +1038,36 @@ class Engine:
         return self._pacts.leave_pact(fief_id)
 
     def set_cover(self, fief_id: int, enabled: bool) -> str:
+        """Совместимость: вкл → ANY мин. бюджет; выкл → в стороне."""
         return self._pacts.set_cover(fief_id, enabled)
 
+    def set_cover_stand_down(self, fief_id: int) -> str:
+        return self._cover_stances.set_stand_down(fief_id)
 
+    def set_cover_stance(
+        self,
+        fief_id: int,
+        *,
+        mode: str,
+        budget: int,
+        target_fief_id: int | None = None,
+    ) -> str:
+        return self._cover_stances.set_cover_stance(
+            fief_id,
+            mode=mode,
+            budget=budget,
+            target_fief_id=target_fief_id,
+        )
+
+    def cancel_cover_stance_intent(self, fief_id: int, intent_id: int) -> str:
+        return self._cover_stances.cancel_cover_stance_intent(fief_id, intent_id)
+
+    def resolve_remaining_cover_stances(
+        self, world_id: int, tick_index: int
+    ) -> list:
+        return self._cover_stances.resolve_remaining_cover_stances(
+            int(world_id), int(tick_index)
+        )
 
     # ---------- map growth / absence ----------
     def maybe_grow_map(self, realm_id: int) -> str | None:

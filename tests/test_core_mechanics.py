@@ -307,6 +307,20 @@ def test_standing_raid_defense_matches_raid_stack():
         patrol_active=True,
         fog_ignores_patrol=True,
     ) == 17
+    assert standing_raid_defense(
+        watch_defense=12,
+        victim_might=5,
+        patrol_active=False,
+        reinforce_might=10,
+    ) == 17 + int(10 * B.COVER_DEFENSE_PER_MIGHT)
+    # Застава важнее авто-перехвата: при reinforce intercept не добавляется.
+    assert standing_raid_defense(
+        watch_defense=12,
+        victim_might=5,
+        patrol_active=False,
+        intercept=True,
+        reinforce_might=10,
+    ) == 17 + int(10 * B.COVER_DEFENSE_PER_MIGHT)
 
 
 def test_collect_respects_cap():

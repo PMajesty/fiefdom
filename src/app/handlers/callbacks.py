@@ -35,6 +35,7 @@ from app.ui.flows import (
     raid_targets_offer,
     send_offer,
 )
+from app.ui.keyboards import cover_ally_pick_kb, cover_stance_kb
 
 logger = logging.getLogger(__name__)
 
@@ -806,12 +807,44 @@ async def cb_caravan_cancel_intent(callback: CallbackQuery) -> None:
         await callback.answer("Ошибка", show_alert=True)
 
 
+@router.callback_query(F.data.startswith("zsx:"))
+async def cb_cover_cancel_intent(callback: CallbackQuery) -> None:
+    engine = get_engine()
+    try:
+        parts = callback.data.split(":")
+        fief_id = int(parts[1])
+        intent_id = int(parts[2])
+        engine.require_owned_fief(fief_id, callback.from_user.id)
+        msg = engine.cancel_cover_stance_intent(fief_id, intent_id)
+        await _ok(callback)
+        await _reply_prepared_intents(
+            callback.message, engine, fief_id, prefix=msg
+        )
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+    except Exception:
+        logger.exception("cb_cover_cancel_intent")
+        await callback.answer("Ошибка", show_alert=True)
+
+
 @router.callback_query(F.data.startswith("pct:"))
 async def cb_pact(callback: CallbackQuery) -> None:
     engine = get_engine()
     try:
         parts = callback.data.split(":")
-        if parts[1] in ("new", "inv", "leave", "cov", "acc", "dec"):
+        if parts[1] in (
+            "new",
+            "inv",
+            "leave",
+            "cov",
+            "acc",
+            "dec",
+            "zst",
+            "zsd",
+            "zsa",
+            "zss",
+            "zstt",
+        ):
             action = parts[1]
             fief_id = int(parts[2])
         else:
@@ -925,7 +958,93 @@ async def cb_pact(callback: CallbackQuery) -> None:
             )
             return
 
+        if action == "zst":
+            await _ok(callback)
+            await answer_html(
+                callback.message,
+                (
+                    "Застава на эту ночь: выберите стойку. "
+                    f"Сила от {B.COVER_BUDGET_MIN} (потолка нет, лишь сколько есть) "
+                    "уйдёт в резерв до середины окна тика."
+                ),
+                reply_markup=cover_stance_kb(fief_id),
+            )
+            return
+
+        if action == "zsd":
+            msg = engine.set_cover_stand_down(fief_id)
+            await _ok(callback)
+            await reply_game(
+                callback.message, msg, reply_markup=fief_home_kb(engine, fief_id)
+            )
+            return
+
+        if action == "zsa":
+            dm_mod.set_pending(
+                callback.from_user.id,
+                {
+                    "kind": "cover_budget",
+                    "fief_id": fief_id,
+                    "mode": "any",
+                },
+            )
+            await _ok(callback)
+            await answer_html(
+                callback.message,
+                (
+                    f"Сколько силы на заставу любого союзника? "
+                    f"От {B.COVER_BUDGET_MIN}, потолка нет.\n"
+                    "Или напишите \"отмена\"."
+                ),
+                reply_markup=dm_mod.pending_cancel_kb(fief_id),
+            )
+            return
+
+        if action == "zss":
+            if not fief.get("pact_id"):
+                raise ValueError("Нужен пакт")
+            allies: list[tuple[int, str]] = []
+            for m in engine.db.pact_members(int(fief["pact_id"])):
+                if int(m["id"]) == int(fief_id):
+                    continue
+                allies.append((int(m["id"]), engine.fief_label(m)))
+            if not allies:
+                raise ValueError("В пакте пока нет других союзников")
+            await _ok(callback)
+            await answer_html(
+                callback.message,
+                "Кого прикрыть этой ночью?",
+                reply_markup=cover_ally_pick_kb(fief_id, allies),
+            )
+            return
+
+        if action == "zstt":
+            target_id = int(parts[3])
+            dm_mod.set_pending(
+                callback.from_user.id,
+                {
+                    "kind": "cover_budget",
+                    "fief_id": fief_id,
+                    "mode": "specific",
+                    "target_fief_id": target_id,
+                },
+            )
+            tgt = engine.fief_by_id(target_id)
+            tname = engine.fief_label(tgt) if tgt else str(target_id)
+            await _ok(callback)
+            await answer_html(
+                callback.message,
+                (
+                    f"Сколько силы на заставу у {tname}? "
+                    f"От {B.COVER_BUDGET_MIN}, потолка нет.\n"
+                    "Или напишите \"отмена\"."
+                ),
+                reply_markup=dm_mod.pending_cancel_kb(fief_id),
+            )
+            return
+
         if action == "cov":
+            # Старые кнопки вкл/выкл → стойка / в стороне
             enabled = parts[3] == "1"
             msg = engine.set_cover(fief_id, enabled)
             await _ok(callback)

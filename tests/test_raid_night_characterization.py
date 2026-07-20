@@ -131,6 +131,7 @@ def _raid_night_engine(
             for i in intents
             if int(i["world_id"]) == int(wid)
             and int(i["tick_index"]) == int(tick)
+            and i.get("kind") == "raid"
             and i["status"] in statuses
         ]
 
@@ -145,6 +146,19 @@ def _raid_night_engine(
         for i in intents:
             if int(i["id"]) == int(iid):
                 i["payload"] = dict(payload)
+
+    def update_open_action_intent_payload(iid, payload):
+        for i in intents:
+            if int(i["id"]) == int(iid) and i["status"] in ("open", "locked"):
+                i["payload"] = dict(payload)
+                return dict(i)
+        return None
+
+    def get_action_intent(iid):
+        for i in intents:
+            if int(i["id"]) == int(iid):
+                return dict(i)
+        return None
 
     def log_raid(**kwargs):
         log_calls.append(dict(kwargs))
@@ -165,10 +179,58 @@ def _raid_night_engine(
     db.pact_members.return_value = list(pact_members or [])
     db.fief_tiles.return_value = []
     db.realms_are_adjacent.return_value = True
+    def list_road_caravan_intents_for_fief(fid):
+        return [
+            dict(i)
+            for i in intents
+            if int(i["fief_id"]) == int(fid)
+            and i["kind"] == "caravan"
+            and i["status"] in ("open", "locked")
+        ]
+
+    def cancel_action_intent(iid, *, statuses=("open",)):
+        allowed = set(statuses)
+        for i in intents:
+            if int(i["id"]) == int(iid) and i["status"] in allowed:
+                i["status"] = "cancelled"
+                return dict(i)
+        return None
+
+    def list_cover_stance_intents(wid, tick, statuses=("open", "locked")):
+        return [
+            dict(i)
+            for i in intents
+            if int(i["world_id"]) == int(wid)
+            and int(i["tick_index"]) == int(tick)
+            and i.get("kind") == "cover_stance"
+            and i["status"] in statuses
+        ]
+
+    def list_open_cover_stance_intents_for_fief(fid):
+        return [
+            dict(i)
+            for i in intents
+            if int(i["fief_id"]) == int(fid)
+            and i.get("kind") == "cover_stance"
+            and i["status"] in ("open", "locked")
+        ]
+
     db.create_action_intent.side_effect = create_action_intent
+    db.get_action_intent.side_effect = get_action_intent
     db.list_raid_intents.side_effect = list_raid_intents
+    db.list_cover_stance_intents.side_effect = list_cover_stance_intents
+    db.list_open_cover_stance_intents_for_fief.side_effect = (
+        list_open_cover_stance_intents_for_fief
+    )
+    db.list_road_caravan_intents_for_fief.side_effect = (
+        list_road_caravan_intents_for_fief
+    )
+    db.cancel_action_intent.side_effect = cancel_action_intent
     db.claim_resolve_action_intent.side_effect = claim_resolve_action_intent
     db.update_action_intent_payload.side_effect = update_action_intent_payload
+    db.update_open_action_intent_payload.side_effect = (
+        update_open_action_intent_payload
+    )
     db.get_user.return_value = None
     db.get_active_events.return_value = []
     db.list_active_tile_entities.return_value = []
@@ -279,7 +341,7 @@ def test_multi_stack_road_to_siege_live_resolve_pins_notices_loot_shield():
             101,
             None,
             "Вы ограбили Жертва: +14 зерна, +6 товаров.. "
-            "Свои потери чувствительные. Около половины дружины вернулась. "
+            "Свои потери чувствительные. Большая часть дружины вернулась. "
             "На дороге тоже потрепало.",
         ),
         ("public", None, 1, "⚔️ Атакующий ограбил Жертва"),
@@ -297,8 +359,11 @@ def test_multi_stack_road_to_siege_live_resolve_pins_notices_loot_shield():
     ]
     assert engine._fiefs[2]["grain"] == 56
     assert engine._fiefs[2]["goods"] == 26
+    # Дом 5 + сторожка 1 → схватка у ворот; 2 смерти дома (масштаб fighters/D).
+    assert engine._fiefs[2]["might"] == 3
     assert engine._fiefs[2]["shield_until_tick"] == 10 + 1 + B.RAID_VICTIM_SHIELD_TICKS
-    assert engine._fiefs[1]["might"] == 35
+    # После дороги 32 в осаде, у ворот ещё 2 → домой 30 + база 10.
+    assert engine._fiefs[1]["might"] == 40
     assert engine._fiefs[3]["might"] == 32
     assert engine._log_calls[0]["attacker_fief_id"] == 3
     assert engine._log_calls[0]["success"] is False
@@ -748,10 +813,21 @@ def test_cas_miss_live_matches_two_draw_oracle():
     fresh = resolve_raid(**kwargs, intercept=False, rng=random.Random(seed))
     assert oracle.might_lost != fresh.might_lost
 
+    from app.domain.gate_clash import resolve_gate_clash
+
+    # После CAS miss перехвата у ворот кровь по схватке (дом 5 + сторожка 1), не gauss.
+    gate = resolve_gate_clash(
+        attack_pool=40,
+        defense=6,
+        home_might=5,
+        cover_by_intent={},
+    )
+
     report = engine.resolve_pending_raids(1, 10)
 
     assert engine._fiefs[3]["might"] == B.INTERCEPT_MIGHT + 2
-    assert engine._fiefs[1]["might"] == 10 + (40 - int(oracle.might_lost))
+    assert engine._fiefs[1]["might"] == 10 + (40 - int(gate.attacker_deaths))
+    assert engine._fiefs[2]["might"] == 5 - int(gate.home_deaths)
     assert engine._fiefs[2]["grain"] == 40 - int(oracle.stolen["grain"])
     assert engine._fiefs[2]["goods"] == 20 - int(oracle.stolen["goods"])
     assert any(

@@ -149,7 +149,7 @@ def format_pact_leave_announce(
 def prepared_intents_kb(engine: Engine, fief_id: int) -> InlineKeyboardMarkup:
     """Кнопки снятия открытых заявок + назад в меню (снимок через Engine)."""
     fid = int(fief_id)
-    raids, caravans = engine.list_prepared_intents(fid)
+    raids, caravans, covers = engine.list_prepared_intents(fid)
     raid_cancels: list[tuple[int, str]] = []
     for intent in raids:
         if intent.get("status") != "open":
@@ -157,14 +157,25 @@ def prepared_intents_kb(engine: Engine, fief_id: int) -> InlineKeyboardMarkup:
         raid_cancels.append(
             (int(intent["id"]), engine.raid_intent_target_label(intent))
         )
-    caravan_cancels = [
-        (int(intent["id"]), engine.caravan_intent_target_label(intent))
-        for intent in caravans
-    ]
+    caravan_cancels: list[tuple[int, str]] = []
+    for intent in caravans:
+        if intent.get("status") != "open":
+            continue
+        caravan_cancels.append(
+            (int(intent["id"]), engine.caravan_intent_target_label(intent))
+        )
+    cover_cancels: list[tuple[int, str]] = []
+    for intent in covers:
+        if intent.get("status") != "open":
+            continue
+        cover_cancels.append(
+            (int(intent["id"]), engine.cover_intent_stance_label(intent))
+        )
     return prepared_intents_kb_plain(
         fid,
         raid_cancels=raid_cancels,
         caravan_cancels=caravan_cancels,
+        cover_cancels=cover_cancels,
     )
 
 

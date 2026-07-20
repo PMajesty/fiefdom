@@ -1114,6 +1114,8 @@ def test_caught_up_world_allows_cross_valley_again():
     engine.barn_level = MagicMock(return_value=0)
     engine.fief_label = MagicMock(side_effect=lambda f: f["name"])
     engine._world_id_for_realm = MagicMock(return_value=1)
+    engine.raid_declare_is_open = MagicMock(return_value=True)
+    engine._format_raid_deadline = MagicMock(return_value="-")
 
     result = engine.declare_caravan(1, 2, B.RES_GRAIN, 10)
     assert "B" in result.dm_text

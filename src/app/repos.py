@@ -320,7 +320,17 @@ class ActionIntentRepo(Protocol):
         statuses: tuple[str, ...] = ("open", "locked"),
     ) -> list[dict]: ...
 
-    def list_open_caravan_intents_for_fief(self, fief_id: int) -> list[dict]: ...
+    def list_road_caravan_intents_for_fief(self, fief_id: int) -> list[dict]: ...
+
+    def list_cover_stance_intents(
+        self,
+        world_id: int,
+        tick_index: int,
+        *,
+        statuses: tuple[str, ...] = ("open", "locked"),
+    ) -> list[dict]: ...
+
+    def list_open_cover_stance_intents_for_fief(self, fief_id: int) -> list[dict]: ...
 
     def lock_action_intents(
         self, world_id: int, tick_index: int, *, kind: str = "raid"
@@ -328,11 +338,20 @@ class ActionIntentRepo(Protocol):
 
     def claim_resolve_action_intent(self, intent_id: int) -> dict | None: ...
 
-    def cancel_action_intent(self, intent_id: int) -> dict | None: ...
+    def cancel_action_intent(
+        self,
+        intent_id: int,
+        *,
+        statuses: tuple[str, ...] = ("open",),
+    ) -> dict | None: ...
 
     def update_action_intent_payload(
         self, intent_id: int, payload: dict
     ) -> None: ...
+
+    def update_open_action_intent_payload(
+        self, intent_id: int, payload: dict
+    ) -> dict | None: ...
 
 
 @runtime_checkable
@@ -354,7 +373,13 @@ class DecreeRepo(Protocol):
 
 @runtime_checkable
 class CaravanRepos(
-    FiefRepo, RealmRepo, UserRepo, ActionIntentRepo, UnitOfWork, Protocol
+    WorldRepo,
+    FiefRepo,
+    RealmRepo,
+    UserRepo,
+    ActionIntentRepo,
+    UnitOfWork,
+    Protocol,
 ):
     """Persistence surface для CaravanService."""
 
@@ -397,6 +422,19 @@ class NightRaidRepos(
     Protocol,
 ):
     """Persistence surface для NightRaidResolver."""
+
+
+@runtime_checkable
+class CoverStanceRepos(
+    FiefRepo,
+    RealmRepo,
+    WorldRepo,
+    PactRepo,
+    ActionIntentRepo,
+    UnitOfWork,
+    Protocol,
+):
+    """Persistence surface для CoverStanceService."""
 
 
 @runtime_checkable

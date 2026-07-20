@@ -703,6 +703,34 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
             )
         return True
 
+    if kind == "cover_budget":
+        try:
+            budget = int(text.strip())
+        except ValueError:
+            await answer_html(
+                message,
+                (
+                    f"Нужно число силы от {B.COVER_BUDGET_MIN} "
+                    "(потолка нет, лишь сколько есть).\n"
+                    "Или напишите \"отмена\"."
+                ),
+                reply_markup=pending_cancel_kb(pending["fief_id"]),
+            )
+            return True
+        mode = str(pending.get("mode") or "any")
+        target_id = pending.get("target_fief_id")
+        msg = engine.set_cover_stance(
+            int(pending["fief_id"]),
+            mode=mode,
+            budget=budget,
+            target_fief_id=int(target_id) if target_id is not None else None,
+        )
+        clear_pending(user_id)
+        await reply_game(
+            message, msg, reply_markup=fief_home_kb(engine, pending["fief_id"])
+        )
+        return True
+
     if kind == "pact_name":
         fief = engine.fief_by_id(pending["fief_id"])
         pact_name = text.strip()[:40]

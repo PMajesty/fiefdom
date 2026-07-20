@@ -326,6 +326,9 @@ def test_declare_caravan_does_not_advance_onboard():
     engine.fief_label = MagicMock(side_effect=lambda f: f["name"])
     engine._world_id_for_realm = MagicMock(return_value=1)
     engine._require_cross_valley_caught_up = MagicMock()
+    engine.raid_declare_is_open = MagicMock(return_value=True)
+    engine._format_raid_deadline = MagicMock(return_value="-")
+    db.get_world.return_value = {"id": 1, "tick_index": 0}
 
     result = engine.declare_caravan(1, 2, B.RES_GRAIN, 10)
     assert result.intent_id == 99

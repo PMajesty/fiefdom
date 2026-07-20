@@ -99,9 +99,10 @@ def _caravan_stateful_engine(
                 return dict(i)
         return None
 
-    def cancel_action_intent(iid):
+    def cancel_action_intent(iid, *, statuses=("open",)):
+        allowed = set(statuses)
         for i in intents:
-            if int(i["id"]) == int(iid) and i["status"] == "open":
+            if int(i["id"]) == int(iid) and i["status"] in allowed:
                 i["status"] = "cancelled"
                 return dict(i)
         return None
@@ -120,6 +121,12 @@ def _caravan_stateful_engine(
     db.claim_resolve_action_intent.side_effect = claim_resolve_action_intent
     db.cancel_action_intent.side_effect = cancel_action_intent
     db.get_action_intent.side_effect = get_action_intent
+    db.get_world.return_value = {
+        "id": 1,
+        "tick_index": 5,
+        "tick_phase": "play",
+        "timezone": "UTC",
+    }
 
     db.realms_are_adjacent.return_value = True
     db.get_realm.return_value = {
@@ -139,6 +146,10 @@ def _caravan_stateful_engine(
     engine._world_id_for_realm = MagicMock(return_value=1)
     engine._require_cross_valley_caught_up = MagicMock()
     engine.world_tick_incomplete = MagicMock(return_value=False)
+    engine.raid_declare_is_open = MagicMock(return_value=True)
+    engine._format_raid_deadline = MagicMock(
+        side_effect=lambda _w, midpoint: "17.07 12:00" if midpoint else "17.07 18:00"
+    )
     engine._fiefs = fiefs
     engine._intents = intents
     return engine, fiefs, intents

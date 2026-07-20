@@ -106,10 +106,11 @@ def prepared_intents_kb(
     *,
     raid_cancels: list[tuple[int, str]],
     caravan_cancels: list[tuple[int, str]],
+    cover_cancels: list[tuple[int, str]] | None = None,
 ) -> InlineKeyboardMarkup:
     """Кнопки снятия открытых заявок + назад в меню.
 
-    raid_cancels / caravan_cancels: (intent_id, подпись цели).
+    *_cancels: (intent_id, подпись).
     """
     fid = int(fief_id)
     rows: list[list[InlineKeyboardButton]] = []
@@ -128,6 +129,15 @@ def prepared_intents_kb(
                 InlineKeyboardButton(
                     text=f"Вернуть обоз: {_short_button_label(target)}",
                     callback_data=f"cvx:{fid}:{int(intent_id)}",
+                )
+            ]
+        )
+    for intent_id, label in cover_cancels or []:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"Снять заставу: {_short_button_label(label)}",
+                    callback_data=f"zsx:{fid}:{int(intent_id)}",
                 )
             ]
         )

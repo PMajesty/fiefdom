@@ -12,7 +12,8 @@ from app.engine import Engine
 def test_prepared_intents_card_empty():
     db = MagicMock()
     db.list_open_raid_intents_for_fief.return_value = []
-    db.list_open_caravan_intents_for_fief.return_value = []
+    db.list_road_caravan_intents_for_fief.return_value = []
+    db.list_open_cover_stance_intents_for_fief.return_value = []
     engine = Engine(db)
 
     text = engine.prepared_intents_card(1)
@@ -21,7 +22,7 @@ def test_prepared_intents_card_empty():
     assert engine.prepared_intents_count(1) == 0
 
 
-def test_prepared_intents_card_lists_raids_and_caravans():
+def test_prepared_intents_card_lists_raids_caravans_and_cover():
     db = MagicMock()
     db.list_open_raid_intents_for_fief.return_value = [
         {
@@ -35,11 +36,23 @@ def test_prepared_intents_card_lists_raids_and_caravans():
             "payload": {"victim_id": 3, "might": 4},
         },
     ]
-    db.list_open_caravan_intents_for_fief.return_value = [
+    db.list_road_caravan_intents_for_fief.return_value = [
         {
             "id": 3,
             "status": "open",
             "payload": {"receiver_id": 4, "res": "grain", "amt": 12},
+        },
+        {
+            "id": 5,
+            "status": "locked",
+            "payload": {"receiver_id": 4, "res": "goods", "amt": 3},
+        },
+    ]
+    db.list_open_cover_stance_intents_for_fief.return_value = [
+        {
+            "id": 4,
+            "status": "open",
+            "payload": {"mode": "any", "budget": 10},
         },
     ]
     fiefs = {
@@ -56,7 +69,10 @@ def test_prepared_intents_card_lists_raids_and_caravans():
     assert "на Ира: 8 силы (открыта)" in text
     assert "на Оля: 4 силы (закрыта)" in text
     assert "к Кирилл: 12" in text
-    assert engine.prepared_intents_count(1) == 3
+    assert "можно вернуть" in text
+    assert "закрыт" in text
+    assert "Любого союзника: 10 силы (можно снять)" in text
+    assert engine.prepared_intents_count(1) == 5
 
 
 def test_prepared_intent_status_lines_include_caravan():
@@ -68,11 +84,18 @@ def test_prepared_intent_status_lines_include_caravan():
             "payload": {"victim_id": 2, "might": 5},
         }
     ]
-    db.list_open_caravan_intents_for_fief.return_value = [
+    db.list_road_caravan_intents_for_fief.return_value = [
         {
             "id": 2,
             "status": "open",
             "payload": {"receiver_id": 3, "res": "goods", "amt": 15},
+        }
+    ]
+    db.list_open_cover_stance_intents_for_fief.return_value = [
+        {
+            "id": 3,
+            "status": "locked",
+            "payload": {"mode": "any", "budget": 8},
         }
     ]
     fiefs = {
@@ -88,6 +111,7 @@ def test_prepared_intent_status_lines_include_caravan():
     assert lines[0] == "Заявки:"
     assert any("набег на Ира: 5 силы (открыта)" in line for line in lines)
     assert any("обоз к Бета: 15" in line for line in lines)
+    assert any("застава (Любого союзника): 8 силы (закрыта)" in line for line in lines)
 
 
 def test_list_prepared_intents_normalizes_empty_mocks():
@@ -95,10 +119,11 @@ def test_list_prepared_intents_normalizes_empty_mocks():
     db = MagicMock()
     engine = Engine(db)
 
-    raids, caravans = engine.list_prepared_intents(1)
+    raids, caravans, covers = engine.list_prepared_intents(1)
 
     assert raids == []
     assert caravans == []
+    assert covers == []
     assert engine.prepared_intents_count(1) == 0
     assert engine._prepared_intent_status_lines(1) == []
 
@@ -112,7 +137,8 @@ def test_status_card_omits_prepared_block_when_empty():
 
     db = MagicMock()
     db.list_open_raid_intents_for_fief.return_value = []
-    db.list_open_caravan_intents_for_fief.return_value = []
+    db.list_road_caravan_intents_for_fief.return_value = []
+    db.list_open_cover_stance_intents_for_fief.return_value = []
     engine = Engine(db)
     engine.collect_for_fief = MagicMock(return_value=[])  # type: ignore[method-assign]
     engine.fief_prod = MagicMock(  # type: ignore[method-assign]
@@ -172,13 +198,14 @@ def test_status_card_includes_prepared_raid_and_caravan():
             "payload": {"victim_id": 2, "might": 6},
         }
     ]
-    db.list_open_caravan_intents_for_fief.return_value = [
+    db.list_road_caravan_intents_for_fief.return_value = [
         {
             "id": 2,
             "status": "open",
             "payload": {"receiver_id": 3, "res": "grain", "amt": 9},
         }
     ]
+    db.list_open_cover_stance_intents_for_fief.return_value = []
     fiefs = {
         1: {
             "id": 1,

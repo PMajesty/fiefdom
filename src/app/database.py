@@ -195,7 +195,8 @@ class Database(
                     last_active_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     last_active_tick INT,
                     pact_id BIGINT,
-                    cover_allies BOOLEAN NOT NULL DEFAULT TRUE,
+                    cover_allies BOOLEAN NOT NULL DEFAULT FALSE,
+                    pact_left_tick INT,
                     frozen BOOLEAN NOT NULL DEFAULT FALSE,
                     UNIQUE (realm_id, user_id)
                 );
@@ -406,6 +407,7 @@ class Database(
                 "ALTER TABLE fiefs ADD COLUMN IF NOT EXISTS shield_until_tick INT;",
                 "ALTER TABLE fiefs ADD COLUMN IF NOT EXISTS last_raid_tick INT;",
                 "ALTER TABLE fiefs ADD COLUMN IF NOT EXISTS last_active_tick INT;",
+                "ALTER TABLE fiefs ADD COLUMN IF NOT EXISTS pact_left_tick INT;",
                 "ALTER TABLE trade_offers ADD COLUMN IF NOT EXISTS expires_tick INT;",
                 "ALTER TABLE pact_invites ADD COLUMN IF NOT EXISTS expires_tick INT;",
                 "ALTER TABLE personal_deals ADD COLUMN IF NOT EXISTS expires_tick INT;",
@@ -414,6 +416,23 @@ class Database(
                 *ensure_resource_columns_sql(),
             ):
                 self.cursor.execute(stmt)
+            # Застава: без живой стойки авто-перехват выключен (legacy DEFAULT TRUE).
+            self.cursor.execute(
+                "ALTER TABLE fiefs ALTER COLUMN cover_allies SET DEFAULT FALSE;"
+            )
+            self.cursor.execute(
+                """
+                UPDATE fiefs AS f
+                SET cover_allies = FALSE
+                WHERE f.cover_allies = TRUE
+                  AND NOT EXISTS (
+                    SELECT 1 FROM action_intents ai
+                    WHERE ai.fief_id = f.id
+                      AND ai.kind = 'cover_stance'
+                      AND ai.status IN ('open', 'locked')
+                  );
+                """
+            )
             # Старые wall-clock сроки без тика - считаем уже истёкшими.
             self.cursor.execute(
                 "UPDATE trade_offers SET expires_tick = 0 "
@@ -1478,7 +1497,7 @@ class Database(
             cols = [d[0] for d in self.cursor.description]
             pact = dict(zip(cols, row))
             self.cursor.execute(
-                "UPDATE fiefs SET pact_id=%s WHERE id=%s;",
+                "UPDATE fiefs SET pact_id=%s, cover_allies=FALSE WHERE id=%s;",
                 (pact["id"], founder_fief_id),
             )
             self.commit()
@@ -2035,11 +2054,43 @@ class Database(
             (int(world_id), int(tick_index), *statuses),
         )
 
-    def list_open_caravan_intents_for_fief(self, fief_id: int) -> list[dict]:
+    def list_road_caravan_intents_for_fief(self, fief_id: int) -> list[dict]:
+        """Исходящие обозы в пути: open и locked (ещё не доставлены / не отменены)."""
         return self._fetchall(
             """
             SELECT * FROM action_intents
-            WHERE fief_id=%s AND kind='caravan' AND status='open'
+            WHERE fief_id=%s AND kind='caravan' AND status IN ('open', 'locked')
+            ORDER BY id;
+            """,
+            (int(fief_id),),
+        )
+
+    def list_cover_stance_intents(
+        self,
+        world_id: int,
+        tick_index: int,
+        *,
+        statuses: tuple[str, ...] = ("open", "locked"),
+    ) -> list[dict]:
+        if not statuses:
+            return []
+        placeholders = ", ".join(["%s"] * len(statuses))
+        return self._fetchall(
+            f"""
+            SELECT * FROM action_intents
+            WHERE world_id=%s AND tick_index=%s AND kind='cover_stance'
+              AND status IN ({placeholders})
+            ORDER BY id;
+            """,
+            (int(world_id), int(tick_index), *statuses),
+        )
+
+    def list_open_cover_stance_intents_for_fief(self, fief_id: int) -> list[dict]:
+        return self._fetchall(
+            """
+            SELECT * FROM action_intents
+            WHERE fief_id=%s AND kind='cover_stance'
+              AND status IN ('open', 'locked')
             ORDER BY id;
             """,
             (int(fief_id),),
@@ -2080,15 +2131,24 @@ class Database(
             self.commit()
             return self._normalize(dict(zip(cols, row)))
 
-    def cancel_action_intent(self, intent_id: int) -> dict | None:
+    def cancel_action_intent(
+        self,
+        intent_id: int,
+        *,
+        statuses: tuple[str, ...] = ("open",),
+    ) -> dict | None:
+        """CAS: open→cancelled по умолчанию; night loot может снять и locked."""
+        if not statuses:
+            return None
+        placeholders = ", ".join(["%s"] * len(statuses))
         with self.lock:
             self.cursor.execute(
-                """
+                f"""
                 UPDATE action_intents SET status='cancelled'
-                WHERE id=%s AND status='open'
+                WHERE id=%s AND status IN ({placeholders})
                 RETURNING *;
                 """,
-                (int(intent_id),),
+                (int(intent_id), *statuses),
             )
             row = self.cursor.fetchone()
             if not row:
@@ -2109,6 +2169,26 @@ class Database(
                 (json.dumps(payload or {}), int(intent_id)),
             )
             self.commit()
+
+    def update_open_action_intent_payload(
+        self, intent_id: int, payload: dict
+    ) -> dict | None:
+        """CAS: payload пока заявка в пути (open или locked)."""
+        with self.lock:
+            self.cursor.execute(
+                """
+                UPDATE action_intents SET payload=%s::jsonb
+                WHERE id=%s AND status IN ('open', 'locked')
+                RETURNING *;
+                """,
+                (json.dumps(payload or {}), int(intent_id)),
+            )
+            row = self.cursor.fetchone()
+            if not row:
+                return None
+            cols = [d[0] for d in self.cursor.description]
+            self.commit()
+            return self._normalize(dict(zip(cols, row)))
 
     def event_actions(self, event_id: int) -> list[dict]:
         return self._fetchall(

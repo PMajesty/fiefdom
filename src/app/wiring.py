@@ -18,6 +18,7 @@ def compose_services(engine: Engine, db: Database) -> None:
     """Собирает сервисы один раз и вешает на engine (keep-list фасады)."""
     from app.services.caravans import CaravanService
     from app.services.catastrophes import CatastropheService
+    from app.services.cover_stances import CoverStanceService
     from app.services.land_actions import LandActionService
     from app.services.night_raids import NightRaidResolver
     from app.services.onboarding import OnboardingService
@@ -39,6 +40,7 @@ def compose_services(engine: Engine, db: Database) -> None:
     engine._catastrophes = CatastropheService(engine, db)
     engine._raid_declare = RaidDeclareService(engine, db)
     engine._night_raids = NightRaidResolver(engine, db)
+    engine._cover_stances = CoverStanceService(engine, db)
     engine._pacts = PactService(engine, db)
     engine._world_tick = WorldTickOrchestrator(engine, db)
     engine._realm_tick = RealmTickRunner(engine, db)

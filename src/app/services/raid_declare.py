@@ -39,6 +39,12 @@ class RaidDeclareService:
                     continue
                 if int(f["user_id"]) == atk_uid:
                     continue
+                if (
+                    atk.get("pact_id")
+                    and f.get("pact_id")
+                    and int(atk["pact_id"]) == int(f["pact_id"])
+                ):
+                    continue
                 item = dict(f)
                 item["via_portal"] = int(f["realm_id"]) != atk_realm
                 out.append(item)
@@ -84,6 +90,12 @@ class RaidDeclareService:
             raise ValueError("Нельзя грабить себя")
         if int(atk["user_id"]) == int(vic["user_id"]):
             raise ValueError("Нельзя грабить свою усадьбу")
+        if (
+            atk.get("pact_id")
+            and vic.get("pact_id")
+            and int(atk["pact_id"]) == int(vic["pact_id"])
+        ):
+            raise ValueError("Нельзя нападать на союзника по пакту")
         if atk["hungry"]:
             raise ValueError("Голодные мужики не воюют")
         if atk["might"] < might:
@@ -240,7 +252,7 @@ class RaidDeclareService:
         )
 
     def maybe_lock_raids_at_midpoint(self, world_id: int) -> int:
-        """Scheduler: идемпотентный lock после середины окна play."""
+        """Scheduler: идемпотентный lock набегов и обозов после середины окна play."""
         world = self._engine.ensure_play_opened_at(int(world_id))
         if normalize_tick_phase(world.get("tick_phase")) != TICK_PHASE_PLAY:
             return 0
@@ -249,4 +261,4 @@ class RaidDeclareService:
         local_now = self._engine._world_local_now(world)
         if not raid_lock_due(local_now, self._engine.play_window_bounds_for_world(world)):
             return 0
-        return self._engine.lock_open_raid_intents(int(world_id))
+        return self._engine.lock_open_travel_intents(int(world_id))

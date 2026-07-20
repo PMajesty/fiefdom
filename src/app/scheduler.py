@@ -129,12 +129,12 @@ async def _scheduler_tick(bot: Bot) -> None:
             locked = engine.maybe_lock_raids_at_midpoint(int(world["id"]))
             if locked:
                 logger.info(
-                    "Locked %s open raid intents at midpoint world=%s",
+                    "Locked %s open travel intents at midpoint world=%s",
                     locked,
                     world.get("id"),
                 )
         except Exception:
-            logger.exception("raid midpoint lock failed")
+            logger.exception("travel midpoint lock failed")
         try:
             for item in engine.maybe_due_rumors(int(world["id"]), local_now):
                 text = item.get("text")

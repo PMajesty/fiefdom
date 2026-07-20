@@ -226,6 +226,44 @@ def unprotected_stash(
     }
 
 
+def raid_loot_pool(
+    stash: Mapping[str, int],
+    barn_level: int,
+    *,
+    escrow: Mapping[str, int] | None = None,
+    loot_keys: Sequence[str] | None = None,
+) -> LootBag:
+    """Незащищённый двор + открытый эскроу обозов (эскроу амбар не кроет)."""
+    keys = tuple(loot_keys) if loot_keys is not None else raid_lootable_keys()
+    pool = unprotected_stash(stash, barn_level, loot_keys=keys)
+    if not escrow:
+        return pool
+    return {
+        key: int(pool.get(key, 0) or 0)
+        + max(0, int(escrow.get(key, 0) or 0))
+        for key in keys
+    }
+
+
+def split_loot_prefer_escrow(
+    stolen: Mapping[str, int],
+    escrow: Mapping[str, int],
+    *,
+    loot_keys: Sequence[str] | None = None,
+) -> tuple[LootBag, LootBag]:
+    """Сначала груз у ворот, затем двор. Возвращает (from_escrow, from_stash)."""
+    keys = tuple(loot_keys) if loot_keys is not None else raid_lootable_keys()
+    from_escrow: LootBag = {}
+    from_stash: LootBag = {}
+    for key in keys:
+        want = max(0, int(stolen.get(key, 0) or 0))
+        gate = max(0, int(escrow.get(key, 0) or 0))
+        take_escrow = min(want, gate)
+        from_escrow[key] = take_escrow
+        from_stash[key] = want - take_escrow
+    return from_escrow, from_stash
+
+
 def loot_overkill_factor(ratio: float) -> float:
     """1.0 при сильном перевесе; RAID_LOOT_EDGE_FACTOR у порога успеха."""
     lo = float(B.RAID_SUCCESS_R)
@@ -289,12 +327,16 @@ def standing_raid_defense(
     patrol_active: bool,
     fog_ignores_patrol: bool = False,
     intercept: bool = False,
+    reinforce_might: int = 0,
 ) -> int:
-    """Полная защита усадьбы в формуле набега (сторожка + дружина + дозор + перехват)."""
+    """Полная защита усадьбы (сторожка + дружина + дозор + застава/перехват)."""
     defense = float(watch_defense) + max(0, int(victim_might))
     if patrol_active and not fog_ignores_patrol:
         defense += B.PATROL_DEFENSE_BONUS
-    if intercept:
+    reinforce = max(0, int(reinforce_might))
+    if reinforce > 0:
+        defense += float(reinforce) * float(B.COVER_DEFENSE_PER_MIGHT)
+    elif intercept:
         defense += B.INTERCEPT_DEFENSE
     return int(defense)
 
@@ -312,6 +354,8 @@ def resolve_raid(
     victim_daily: Mapping[str, float],
     fog_ignores_patrol: bool = False,
     victim_might: int = 0,
+    escrow_stash: Mapping[str, int] | None = None,
+    reinforce_might: int = 0,
     rng: Random | None = None,
 ) -> RaidResult:
     defense = standing_raid_defense(
@@ -320,6 +364,7 @@ def resolve_raid(
         patrol_active=patrol_active,
         fog_ignores_patrol=fog_ignores_patrol,
         intercept=intercept,
+        reinforce_might=reinforce_might,
     )
     loot_keys = raid_lootable_keys()
     zero_loot = {key: 0 for key in loot_keys}
@@ -340,7 +385,12 @@ def resolve_raid(
             public_line=f"Набег {attacker_name} на хутор {victim_name} отбит у ворот",
         )
 
-    unprot = unprotected_stash(victim_stash, barn_level, loot_keys=loot_keys)
+    unprot = raid_loot_pool(
+        victim_stash,
+        barn_level,
+        escrow=escrow_stash,
+        loot_keys=loot_keys,
+    )
     stolen = loot_amounts(
         r, unprot, victim_daily, loot_keys=loot_keys, rng=rng
     )

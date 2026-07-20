@@ -88,15 +88,26 @@ class CaravanService:
         realm = self._db.get_realm(int(sender["realm_id"])) or {}
         tick_index = int(realm.get("tick_index") or 0)
         wid = self._engine._world_id_for_realm(int(sender["realm_id"]))
+        world = self._db.get_world(wid) or {}
+        if not self._engine.raid_declare_is_open(world):
+            raise ValueError(
+                "Поздно объявлять обоз: до закрытия заявок осталось меньше половины окна"
+            )
         res_name = resource_name_ru(res)
         receiver_name = self._engine.fief_label(receiver)
         sender_name = self._engine.fief_label(sender)
         is_public = caravan_is_public(amt)
+        lock_text = self._engine._format_raid_deadline(world, midpoint=True)
+        resolve_text = self._engine._format_raid_deadline(world, midpoint=False)
 
         with self._db.transaction():
             self._engine._require_cross_valley_caught_up(
                 int(sender["realm_id"]), int(receiver["realm_id"])
             )
+            if not self._engine.raid_declare_is_open(self._db.get_world(wid) or world):
+                raise ValueError(
+                    "Поздно объявлять обоз: до закрытия заявок осталось меньше половины окна"
+                )
             debited = self._db.debit_fief_resources(
                 from_fief_id, **{res: int(amt)}
             )
@@ -121,7 +132,8 @@ class CaravanService:
 
         dm = (
             f"Обоз ушёл к {receiver_name}: {amt} {res_name} в пути. "
-            f"Доставка после колокола тика. Пока ночь не пришла - можно вернуть."
+            f"Вернуть можно до {lock_text}. "
+            f"Доставка после колокола тика около {resolve_text}."
         )
         recv_dm = (
             f"К вам идёт обоз от {sender_name}: {amt} {res_name}. "
@@ -153,7 +165,7 @@ class CaravanService:
         if int(intent["fief_id"]) != int(fief_id):
             raise ValueError("Это не ваш обоз")
         if intent.get("status") != "open":
-            raise ValueError("После колокола обоз уже не вернуть")
+            raise ValueError("После закрытия заявок обоз уже не вернуть")
         payload = dict(intent.get("payload") or {})
         res = str(payload.get("res") or "")
         amt = int(payload.get("amt") or 0)
@@ -162,7 +174,7 @@ class CaravanService:
         with self._db.transaction():
             claimed = self._db.cancel_action_intent(int(intent_id))
             if not claimed:
-                raise ValueError("После колокола обоз уже не вернуть")
+                raise ValueError("После закрытия заявок обоз уже не вернуть")
             self._db.credit_fief_resources(fief_id, **{res: amt})
         return (
             f"Обоз возвращён: {amt} {resource_name_ru(res)} снова у "

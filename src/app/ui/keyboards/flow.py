@@ -304,14 +304,63 @@ def pact_kb(fief_id: int, in_pact: bool, is_founder: bool) -> InlineKeyboardMark
             )
         rows.append(
             [
-                InlineKeyboardButton(text="Прикрытие вкл", callback_data=f"pct:cov:{fief_id}:1"),
-                InlineKeyboardButton(text="выкл", callback_data=f"pct:cov:{fief_id}:0"),
+                InlineKeyboardButton(
+                    text="Застава",
+                    callback_data=f"pct:zst:{fief_id}",
+                )
             ]
         )
         rows.append(
             [InlineKeyboardButton(text="Выйти из пакта", callback_data=f"pct:leave:{fief_id}")]
         )
     rows.append([InlineKeyboardButton(text="< Меню", callback_data=f"st:{fief_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def cover_stance_kb(fief_id: int) -> InlineKeyboardMarkup:
+    fid = int(fief_id)
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Стоять в стороне",
+                    callback_data=f"pct:zsd:{fid}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Любого союзника",
+                    callback_data=f"pct:zsa:{fid}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Конкретного союзника",
+                    callback_data=f"pct:zss:{fid}",
+                )
+            ],
+            [InlineKeyboardButton(text="< Назад", callback_data=f"pct:{fid}")],
+        ]
+    )
+
+
+def cover_ally_pick_kb(
+    fief_id: int, allies: list[tuple[int, str]]
+) -> InlineKeyboardMarkup:
+    fid = int(fief_id)
+    rows: list[list[InlineKeyboardButton]] = []
+    for ally_id, label in allies:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=label[:40],
+                    callback_data=f"pct:zstt:{fid}:{int(ally_id)}",
+                )
+            ]
+        )
+    rows.append(
+        [InlineKeyboardButton(text="< Назад", callback_data=f"pct:zst:{fid}")]
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

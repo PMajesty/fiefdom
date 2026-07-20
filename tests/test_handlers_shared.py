@@ -352,17 +352,31 @@ def test_prepared_intents_kb_cancel_buttons():
                 "payload": {"receiver_id": 4, "res": "grain", "amt": 10},
             },
         ],
+        [
+            {
+                "id": 31,
+                "status": "open",
+                "payload": {"mode": "any", "budget": 10},
+            },
+            {
+                "id": 32,
+                "status": "locked",
+                "payload": {"mode": "any", "budget": 8},
+            },
+        ],
     )
     engine.raid_intent_target_label.side_effect = lambda intent: {
         11: "Ира",
         12: "Оля",
     }[int(intent["id"])]
     engine.caravan_intent_target_label.return_value = "Кирилл"
+    engine.cover_intent_stance_label.return_value = "Любого союзника"
 
     kb = prepared_intents_kb(engine, 9)
     data = [btn.callback_data for row in kb.inline_keyboard for btn in row]
-    assert data == ["radx:9:11", "cvx:9:21", "home:9"]
+    assert data == ["radx:9:11", "cvx:9:21", "zsx:9:31", "home:9"]
     assert "radx:9:12" not in data
+    assert "zsx:9:32" not in data
 
 
 def test_more_menu_kb_compat_hub_picker():

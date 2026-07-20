@@ -194,6 +194,9 @@ def _engine_pair(*, grain_from=50, goods_from=40, grain_to=5, goods_to=5, barn=0
     engine.require_active_fief = MagicMock(side_effect=get_fief)
     engine._world_id_for_realm = MagicMock(return_value=1)
     engine._require_cross_valley_caught_up = MagicMock()
+    engine.raid_declare_is_open = MagicMock(return_value=True)
+    engine._format_raid_deadline = MagicMock(return_value="-")
+    db.get_world.return_value = {"id": 1, "tick_index": 5}
     engine._fiefs = fiefs
     engine._intents = intents
     return engine, sender, receiver

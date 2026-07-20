@@ -4,6 +4,7 @@ from __future__ import annotations
 from app.repos import PactRepos
 
 from app import balance as B
+from app.domain.cover import COVER_MODE_ANY
 
 
 class PactService:
@@ -17,10 +18,24 @@ class PactService:
     def get_pact_invite(self, invite_id: int) -> dict | None:
         return self._db.get_pact_invite(invite_id)
 
+    def _require_rejoin_cooldown(self, fief: dict) -> None:
+        left_tick = fief.get("pact_left_tick")
+        if left_tick is None:
+            return
+        realm = self._db.get_realm(int(fief["realm_id"])) or {}
+        tick_index = int(realm.get("tick_index") or 0)
+        ready_at = int(left_tick) + int(B.COVER_PACT_REJOIN_COOLDOWN_TICKS)
+        if tick_index < ready_at:
+            raise ValueError(
+                f"После выхода из пакта подождите "
+                f"{B.COVER_PACT_REJOIN_COOLDOWN_TICKS} тик(а)"
+            )
+
     def create_pact(self, fief_id: int, name: str) -> str:
         fief = self._db.get_fief(fief_id)
         if fief.get("pact_id"):
             raise ValueError("Вы уже в пакте")
+        self._require_rejoin_cooldown(fief)
         self._engine._require_action_window(int(fief["realm_id"]))
         name = name.strip()[:40]
         if not name:
@@ -91,6 +106,7 @@ class PactService:
             raise ValueError("Усадьба не найдена")
         if target.get("pact_id"):
             raise ValueError("Вы уже в пакте")
+        self._require_rejoin_cooldown(target)
         pact = self._db.get_pact(invite["pact_id"])
         if not pact:
             raise ValueError("Пакт распущен")
@@ -111,6 +127,7 @@ class PactService:
                 raise ValueError("Усадьба не найдена")
             if not pact:
                 raise ValueError("Пакт распущен")
+            self._require_rejoin_cooldown(target)
             self._engine._require_cross_valley_caught_up(
                 int(target["realm_id"]), int(pact["realm_id"])
             )
@@ -160,11 +177,40 @@ class PactService:
                 for m in self._db.pact_members(pact_id)
                 if int(m["id"]) != int(fief_id)
             ]
+            realm = self._db.get_realm(int(fief["realm_id"])) or {}
+            tick_index = int(realm.get("tick_index") or 0)
             if len(remaining) < B.PACT_SIZE_MIN:
-                self._db.update_fief(fief_id, pact_id=None)
+                # Роспуск: эскроу по payload.pact_id, в т.ч. у уже вышедших.
+                wid = self._engine._world_id_for_realm(int(fief["realm_id"]))
+                self._engine._cover_stances.refund_cover_stances_for_pact(
+                    int(pact_id),
+                    world_id=int(wid),
+                    tick_index=int(tick_index),
+                )
+                for member in remaining:
+                    self._db.update_fief(
+                        int(member["id"]),
+                        pact_left_tick=tick_index,
+                        cover_allies=False,
+                    )
+                self._db.update_fief(
+                    fief_id,
+                    pact_id=None,
+                    pact_left_tick=tick_index,
+                    cover_allies=False,
+                )
                 self._db.dissolve_pact(pact_id)
                 return "Вы вышли. Пакт распущен (меньше 2 участников)."
-            self._db.update_fief(fief_id, pact_id=None)
+            # До lock - вернуть open; locked остаётся обязательством ночи.
+            self._engine._cover_stances.refund_cover_stances_for_fief(
+                int(fief_id), statuses=("open",)
+            )
+            self._db.update_fief(
+                fief_id,
+                pact_id=None,
+                pact_left_tick=tick_index,
+                cover_allies=False,
+            )
             if pact and pact["founder_fief_id"] == fief_id and remaining:
                 self._db.update_pact(
                     pact_id, founder_fief_id=remaining[0]["id"]
@@ -172,5 +218,11 @@ class PactService:
             return "Вы вышли из пакта."
 
     def set_cover(self, fief_id: int, enabled: bool) -> str:
-        self._db.update_fief(fief_id, cover_allies=enabled)
-        return "Прикрытие союзников: " + ("вкл" if enabled else "выкл")
+        """Совместимость: вкл → ANY мин. бюджет; выкл → в стороне (через заставу)."""
+        if not enabled:
+            return self._engine._cover_stances.set_stand_down(fief_id)
+        return self._engine._cover_stances.set_cover_stance(
+            fief_id,
+            mode=COVER_MODE_ANY,
+            budget=int(B.COVER_BUDGET_MIN),
+        )

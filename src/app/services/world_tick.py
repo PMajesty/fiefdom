@@ -81,12 +81,16 @@ class WorldTickOrchestrator:
     def _close_play_day_raids(
         self, world_id: int, tick_index: int, world: dict
     ) -> ResolveNightReport:
-        """Force-lock набегов + ночной resolve (набеги, затем обозы)."""
+        """Force-lock набегов/обозов + ночной resolve (набеги, затем обозы)."""
         if self._engine.world_tick_incomplete(int(world_id)):
             return ResolveNightReport()
         self._enter_tick_resolve(int(world_id), int(tick_index), world)
-        self._engine.lock_open_raid_intents(int(world_id))
+        self._engine.lock_open_travel_intents(int(world_id))
         report = self._engine.resolve_pending_raids(int(world_id), int(tick_index))
+        cover_left = self._engine.resolve_remaining_cover_stances(
+            int(world_id), int(tick_index)
+        )
+        report.notices.extend(cover_left)
         caravan_report = self._engine.resolve_pending_caravans(
             int(world_id), int(tick_index)
         )
