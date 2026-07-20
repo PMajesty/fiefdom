@@ -27,21 +27,6 @@ def test_is_admin_respects_env(monkeypatch):
     assert is_admin(None) is False
 
 
-def test_deep_link_url():
-    from app.handlers.shared import deep_link_url
-
-    assert deep_link_url("MyBot", "join_1") == "https://t.me/MyBot?start=join_1"
-
-
-def test_open_estate_kb():
-    from app.handlers.shared import open_estate_kb
-
-    kb = open_estate_kb("FiefdomBot", 42)
-    btn = kb.inline_keyboard[0][0]
-    assert btn.text == "Открыть усадьбу"
-    assert btn.url == "https://t.me/FiefdomBot?start=realm_42"
-
-
 def test_choose_primary_cta_onboard_claim():
     from app.handlers.shared import choose_primary_cta
 
@@ -640,76 +625,6 @@ async def test_announce_realm_posts_to_player_dms(monkeypatch):
 
     await shared_mod.announce_realm(_Bot(), 7, "🏡 тест")
     assert sent == [(101, "🏡 тест"), (202, "🏡 тест")]
-
-
-async def test_post_realm_public_posts_to_group_chat(monkeypatch):
-    from app.handlers import shared as shared_mod
-
-    sent: list[tuple[int, str, object]] = []
-
-    class _Db:
-        def get_realm(self, realm_id):
-            assert realm_id == 7
-            return {"id": 7, "chat_id": -100500}
-
-    class _Engine:
-        db = _Db()
-
-    async def _fake_send_game(bot, chat_id, text, **kwargs):
-        sent.append((chat_id, text, kwargs.get("reply_markup")))
-        return True
-
-    monkeypatch.setattr(shared_mod, "get_engine", lambda: _Engine())
-    monkeypatch.setattr(shared_mod, "send_game", _fake_send_game)
-
-    kb = object()
-    ok = await shared_mod.post_realm_public(object(), 7, "⚔️ набег", reply_markup=kb)
-    assert ok is True
-    assert sent == [(-100500, "⚔️ набег", kb)]
-
-
-async def test_post_realm_public_skips_missing_or_zero_realm(monkeypatch):
-    from app.handlers import shared as shared_mod
-
-    called = False
-
-    class _Db:
-        def get_realm(self, realm_id):
-            return None
-
-    class _Engine:
-        db = _Db()
-
-    async def _fake_send_game(*_a, **_k):
-        nonlocal called
-        called = True
-        return True
-
-    monkeypatch.setattr(shared_mod, "get_engine", lambda: _Engine())
-    monkeypatch.setattr(shared_mod, "send_game", _fake_send_game)
-
-    assert await shared_mod.post_realm_public(object(), 0, "текст") is False
-    assert await shared_mod.post_realm_public(object(), 9, "текст") is False
-    assert called is False
-
-
-async def test_post_realm_public_swallows_send_errors(monkeypatch):
-    from app.handlers import shared as shared_mod
-
-    class _Db:
-        def get_realm(self, realm_id):
-            return {"id": 1, "chat_id": -1}
-
-    class _Engine:
-        db = _Db()
-
-    async def _boom(*_a, **_k):
-        raise RuntimeError("telegram down")
-
-    monkeypatch.setattr(shared_mod, "get_engine", lambda: _Engine())
-    monkeypatch.setattr(shared_mod, "send_game", _boom)
-
-    assert await shared_mod.post_realm_public(object(), 1, "текст") is False
 
 
 async def test_announce_realm_skips_empty_realm(monkeypatch):

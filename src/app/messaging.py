@@ -229,3 +229,22 @@ async def answer_photo_bytes(
     except Exception as exc:
         logger.error("answer_photo_bytes: send failed: %s", exc)
         return None
+
+
+async def send_game(bot, chat_id: int, text: str, **kwargs: Any) -> bool:
+    """Отправка HTML от движка в чат. True, если сообщение ушло."""
+    if text is None:
+        return False
+    plain = str(text)
+    if not plain:
+        return False
+    kwargs.pop("parse_mode", None)
+    try:
+        await bot.send_message(chat_id, plain, parse_mode=ParseMode.HTML, **kwargs)
+        return True
+    except TelegramBadRequest as exc:
+        logger.warning("send_game: HTML rejected, fallback send_html: %s", exc)
+        return await send_html(bot, chat_id, plain, **kwargs)
+    except Exception as exc:
+        logger.error("send_game failed: %s", exc)
+        return False
