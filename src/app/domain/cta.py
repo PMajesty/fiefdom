@@ -1,7 +1,12 @@
-"""Primary CTA heuristic for the fief home keyboard."""
+"""Primary CTA heuristic and raid/pact unlock gate for the fief home UI."""
 from __future__ import annotations
 
 from app import balance as B
+
+
+def raid_pact_unlocked(*, onboard_step: int, day_number: int) -> bool:
+    """Набег/Пакт в UI: квесты закрыты (onboard_step >= 4) и день долины >= RAID_PACT_UNLOCK_DAY."""
+    return int(onboard_step) >= 4 and int(day_number) >= int(B.RAID_PACT_UNLOCK_DAY)
 
 
 def choose_primary_cta(
@@ -28,8 +33,8 @@ def choose_primary_cta(
     goods = int(goods)
     might = int(might)
     day_number = int(day_number)
-    unlocked = (
-        onboard_step >= 4 and day_number >= int(B.RAID_PACT_UNLOCK_DAY)
+    unlocked = raid_pact_unlocked(
+        onboard_step=onboard_step, day_number=day_number
     )
 
     if next_claim_cost is None and tile_count < B.TILE_HARD_CAP:

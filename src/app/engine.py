@@ -45,6 +45,7 @@ from app.domain.caravans import (
     DeclareCaravanResult,
     ResolveCaravanReport,
 )
+from app.domain.cta import raid_pact_unlocked
 from app.domain.raids import (
     DeclareRaidResult,
     RaidNightPartyNotice,
@@ -200,10 +201,6 @@ def onboard_patience_hint(
             f"Пока копите товары или зайдите на рынок: стройка от {build_s}."
         )
     return None
-
-def raid_pact_unlocked(*, onboard_step: int, day_number: int) -> bool:
-    """Набег/Пакт в UI: квесты закрыты (onboard_step >= 4) и день долины >= RAID_PACT_UNLOCK_DAY."""
-    return int(onboard_step) >= 4 and int(day_number) >= int(B.RAID_PACT_UNLOCK_DAY)
 
 
 def raid_pact_lock_hint(*, onboard_step: int, day_number: int) -> str | None:
