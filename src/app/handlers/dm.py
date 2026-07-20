@@ -7,10 +7,9 @@ import re
 from aiogram import F, Router
 from aiogram.enums import ChatType
 from aiogram.filters import Command, CommandObject, CommandStart
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import InlineKeyboardMarkup, Message
 
 from app import balance as B
-from app.domain.map_gen import coord_label
 from app.domain.economy import adjacent_claimable
 from app.engine import raid_pact_lock_message
 from app.handlers.shared import (
@@ -29,6 +28,29 @@ from app.handlers.shared import (
     resolve_fief_for_user,
 )
 from app.messaging import answer_html
+from app.ui.keyboards import (
+    building_types_kb,
+    build_tiles_kb,
+    caravan_cancel_intent_kb,
+    claimable_kb,
+    demolish_tiles_kb,
+    format_build_cost_label,
+    format_build_tile_button,
+    format_building_type_label,
+    format_claim_button,
+    gather_resources_kb,
+    pact_invite_kb,
+    pact_kb,
+    patrol_confirm_callback,
+    patrol_confirm_kb,
+    pending_cancel_callback,
+    pending_cancel_kb,
+    raid_cancel_intent_kb,
+    raid_confirm_kb,
+    raid_targets_kb as raid_targets_kb_plain,
+    realm_picker_kb as realm_picker_kb_plain,
+    starter_tiles_kb,
+)
 from app.ui.pending import pending_store
 
 logger = logging.getLogger(__name__)
@@ -125,93 +147,6 @@ async def _notify_raid_parties(bot, result) -> None:
             logger.warning("raid DM failed chat_id=%s", chat_id, exc_info=True)
 
 
-def format_claim_button(
-    x: int,
-    y: int,
-    tile_type: str,
-    next_tile_count: int,
-    *,
-    is_overgrown: bool = False,
-) -> str:
-    """Подпись кнопки занятия: \"А3 Поле · 30 тов.\" (глушь ×2, кроме заросших)."""
-    name = B.TILE_NAMES_RU.get(tile_type, tile_type)
-    is_wilds = (not is_overgrown) and tile_type == B.TILE_WILDS
-    cost = B.claim_cost(next_tile_count, is_wilds=is_wilds)
-    return f"{coord_label(x, y)} {name} · {cost} тов."
-
-
-def format_building_type_label(
-    building: str,
-    tiles: list[dict] | None = None,
-    *,
-    cost_mult: float = 1.0,
-) -> str:
-    """Подпись типа здания с минимальной реальной ценой по клеткам усадьбы."""
-    name = B.BUILDING_NAMES_RU.get(building, building)
-    if tiles is None:
-        cost = B.scaled_building_cost(B.building_upgrade_cost(building, 1), cost_mult)
-        return f"{name} · {cost} тов."
-    cost = B.cheapest_build_action_cost(building, tiles, cost_mult=cost_mult)
-    if cost is not None:
-        return f"{name} · {cost} тов."
-    has_maxed = any(
-        t.get("building") == building
-        and int(t.get("building_level") or 0) >= 3
-        and not t.get("damaged")
-        for t in tiles
-    )
-    if has_maxed:
-        return f"{name} · макс."
-    return name
-
-
-def format_build_cost_label(
-    building: str,
-    tile: dict,
-    *,
-    cost_mult: float = 1.0,
-) -> str:
-    """Стоимость постройки/апгрейда/ремонта на клетке."""
-    current = tile.get("building")
-    level = int(tile.get("building_level") or 0)
-    damaged = bool(tile.get("damaged"))
-    if damaged and current:
-        return f"{B.repair_cost(current, level)} тов."
-    if current and current != building:
-        return "занято"
-    if not current:
-        cost = B.scaled_building_cost(B.building_upgrade_cost(building, 1), cost_mult)
-        return f"{cost} тов."
-    target = level + 1
-    if target > 3:
-        return "макс."
-    cost = B.scaled_building_cost(B.building_upgrade_cost(building, target), cost_mult)
-    return f"{cost} тов."
-
-
-def format_build_tile_button(
-    building: str,
-    tile: dict,
-    *,
-    cost_mult: float = 1.0,
-) -> str:
-    """Подпись клетки при выборе места стройки."""
-    coord = coord_label(tile["x"], tile["y"])
-    cost_label = format_build_cost_label(building, tile, cost_mult=cost_mult)
-    current = tile.get("building")
-    level = int(tile.get("building_level") or 0)
-    damaged = bool(tile.get("damaged"))
-    if damaged and current:
-        bname = B.BUILDING_NAMES_RU.get(current, current)
-        return f"{coord} ремонт {bname}{level} · {cost_label}"
-    if current and current != building:
-        bname = B.BUILDING_NAMES_RU.get(current, current)
-        return f"{coord} {bname}{level} · {cost_label}"
-    if current:
-        return f"{coord} →{level + 1} · {cost_label}"
-    return f"{coord} · {cost_label}"
-
-
 def patrol_confirm_text() -> str:
     cost = int(B.PATROL_COST_MIGHT)
     cost_bit = f"−{cost} силы, " if cost > 0 else ""
@@ -221,340 +156,41 @@ def patrol_confirm_text() -> str:
     )
 
 
-def patrol_confirm_callback(fief_id: int) -> str:
-    return f"pat:{int(fief_id)}:ok"
-
-
 def patrol_prompt_callback(fief_id: int) -> str:
     return f"pat:{int(fief_id)}"
 
 
-def pending_cancel_callback(fief_id: int) -> str:
-    return f"pend:cancel:{int(fief_id)}"
-
-
-async def show_status(message: Message, fief_id: int) -> None:
-    engine = get_engine()
-    text = engine.status_card(fief_id)
-    await reply_game(message, text, reply_markup=fief_home_kb(engine, fief_id))
-
-
-def pending_cancel_kb(fief_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="Отмена",
-                    callback_data=pending_cancel_callback(fief_id),
-                )
-            ]
-        ]
-    )
-
-
-def patrol_confirm_kb(fief_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="Подтвердить",
-                    callback_data=patrol_confirm_callback(fief_id),
-                ),
-                InlineKeyboardButton(
-                    text="Отмена",
-                    callback_data=f"st:{int(fief_id)}",
-                ),
-            ]
-        ]
-    )
-
-
-def raid_confirm_kb(
-    fief_id: int, *, show_truce: bool = False, open_truce: bool = False
-) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = [
-        [
-            InlineKeyboardButton(
-                text="Подтвердить",
-                callback_data=f"radok:{int(fief_id)}",
-            ),
-            InlineKeyboardButton(
-                text="Отмена",
-                callback_data=pending_cancel_callback(fief_id),
-            ),
-        ]
-    ]
-    if show_truce:
-        label = (
-            "Перемирие: вкл"
-            if open_truce
-            else "Перемирие: выкл"
-        )
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=label,
-                    callback_data=f"radtruce:{int(fief_id)}",
-                )
-            ]
-        )
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def raid_cancel_intent_kb(fief_id: int, intent_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="Снять заявку",
-                    callback_data=f"radx:{int(fief_id)}:{int(intent_id)}",
-                )
-            ]
-        ]
-    )
-
-
-def caravan_cancel_intent_kb(fief_id: int, intent_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="Вернуть обоз",
-                    callback_data=f"cvx:{int(fief_id)}:{int(intent_id)}",
-                )
-            ]
-        ]
-    )
-
-
-def starter_tiles_kb(
-    realm_id: int,
-    tiles: list[dict],
-) -> InlineKeyboardMarkup:
-    rows = []
-    for t in tiles:
-        label = (
-            f"{coord_label(t['x'], t['y'])} - "
-            f"{B.TILE_NAMES_RU.get(t['tile_type'], t['tile_type'])}"
-        )
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=label,
-                    callback_data=f"pick:{realm_id}:{t['id']}",
-                )
-            ]
-        )
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
 def realm_picker_kb(fiefs: list[dict], engine) -> InlineKeyboardMarkup:
-    rows = []
+    """Адаптер: подписи усадеб через Engine, разметка в ui.keyboards."""
+    entries: list[tuple[int, str]] = []
     for f in fiefs:
         realm = engine.get_realm(f["realm_id"])
         title = realm["title"] if realm else f"#{f['realm_id']}"
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"{engine.fief_label(f)} ({title})",
-                    callback_data=f"st:{f['id']}",
-                )
-            ]
-        )
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+        entries.append((int(f["id"]), f"{engine.fief_label(f)} ({title})"))
+    return realm_picker_kb_plain(entries)
 
 
-def claimable_kb(
-    fief_id: int,
-    coords: list[tuple[int, int]],
-    *,
-    next_tile_count: int,
-    tile_meta: dict[tuple[int, int], tuple[str, bool]],
+def raid_targets_kb(
+    fief_id: int, others: list[dict], engine=None
 ) -> InlineKeyboardMarkup:
-    """tile_meta: (x,y) → (tile_type, is_overgrown)."""
-    rows = []
-    row: list[InlineKeyboardButton] = []
-    for x, y in coords[:24]:
-        tile_type, is_overgrown = tile_meta.get((x, y), (B.TILE_FIELD, False))
-        row.append(
-            InlineKeyboardButton(
-                text=format_claim_button(
-                    x, y, tile_type, next_tile_count, is_overgrown=is_overgrown
-                ),
-                callback_data=f"clm:{fief_id}:{x}:{y}",
-            )
-        )
-        if len(row) >= 2:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
-    rows.append([InlineKeyboardButton(text="< Меню", callback_data=f"st:{fief_id}")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def building_types_kb(
-    fief_id: int,
-    tiles: list[dict] | None = None,
-    *,
-    cost_mult: float = 1.0,
-) -> InlineKeyboardMarkup:
-    rows = []
-    for key in B.PLAYER_BUILDINGS:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=format_building_type_label(key, tiles, cost_mult=cost_mult),
-                    callback_data=f"bld:{fief_id}:{key}",
-                )
-            ]
-        )
-    rows.append([InlineKeyboardButton(text="< Меню", callback_data=f"st:{fief_id}")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def gather_resources_kb(fief_id: int) -> InlineKeyboardMarkup:
-    from app.domain.resources import resource_defs
-
-    fid = int(fief_id)
-    rows: list[list[InlineKeyboardButton]] = []
-    for rdef in resource_defs():
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"{rdef.name_ru} +{B.gather_amount(rdef.key)}",
-                    callback_data=f"gth:{fid}:{rdef.key}",
-                )
-            ]
-        )
-    rows.append([InlineKeyboardButton(text="< Меню", callback_data=f"st:{fid}")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def demolish_tiles_kb(fief_id: int, tiles: list[dict]) -> InlineKeyboardMarkup:
-    rows: list[list[InlineKeyboardButton]] = []
-    row: list[InlineKeyboardButton] = []
-    for t in tiles[:24]:
-        building = t.get("building")
-        level = int(t.get("building_level") or 0)
-        if not building or level <= 0:
-            continue
-        if building == B.BLD_MANOR or t.get("is_core"):
-            continue
-        name = B.BUILDING_NAMES_RU.get(building, building)
-        refund = B.demolish_refund_goods(str(building), level)
-        label = f"{coord_label(t['x'], t['y'])} {name}{level} · +{refund}"
-        row.append(
-            InlineKeyboardButton(
-                text=label,
-                callback_data=f"dml:{fief_id}:{t['x']}:{t['y']}",
-            )
-        )
-        if len(row) >= 2:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
-    if not rows:
-        rows.append(
-            [InlineKeyboardButton(text="Нечего сносить", callback_data=f"st:{fief_id}")]
-        )
-    rows.append([InlineKeyboardButton(text="< Меню", callback_data=f"st:{fief_id}")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def build_tiles_kb(
-    fief_id: int,
-    building: str,
-    tiles: list[dict],
-    *,
-    cost_mult: float = 1.0,
-) -> InlineKeyboardMarkup:
-    rows = []
-    row: list[InlineKeyboardButton] = []
-    for t in tiles[:24]:
-        row.append(
-            InlineKeyboardButton(
-                text=format_build_tile_button(building, t, cost_mult=cost_mult),
-                callback_data=f"bld:{fief_id}:{building}:{t['x']}:{t['y']}",
-            )
-        )
-        if len(row) >= 2:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
-    rows.append([InlineKeyboardButton(text="< Назад", callback_data=f"bld:{fief_id}")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def raid_targets_kb(fief_id: int, others: list[dict], engine=None) -> InlineKeyboardMarkup:
-    from app.domain.rumors import might_soft_label
-
-    rows = []
+    """Адаптер: подписи целей через Engine (или name), разметка в ui.keyboards."""
+    targets: list[dict] = []
     for o in others[:20]:
         label = engine.fief_label(o) if engine is not None else o["name"]
         if o.get("via_portal") and engine is not None:
             realm = engine.get_realm(o["realm_id"]) or {}
             title = str(realm.get("title") or "долина")[:12]
             label = f"{title}: {label}"
-        soft = might_soft_label(int(o.get("might") or 0))
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"{label} · {soft}",
-                    callback_data=f"rad:{fief_id}:{o['id']}",
-                )
-            ]
+        targets.append(
+            {"id": o["id"], "label": label, "might": o.get("might") or 0}
         )
-    rows.append([InlineKeyboardButton(text="< Меню", callback_data=f"st:{fief_id}")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    return raid_targets_kb_plain(fief_id, targets)
 
 
-def pact_kb(fief_id: int, in_pact: bool, is_founder: bool) -> InlineKeyboardMarkup:
-    rows = []
-    if not in_pact:
-        rows.append(
-            [InlineKeyboardButton(text="Создать пакт", callback_data=f"pct:new:{fief_id}")]
-        )
-    else:
-        if is_founder:
-            rows.append(
-                [
-                    InlineKeyboardButton(
-                        text="Пригласить",
-                        callback_data=f"pct:inv:{fief_id}",
-                    )
-                ]
-            )
-        rows.append(
-            [
-                InlineKeyboardButton(text="Прикрытие вкл", callback_data=f"pct:cov:{fief_id}:1"),
-                InlineKeyboardButton(text="выкл", callback_data=f"pct:cov:{fief_id}:0"),
-            ]
-        )
-        rows.append(
-            [InlineKeyboardButton(text="Выйти из пакта", callback_data=f"pct:leave:{fief_id}")]
-        )
-    rows.append([InlineKeyboardButton(text="< Меню", callback_data=f"st:{fief_id}")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def pact_invite_kb(target_fief_id: int, invite_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="Принять",
-                    callback_data=f"pct:acc:{target_fief_id}:{invite_id}",
-                ),
-                InlineKeyboardButton(
-                    text="Отклонить",
-                    callback_data=f"pct:dec:{target_fief_id}:{invite_id}",
-                ),
-            ]
-        ]
-    )
+async def show_status(message: Message, fief_id: int) -> None:
+    engine = get_engine()
+    text = engine.status_card(fief_id)
+    await reply_game(message, text, reply_markup=fief_home_kb(engine, fief_id))
 
 
 @router.message(CommandStart())

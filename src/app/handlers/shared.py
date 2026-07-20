@@ -7,16 +7,17 @@ from typing import Any
 
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import InlineKeyboardMarkup, Message
 
 from app import balance as B
 from app.config import ADMIN_USER_ID
+from app.domain.cta import choose_primary_cta
+from app.domain.map_image import MapPhoto
 from app.engine import (
     Engine,
     raid_pact_lock_hint,
     raid_pact_unlocked,
 )
-from app.domain.map_image import MapPhoto
 from app.messaging import (
     answer_html,
     answer_photo_bytes,
@@ -32,6 +33,16 @@ from app.notifier import (
     post_continent_public,
     post_digest,
     post_realm_public,
+)
+from app.ui.keyboards import (
+    estate_hub_kb,
+    home_kb,
+    main_menu_kb,
+    map_realms_kb,
+    map_view_kb,
+    more_menu_kb,
+    prepared_intents_kb as prepared_intents_kb_plain,
+    valley_hub_kb,
 )
 from app.wiring import get_engine
 
@@ -138,369 +149,26 @@ def format_pact_leave_announce(
     )
 
 
-def map_realms_kb(
-    fief_id: int,
-    realms: list[dict],
-    *,
-    home_realm_id: int | None = None,
-) -> InlineKeyboardMarkup:
-    """Выбор долины для просмотра карты."""
-    rows = []
-    for r in realms:
-        title = str(r.get("title") or f"#{r['id']}")[:28]
-        suffix = " · ваша" if home_realm_id and int(r["id"]) == int(home_realm_id) else ""
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"{title}{suffix}",
-                    callback_data=f"mapr:{int(fief_id)}:{int(r['id'])}",
-                )
-            ]
-        )
-    rows.append(
-        [InlineKeyboardButton(text="< Меню", callback_data=f"st:{int(fief_id)}")]
-    )
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def map_view_kb(fief_id: int) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="Другие долины",
-                    callback_data=f"map:{int(fief_id)}",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="< Меню",
-                    callback_data=f"st:{int(fief_id)}",
-                )
-            ],
-        ]
-    )
-
-
-def choose_primary_cta(
-    fief_id: int,
-    *,
-    actions: int,
-    onboard_step: int,
-    tile_count: int = 2,
-    goods: int = 0,
-    might: int = 0,
-    day_number: int = B.RAID_PACT_UNLOCK_DAY,
-    min_build_cost: int | None = None,
-    next_claim_cost: int | None = None,
-) -> tuple[str, str]:
-    """Эвристика \"что делать сейчас\": (подпись кнопки, callback_data).
-
-    Набег в primary CTA только после unlock (квесты + день долины).
-    Не предлагает стройку/клейм, если товаров заведомо не хватает.
-    """
-    fid = int(fief_id)
-    actions = int(actions)
-    onboard_step = int(onboard_step)
-    tile_count = int(tile_count)
-    goods = int(goods)
-    might = int(might)
-    day_number = int(day_number)
-    unlocked = raid_pact_unlocked(onboard_step=onboard_step, day_number=day_number)
-
-    if next_claim_cost is None and tile_count < B.TILE_HARD_CAP:
-        try:
-            next_claim_cost = B.claim_cost(tile_count + 1)
-        except ValueError:
-            next_claim_cost = None
-
-    can_claim = (
-        actions > 0
-        and next_claim_cost is not None
-        and goods >= int(next_claim_cost)
-    )
-    if min_build_cost is not None:
-        can_build = actions > 0 and goods >= int(min_build_cost)
-    else:
-        can_build = actions > 0 and goods >= 20
-
-    if actions > 0 and onboard_step == 2:
-        if can_claim:
-            return "Квест: занять землю", f"clm:{fid}"
-        return "Караван", f"snd:{fid}"
-    if actions > 0 and onboard_step == 3:
-        if can_build:
-            return "Квест: строить", f"bld:{fid}"
-        return "Караван", f"snd:{fid}"
-    if actions > 0:
-        if tile_count < 3:
-            return "Занять землю", f"clm:{fid}"
-        if can_build:
-            return "Строить", f"bld:{fid}"
-        if unlocked and might >= 5:
-            return "Набег", f"rad:{fid}"
-        return "Занять землю", f"clm:{fid}"
-    return "Караван", f"snd:{fid}"
-
-
-def home_kb(
-    fief_id: int,
-    primary_label: str,
-    primary_callback: str,
-    *,
-    prepared_count: int = 0,
-) -> InlineKeyboardMarkup:
-    """Дом: primary CTA + два хаба (Усадьба / Долина) + карта и устав."""
-    fid = int(fief_id)
-    rows: list[list[InlineKeyboardButton]] = [
-        [InlineKeyboardButton(text=primary_label, callback_data=primary_callback)],
-        [
-            InlineKeyboardButton(
-                text="Усадьба (дела)",
-                callback_data=f"hub:e:{fid}",
-            ),
-            InlineKeyboardButton(
-                text="Долина (связи)",
-                callback_data=f"hub:v:{fid}",
-            ),
-        ],
-    ]
-    if int(prepared_count) > 0:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"Заявки ({int(prepared_count)})",
-                    callback_data=f"prep:{fid}",
-                )
-            ]
-        )
-    rows.append(
-        [
-            InlineKeyboardButton(text="Карта (мир)", callback_data=f"map:{fid}"),
-            InlineKeyboardButton(
-                text="Устав (правила)",
-                callback_data=f"gd:{fid}",
-            ),
-        ]
-    )
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def _short_button_label(text: str, max_len: int = 28) -> str:
-    plain = str(text or "").strip() or "?"
-    if len(plain) <= max_len:
-        return plain
-    return plain[: max_len - 1] + "..."
-
-
 def prepared_intents_kb(engine: Engine, fief_id: int) -> InlineKeyboardMarkup:
-    """Кнопки снятия открытых заявок + назад в меню."""
+    """Кнопки снятия открытых заявок + назад в меню (снимок через Engine)."""
     fid = int(fief_id)
     raids, caravans = engine.list_prepared_intents(fid)
-    rows: list[list[InlineKeyboardButton]] = []
+    raid_cancels: list[tuple[int, str]] = []
     for intent in raids:
         if intent.get("status") != "open":
             continue
-        target = _short_button_label(engine.raid_intent_target_label(intent))
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"Снять набег: {target}",
-                    callback_data=f"radx:{fid}:{int(intent['id'])}",
-                )
-            ]
+        raid_cancels.append(
+            (int(intent["id"]), engine.raid_intent_target_label(intent))
         )
-    for intent in caravans:
-        target = _short_button_label(engine.caravan_intent_target_label(intent))
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"Вернуть обоз: {target}",
-                    callback_data=f"cvx:{fid}:{int(intent['id'])}",
-                )
-            ]
-        )
-    rows.append(
-        [InlineKeyboardButton(text="< Меню", callback_data=f"home:{fid}")]
-    )
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def _raid_pact_hub_buttons(
-    fief_id: int,
-    *,
-    raid_pact_open: bool,
-    lock_hint: str | None,
-    raid_hint: str,
-    pact_hint: str,
-) -> tuple[InlineKeyboardButton, InlineKeyboardButton]:
-    """Кнопки Набег/Пакт: при замке - только хвост lock (без скобок, чтобы влезло)."""
-    fid = int(fief_id)
-    if raid_pact_open:
-        return (
-            InlineKeyboardButton(
-                text=f"Набег ({raid_hint})",
-                callback_data=f"rad:{fid}",
-            ),
-            InlineKeyboardButton(
-                text=f"Пакт ({pact_hint})",
-                callback_data=f"pct:{fid}",
-            ),
-        )
-    suffix = lock_hint or "закрыто"
-    return (
-        InlineKeyboardButton(
-            text=f"Набег - {suffix}",
-            callback_data=f"lock:rad:{fid}",
-        ),
-        InlineKeyboardButton(
-            text=f"Пакт - {suffix}",
-            callback_data=f"lock:pct:{fid}",
-        ),
-    )
-
-
-def estate_hub_kb(
-    fief_id: int,
-    *,
-    raid_pact_open: bool = True,
-    lock_hint: str | None = None,
-) -> InlineKeyboardMarkup:
-    """Хабы Усадьба: действия за 1 действие (земля, стройка, сбор, дозор, снос, набег)."""
-    fid = int(fief_id)
-    raid_btn, _pact = _raid_pact_hub_buttons(
+    caravan_cancels = [
+        (int(intent["id"]), engine.caravan_intent_target_label(intent))
+        for intent in caravans
+    ]
+    return prepared_intents_kb_plain(
         fid,
-        raid_pact_open=raid_pact_open,
-        lock_hint=lock_hint,
-        raid_hint="атака",
-        pact_hint="союз",
+        raid_cancels=raid_cancels,
+        caravan_cancels=caravan_cancels,
     )
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="Владения (обзор)",
-                    callback_data=f"hld:{fid}",
-                ),
-            ],
-            [
-                InlineKeyboardButton(text="Земля (клетка)", callback_data=f"clm:{fid}"),
-                InlineKeyboardButton(
-                    text="Строить (здание)",
-                    callback_data=f"bld:{fid}",
-                ),
-            ],
-            [
-                InlineKeyboardButton(text="Сбор (добыча)", callback_data=f"gth:{fid}"),
-                InlineKeyboardButton(text="Дозор (защита)", callback_data=f"pat:{fid}"),
-            ],
-            [
-                InlineKeyboardButton(text="Снос (вернуть)", callback_data=f"dml:{fid}"),
-                raid_btn,
-            ],
-            [
-                InlineKeyboardButton(
-                    text="Заявки (набеги/обозы)",
-                    callback_data=f"prep:{fid}",
-                )
-            ],
-            [InlineKeyboardButton(text="< Меню", callback_data=f"home:{fid}")],
-        ]
-    )
-
-
-def valley_hub_kb(
-    fief_id: int,
-    *,
-    raid_pact_open: bool = True,
-    lock_hint: str | None = None,
-) -> InlineKeyboardMarkup:
-    """Хабы Долина: бесплатные связи (караван, пакт, слухи, заявки)."""
-    fid = int(fief_id)
-    _raid, pact_btn = _raid_pact_hub_buttons(
-        fid,
-        raid_pact_open=raid_pact_open,
-        lock_hint=lock_hint,
-        raid_hint="атака",
-        pact_hint="союз",
-    )
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="Караван (передача)", callback_data=f"snd:{fid}"
-                ),
-                pact_btn,
-            ],
-            [
-                InlineKeyboardButton(text="Слухи", callback_data=f"rum:{fid}"),
-                InlineKeyboardButton(
-                    text="Заявки",
-                    callback_data=f"prep:{fid}",
-                ),
-            ],
-            [InlineKeyboardButton(text="< Меню", callback_data=f"home:{fid}")],
-        ]
-    )
-
-
-def more_menu_kb(
-    fief_id: int,
-    *,
-    raid_pact_open: bool = True,
-    lock_hint: str | None = None,
-) -> InlineKeyboardMarkup:
-    """Совместимость: старый flat \"Ещё\" свёрнут в выбор хаба.
-
-    Живой callback more: обновляет дом целиком (см. cb_more).
-    """
-    _ = (raid_pact_open, lock_hint)
-    fid = int(fief_id)
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="Усадьба (дела)",
-                    callback_data=f"hub:e:{fid}",
-                ),
-                InlineKeyboardButton(
-                    text="Долина (связи)",
-                    callback_data=f"hub:v:{fid}",
-                ),
-            ],
-            [InlineKeyboardButton(text="< Меню", callback_data=f"home:{fid}")],
-        ]
-    )
-
-
-def main_menu_kb(
-    fief_id: int,
-    fief: dict | None = None,
-    tile_count: int = 2,
-    *,
-    day_number: int = B.RAID_PACT_UNLOCK_DAY,
-    min_build_cost: int | None = None,
-    next_claim_cost: int | None = None,
-    prepared_count: int = 0,
-) -> InlineKeyboardMarkup:
-    """Домашняя клавиатура усадьбы (status-first). Без снимка fief - безопасный CTA."""
-    fid = int(fief_id)
-    if fief is None:
-        return home_kb(
-            fid, "Обновить статус", f"st:{fid}", prepared_count=prepared_count
-        )
-    label, cb = choose_primary_cta(
-        fid,
-        actions=int(fief.get("actions") or 0),
-        onboard_step=int(fief.get("onboard_step") or 0),
-        tile_count=tile_count,
-        goods=int(fief.get("goods") or 0),
-        might=int(fief.get("might") or 0),
-        day_number=day_number,
-        min_build_cost=min_build_cost,
-        next_claim_cost=next_claim_cost,
-    )
-    return home_kb(fid, label, cb, prepared_count=prepared_count)
 
 
 def fief_home_kb(engine: Engine, fief_id: int) -> InlineKeyboardMarkup:
