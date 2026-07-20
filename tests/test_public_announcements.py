@@ -16,14 +16,14 @@ from app.handlers.dm import _handle_pending
 async def test_raid_might_prompts_confirm_without_instant_group():
     """Ввод силы не резолвит бой и не постит исход в группу."""
     engine = MagicMock()
-    engine.db.get_fief.side_effect = lambda fid: {
+    engine.fief_by_id.side_effect = lambda fid: {
         1: {"id": 1, "realm_id": 1, "might": 40, "pact_id": None},
         2: {"id": 2, "realm_id": 1, "name": "Бета"},
     }.get(fid)
     engine.fief_label = MagicMock(return_value="Бета")
-    engine._world_id_for_realm = MagicMock(return_value=1)
-    engine.db.get_world.return_value = {"id": 1}
-    engine._format_raid_deadline = MagicMock(return_value="17.07 12:00")
+    engine.world_id_for_realm = MagicMock(return_value=1)
+    engine.world.return_value = {"id": 1}
+    engine.format_raid_deadline = MagicMock(return_value="17.07 12:00")
 
     bot = MagicMock()
     message = MagicMock()

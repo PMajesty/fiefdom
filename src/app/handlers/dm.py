@@ -918,7 +918,7 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
         might = int(text.strip())
         fief_id = int(pending["fief_id"])
         victim_id = int(pending["victim_id"])
-        fief = engine.db.get_fief(fief_id) or {}
+        fief = engine.fief_by_id(fief_id) or {}
         men_home = max(0, int(fief.get("might") or 0) - might)
         set_pending(
             user_id,
@@ -930,11 +930,13 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
                 "open_truce": False,
             },
         )
-        vic = engine.db.get_fief(victim_id)
+        vic = engine.fief_by_id(victim_id)
         vic_name = engine.fief_label(vic) if vic else str(victim_id)
-        world = engine.db.get_world(engine._world_id_for_realm(int(fief["realm_id"])))
-        lock_text = engine._format_raid_deadline(world or {}, midpoint=True)
-        resolve_text = engine._format_raid_deadline(world or {}, midpoint=False)
+        world = engine.world(
+            engine.world_id_for_realm(int(fief["realm_id"]))
+        )
+        lock_text = engine.format_raid_deadline(world or {}, midpoint=True)
+        resolve_text = engine.format_raid_deadline(world or {}, midpoint=False)
         truce_note = ""
         if not fief.get("pact_id"):
             truce_note = (
