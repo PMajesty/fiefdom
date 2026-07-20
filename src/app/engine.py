@@ -25,7 +25,6 @@ from app.domain.holdings import format_holdings
 from app.domain.map_image import (
     MapImageCache,
     MapPhoto,
-    build_map_caption,
     map_fingerprint,
     render_map_image,
 )
@@ -106,6 +105,7 @@ from app.presenters.intents import (
     render_prepared_intent_status_lines,
     render_prepared_intents_card,
 )
+from app.presenters.map import compose_map_photo, render_map_text
 from app.presenters.status import StatusSnapshot, render_status_card
 from app.services.night_raids import NightRaidResolver
 from app.domain.tick_pipeline import (
@@ -853,10 +853,12 @@ class Engine:
             highlight_fief_id=highlight_fief_id,
             claimable=claimable,
         )
-        text = f"🗺️ {realm['title']} (день {realm['day_number']})\n<pre>{grid}</pre>"
-        if footer:
-            text += f"\n\n{footer}"
-        return text
+        return render_map_text(
+            title=str(realm["title"]),
+            day_number=int(realm["day_number"]),
+            grid=grid,
+            footer=footer,
+        )
 
     def map_photo(self, realm_id: int, highlight_fief_id: int | None = None) -> MapPhoto:
         realm, views, legend, claimable = self._map_view_context(
@@ -882,19 +884,15 @@ class Engine:
             claimable=claimable,
             entity_rows=fp_entities or None,
         )
-        caption, caption_extra = build_map_caption(
-            title=str(realm["title"]),
-            day_number=int(realm["day_number"]),
-            footer=footer,
-        )
         cached = self._map_image_cache.get(fingerprint)
         if cached is not None:
-            return MapPhoto(
+            return compose_map_photo(
                 png_bytes=cached.png_bytes,
-                caption=caption,
+                title=str(realm["title"]),
+                day_number=int(realm["day_number"]),
+                footer=footer,
                 fingerprint=fingerprint,
                 file_id=cached.file_id,
-                caption_extra=caption_extra,
             )
         png_bytes = render_map_image(
             int(realm["width"]),
@@ -905,12 +903,13 @@ class Engine:
             entity_marks=mark_entities or None,
         )
         self._map_image_cache.put_png(fingerprint, png_bytes)
-        return MapPhoto(
+        return compose_map_photo(
             png_bytes=png_bytes,
-            caption=caption,
+            title=str(realm["title"]),
+            day_number=int(realm["day_number"]),
+            footer=footer,
             fingerprint=fingerprint,
             file_id=None,
-            caption_extra=caption_extra,
         )
 
     def remember_map_file_id(self, fingerprint: str, file_id: str) -> None:
