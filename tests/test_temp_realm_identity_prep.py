@@ -282,6 +282,9 @@ async def test_cmd_start_realm_foreign_redirect_sets_owned_last_realm():
     ):
         await dm_mod.cmd_start(message, command)
 
+    engine.get_realm.assert_called_once_with(2)
+    engine.fief_of_user_in_realm.assert_called_once_with(100, 2)
+    engine.fief_of_user_in_world.assert_called_once_with(100, 1)
     engine.remember_last_realm.assert_called_once_with(100, 1)
     answer.assert_awaited_once()
     assert "уже есть усадьба" in answer.await_args.args[1]
@@ -310,5 +313,7 @@ async def test_cmd_start_realm_owned_sets_last_realm_after_check():
     ):
         await dm_mod.cmd_start(message, command)
 
+    engine.get_realm.assert_called_once_with(1)
+    engine.fief_of_user_in_realm.assert_called_once_with(100, 1)
     engine.remember_last_realm.assert_called_once_with(100, 1)
     status.assert_awaited_once_with(message, 7)
