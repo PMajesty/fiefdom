@@ -1175,8 +1175,8 @@ class Engine:
     def _foreign_rumor_snapshots(self, realm_id: int) -> list[FiefRumorSnapshot]:
         return self._rumors._foreign_rumor_snapshots(realm_id)
 
-    def _roll_rumor_line_for_realm(self, realm_id: int) -> str | None:
-        return self._rumors._roll_rumor_line_for_realm(realm_id)
+    def _roll_rumor_wave_for_realm(self, realm_id: int) -> list[str]:
+        return self._rumors._roll_rumor_wave_for_realm(realm_id)
 
     def _upcoming_event_hints(self, realm_id: int) -> list[UpcomingEventHint]:
         return self._rumors._upcoming_event_hints(realm_id)
@@ -1200,9 +1200,10 @@ class Engine:
         realm_id: int,
         due_iso: str,
         text: str | None,
+        lines: list[str] | None = None,
     ) -> None:
         return self._rumors.acknowledge_rumor_posted(
-            realm_id, due_iso, text
+            realm_id, due_iso, text, lines=lines
         )
 
     def rumors_text(self, realm_id: int) -> str:

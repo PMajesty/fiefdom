@@ -153,11 +153,42 @@ def test_roll_rumor_line_can_event_hint():
 
 
 def test_rumor_count_for_window_weights():
-    ones = sum(1 for s in range(500) if rumors.rumor_count_for_window(Random(s)) == 1)
-    twos = 500 - ones
-    assert ones > twos
-    assert 0.60 <= ones / 500 <= 0.80
-    assert all(rumors.rumor_count_for_window(Random(s)) in (1, 2) for s in range(100))
+    counts = [rumors.rumor_count_for_window(Random(s)) for s in range(1000)]
+    assert all(c in (1, 2, 3) for c in counts)
+    mean = sum(counts) / len(counts)
+    assert 1.7 <= mean <= 2.2
+    twos = sum(1 for c in counts if c == 2)
+    assert twos > sum(1 for c in counts if c == 1)
+    assert twos > sum(1 for c in counts if c == 3)
+
+
+def test_rumor_lines_per_wave_always_bundle():
+    sizes = [rumors.rumor_lines_per_wave(Random(s)) for s in range(400)]
+    assert all(s in (2, 3) for s in sizes)
+    assert 0.50 <= sizes.count(2) / len(sizes) <= 0.70
+
+
+def test_format_rumor_wave_chains_with_bridges():
+    text = rumors.format_rumor_wave(
+        ["Первая сплетня.", "Вторая сплетня.", "Третья сплетня."]
+    )
+    assert text.startswith("Первая сплетня.")
+    assert "\n" in text
+    assert any(bridge in text for bridge in rumors.RUMOR_CHAIN_BRIDGES)
+    assert "Вторая сплетня." in text
+    assert "Третья сплетня." in text
+
+
+def test_roll_rumor_wave_returns_multiple_distinct():
+    local = [
+        _snap(fief_id=1, name="А"),
+        _snap(fief_id=2, name="Б", grain=200, goods=200, might=40),
+    ]
+    foreign = [_snap(fief_id=9, name="В", realm_title="Юг", might=5)]
+    wave = rumors.roll_rumor_wave(local, foreign, (), Random(7), line_count=3)
+    assert 2 <= len(wave) <= 3
+    assert len(set(wave)) == len(wave)
+    assert all(wave)
 
 
 def test_in_rumor_quiet_hours():
@@ -175,8 +206,10 @@ def test_plan_due_times_daytime_window_inside_bounds():
     tz = ZoneInfo("Europe/Moscow")
     start = datetime(2026, 7, 17, 10, 0, tzinfo=tz)
     end = datetime(2026, 7, 17, 13, 0, tzinfo=tz)
-    dues = rumors.plan_rumor_due_times(start, end, 2, rng=Random(11))
-    assert 1 <= len(dues) <= 2
+    dues = rumors.plan_rumor_due_times(start, end, 3, rng=Random(11))
+    assert 1 <= len(dues) <= 3
+    assert dues == sorted(dues)
+    assert len(dues) == len(set(dues))
     for due in dues:
         assert start <= due < end
         assert not rumors.in_rumor_quiet_hours(due)
@@ -271,6 +304,16 @@ def test_append_rumor_archive_trims():
     assert out[-1] == "l19"
 
 
+def test_append_rumor_archive_default_cap():
+    assert B.RUMOR_ARCHIVE_MAX == 18
+    archive: list[str] = []
+    for i in range(B.RUMOR_ARCHIVE_MAX + 3):
+        archive = rumors.append_rumor_archive(archive, f"l{i}")
+    assert len(archive) == B.RUMOR_ARCHIVE_MAX
+    assert archive[0] == "l3"
+    assert archive[-1] == f"l{B.RUMOR_ARCHIVE_MAX + 2}"
+
+
 def test_maybe_due_rumors_and_ack_idempotent():
     tz = ZoneInfo("Europe/Moscow")
     local_now = datetime(2026, 7, 17, 12, 0, tzinfo=tz)
@@ -298,25 +341,38 @@ def test_maybe_due_rumors_and_ack_idempotent():
             "might": 12,
             "patrol_until_tick": None,
             "name": "Двор",
-        }
+        },
+        {
+            "id": 8,
+            "frozen": False,
+            "grain": 200,
+            "goods": 80,
+            "might": 28,
+            "patrol_until_tick": 99,
+            "name": "Хутор",
+        },
     ]
     db.fief_tiles.return_value = []
     engine = Engine(db)
-    engine.fief_label = MagicMock(return_value="Двор")  # type: ignore[method-assign]
+    engine.fief_label = MagicMock(side_effect=lambda f: f["name"])  # type: ignore[method-assign]
 
     due_items = engine.maybe_due_rumors(1, local_now)
     assert len(due_items) == 1
     assert due_items[0]["realm_id"] == 1
     assert due_items[0]["text"]
+    lines = due_items[0]["lines"]
+    assert isinstance(lines, list) and len(lines) >= 2
+    assert all(line in due_items[0]["text"] for line in lines)
     # Пока не ack - due остаётся.
     assert len(engine.maybe_due_rumors(1, local_now)) == 1
 
     engine.acknowledge_rumor_posted(
-        1, due_items[0]["due"], due_items[0]["text"]
+        1, due_items[0]["due"], due_items[0]["text"], lines=lines
     )
     stored = db.update_realm.call_args.kwargs
     assert stored["rumor_queue"] == []
-    assert due_items[0]["text"] in stored["last_rumor_lines"]
+    for line in lines:
+        assert line in stored["last_rumor_lines"]
     realm["rumor_queue"] = stored["rumor_queue"]
     realm["last_rumor_lines"] = stored["last_rumor_lines"]
     assert engine.maybe_due_rumors(1, local_now) == []

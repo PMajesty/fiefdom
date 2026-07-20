@@ -39,6 +39,15 @@ RUMOR_OPENERS = (
     "Молва такая...",
 )
 
+# Сцепка строк одной волны: площадь передаёт молву дальше, не сыпет списком.
+RUMOR_CHAIN_BRIDGES = (
+    "А ещё шепчут:",
+    "К тому же:",
+    "Другие добавляют:",
+    "С другого конца площади:",
+    "И тут же, оглядываясь:",
+)
+
 # Пьяная болтовня площади: смешно и грубо, без админского яда.
 _FLUFF_TEMPLATES = (
     "у {name} в амбаре мыши съезд созвали - хозяина не звали.",
@@ -435,6 +444,73 @@ def roll_rumor_line(
     return _compose_intel_line(snap, rng, foreign=foreign_flag)
 
 
+def _weighted_count(weights: Sequence[float], rng: Random, *, base: int) -> int:
+    """Веса по возрастающему счёту: weights[i] -> base + i."""
+    if not weights:
+        return base
+    total = sum(max(0.0, float(w)) for w in weights)
+    if total <= 0:
+        return base
+    roll = rng.random() * total
+    acc = 0.0
+    for i, weight in enumerate(weights):
+        acc += max(0.0, float(weight))
+        if roll < acc:
+            return base + i
+    return base + len(weights) - 1
+
+
+def rumor_lines_per_wave(rng: Random | None = None) -> int:
+    """Сколько строк в одной волне (минимум 2)."""
+    rng = rng or Random()
+    weights = tuple(B.RUMOR_WAVE_LINE_WEIGHTS)
+    return _weighted_count(weights, rng, base=2)
+
+
+def format_rumor_wave(lines: Sequence[str]) -> str:
+    """Склеивает строки волны мостами площади в одно сообщение."""
+    clean = [str(x).strip() for x in lines if str(x).strip()]
+    if not clean:
+        return ""
+    if len(clean) == 1:
+        return clean[0]
+    bridges = RUMOR_CHAIN_BRIDGES or ("А ещё:",)
+    parts = [clean[0]]
+    for i, line in enumerate(clean[1:]):
+        bridge = bridges[i % len(bridges)]
+        parts.append(f"{bridge} {line}")
+    return "\n".join(parts)
+
+
+def roll_rumor_wave(
+    local_snaps: Sequence[FiefRumorSnapshot],
+    foreign_snaps: Sequence[FiefRumorSnapshot],
+    event_hints: Sequence[UpcomingEventHint],
+    rng: Random | None = None,
+    *,
+    line_count: int | None = None,
+) -> list[str]:
+    """Несколько разных строк одной волны; пусто только если рынок совсем нем."""
+    rng = rng or Random()
+    weights = tuple(B.RUMOR_WAVE_LINE_WEIGHTS)
+    # Согласовано с rumor_lines_per_wave(base=2): максимум = 2 + len(weights) - 1.
+    max_lines = max(2, 1 + len(weights)) if weights else 2
+    target = int(line_count) if line_count is not None else rumor_lines_per_wave(rng)
+    target = max(2, min(max_lines, target))
+    lines: list[str] = []
+    seen: set[str] = set()
+    attempts = target * 4
+    for _ in range(attempts):
+        if len(lines) >= target:
+            break
+        line = roll_rumor_line(local_snaps, foreign_snaps, event_hints, rng)
+        if not line or line in seen:
+            continue
+        seen.add(line)
+        lines.append(line)
+    return lines
+
+
 def in_rumor_quiet_hours(
     local_now: datetime,
     *,
@@ -449,11 +525,10 @@ def in_rumor_quiet_hours(
 
 
 def rumor_count_for_window(rng: Random | None = None) -> int:
-    """1 часто / 2 иногда. Никогда 3."""
+    """Число волн на окно play по RUMOR_WINDOW_COUNT_WEIGHTS (1..len)."""
     rng = rng or Random()
     weights = tuple(B.RUMOR_WINDOW_COUNT_WEIGHTS)
-    one_w = float(weights[0]) if weights else 0.7
-    return 1 if rng.random() < one_w else 2
+    return _weighted_count(weights, rng, base=1)
 
 
 def _segment_non_quiet(
@@ -526,7 +601,8 @@ def plan_rumor_due_times(
 ) -> list[datetime]:
     """Случайные due внутри дневных щелей окна. Без тихих часов."""
     rng = rng or Random()
-    n = max(0, min(2, int(count)))
+    max_waves = max(1, len(tuple(B.RUMOR_WINDOW_COUNT_WEIGHTS)))
+    n = max(0, min(max_waves, int(count)))
     if n <= 0:
         return []
     segments = allowed_rumor_segments(
@@ -552,11 +628,17 @@ def plan_rumor_due_times(
         return segments[-1][0]
 
     dues = sorted(_pick() for _ in range(n))
-    if n == 2 and dues[0] == dues[1] and total_sec >= 2:
-        # Чуть разводим совпавшие броски.
-        dues[1] = min(segments[-1][1] - timedelta(seconds=1), dues[0] + timedelta(minutes=1))
-        if dues[1] <= dues[0]:
-            dues = [dues[0]]
+    # Разводим совпавшие due, чтобы волны не слипались в один пост.
+    if len(dues) >= 2 and total_sec >= 2:
+        spread: list[datetime] = [dues[0]]
+        lim = segments[-1][1] - timedelta(seconds=1)
+        for due in dues[1:]:
+            prev = spread[-1]
+            nxt = due if due > prev else min(lim, prev + timedelta(minutes=1))
+            if nxt <= prev:
+                continue
+            spread.append(nxt)
+        dues = spread
     # Страховка: ничего в тишине.
     dues = [
         d

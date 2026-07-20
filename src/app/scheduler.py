@@ -144,10 +144,15 @@ async def _scheduler_tick(bot: Bot) -> None:
                     bot, int(item["realm_id"]), str(text)
                 )
                 if ok:
+                    raw_lines = item.get("lines") or []
+                    lines = [
+                        str(x) for x in raw_lines if str(x).strip()
+                    ]
                     engine.acknowledge_rumor_posted(
                         int(item["realm_id"]),
                         str(item["due"]),
                         str(text),
+                        lines=lines or None,
                     )
         except Exception:
             logger.exception("rumor drip failed")

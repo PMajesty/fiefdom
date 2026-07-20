@@ -206,12 +206,14 @@ PACT_SIZE_MAX = 5
 PACT_INVITE_EXPIRE_TICKS = 4
 
 # --- Слухи (капельные сплетни между тиками) ---
-# 1 часто / 2 иногда на окно play; в группе не больше двух строк.
-RUMOR_WINDOW_COUNT_WEIGHTS = (0.70, 0.30)
+# Волны на окно play: 1 / 2 / 3 (среднее ~1.95, ~+50% к прежним 1.3).
+RUMOR_WINDOW_COUNT_WEIGHTS = (0.25, 0.55, 0.20)
+# Строк в одной волне: всегда пачка 2 / 3.
+RUMOR_WAVE_LINE_WEIGHTS = (0.60, 0.40)
 RUMOR_FLUFF_CHANCE = 0.25
 RUMOR_QUIET_START_HOUR = 21
 RUMOR_QUIET_END_HOUR = 8
-RUMOR_ARCHIVE_MAX = 12
+RUMOR_ARCHIVE_MAX = 18
 RUMOR_TRUTH_FULL = 0.50
 RUMOR_TRUTH_FUZZY = 0.35
 # остаток (~0.15) - ложный слух

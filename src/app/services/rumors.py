@@ -12,6 +12,7 @@ from app.domain.rumors import (
     FiefRumorSnapshot,
     UpcomingEventHint,
     append_rumor_archive,
+    format_rumor_wave,
     format_rumors_pull,
     in_rumor_quiet_hours,
     parse_rumor_queue,
@@ -19,7 +20,7 @@ from app.domain.rumors import (
     plan_rumor_due_times,
     rumor_count_for_window,
     rumor_queue_storage,
-    roll_rumor_line,
+    roll_rumor_wave,
 )
 from app.domain.tick_pipeline import TICK_PHASE_PLAY, normalize_tick_phase
 from app.domain.ticks import tick_active
@@ -78,8 +79,8 @@ class RumorService:
             )
         return out
 
-    def _roll_rumor_line_for_realm(self, realm_id: int) -> str | None:
-        return roll_rumor_line(
+    def _roll_rumor_wave_for_realm(self, realm_id: int) -> list[str]:
+        return roll_rumor_wave(
             self._engine._rumor_snapshots(realm_id),
             self._engine._foreign_rumor_snapshots(realm_id),
             self._engine._upcoming_event_hints(realm_id),
@@ -126,7 +127,7 @@ class RumorService:
         return aa.replace(microsecond=0) == bb.replace(microsecond=0)
 
     def plan_world_rumor_queues(self, world_id: int) -> None:
-        """После входа в play: 1-2 due на окно. Без окна - очистить stale."""
+        """После входа в play: 1-3 due-волны на окно. Без окна - очистить stale."""
         world = self._db.get_world(int(world_id)) or {}
         bounds = self._engine.play_window_bounds_for_world(world)
         world = self._db.get_world(int(world_id)) or world
@@ -193,12 +194,14 @@ class RumorService:
                     due_local = due_local.replace(tzinfo=local_now.tzinfo)
                 if due_local > local_now:
                     continue
-                text = self._engine._roll_rumor_line_for_realm(rid)
+                lines = self._engine._roll_rumor_wave_for_realm(rid)
+                text = format_rumor_wave(lines) if lines else None
                 out.append(
                     {
                         "realm_id": rid,
                         "due": due_key,
                         "text": text,
+                        "lines": lines,
                     }
                 )
         return out
@@ -208,8 +211,9 @@ class RumorService:
         realm_id: int,
         due_iso: str,
         text: str | None,
+        lines: list[str] | None = None,
     ) -> None:
-        """Снять due из очереди и дописать строку в архив catch-up."""
+        """Снять due из очереди и дописать строки волны в архив catch-up."""
         realm = self._db.get_realm(int(realm_id))
         if not realm:
             return
@@ -248,8 +252,15 @@ class RumorService:
         if not removed:
             return
         archive = parse_stored_rumors(realm.get("last_rumor_lines"))
-        if text:
-            archive = append_rumor_archive(archive, text)
+        archive_lines = [
+            str(x).strip()
+            for x in (lines or ())
+            if str(x).strip()
+        ]
+        if not archive_lines and text:
+            archive_lines = [str(text).strip()]
+        for line in archive_lines:
+            archive = append_rumor_archive(archive, line)
         kept = parse_rumor_queue(kept_raw)
         self._db.update_realm(
             int(realm_id),
