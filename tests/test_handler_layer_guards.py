@@ -19,7 +19,7 @@ OCCURRENCE_FREEZE: dict[str, int] = {
     "src/app/handlers/callbacks.py": 0,
     "src/app/handlers/admin.py": 0,
     "src/app/handlers/group.py": 0,
-    "src/app/handlers/shared.py": 4,
+    "src/app/handlers/shared.py": 0,
     "src/app/scheduler.py": 0,
     "src/app/patch_announce.py": 3,
     "src/app/notifier.py": 0,

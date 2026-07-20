@@ -505,13 +505,12 @@ def main_menu_kb(
 
 def fief_home_kb(engine: Engine, fief_id: int) -> InlineKeyboardMarkup:
     """Дом с CTA по актуальному снимку усадьбы из БД."""
-    fief = engine.db.get_fief(fief_id)
+    fief = engine.fief_by_id(fief_id)
     if not fief:
         return main_menu_kb(fief_id)
-    tiles = engine.db.fief_tiles(fief_id)
-    active = [t for t in tiles if not t.get("is_overgrown")]
+    active = engine.demolish_options(fief_id)
     n = len(active)
-    realm = engine.db.get_realm(fief["realm_id"])
+    realm = engine.get_realm(fief["realm_id"])
     day_number = int(realm["day_number"]) if realm else 1
     cost_mult = realm_upgrade_cost_mult(engine, realm)
     min_build = B.min_any_build_action_cost(active, cost_mult=cost_mult)
@@ -534,7 +533,7 @@ def fief_home_kb(engine: Engine, fief_id: int) -> InlineKeyboardMarkup:
 
 def fief_raid_pact_state(engine: Engine, fief: dict) -> tuple[bool, str | None]:
     """(открыто?, хвост подписи замка) по усадьбе и дню долины."""
-    realm = engine.db.get_realm(fief["realm_id"])
+    realm = engine.get_realm(fief["realm_id"])
     day_number = int(realm["day_number"]) if realm else 1
     step = int(fief.get("onboard_step") or 0)
     open_ = raid_pact_unlocked(onboard_step=step, day_number=day_number)
