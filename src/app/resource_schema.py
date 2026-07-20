@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from app.domain import resources as res_mod
+from app.domain import resource_registry as res_mod
+
 
 
 def raid_stolen_column_map() -> dict[str, str]:

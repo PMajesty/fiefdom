@@ -488,7 +488,7 @@ def test_gather_trade_send_golden_current_resources():
 
 def test_extra_registry_resource_flows_without_code_monkeypatches(monkeypatch):
     """4-й ресурс: только данные реестра + GATHER_AMOUNTS, lootable и gatherable."""
-    from app.domain import resources as res_mod
+    from app.domain import resource_registry as res_mod
     from app.handlers.dm import (
         _parse_send_line,
         gather_resources_kb,
@@ -507,6 +507,7 @@ def test_extra_registry_resource_flows_without_code_monkeypatches(monkeypatch):
         status_emoji="🪨",
     )
     monkeypatch.setattr(res_mod, "RESOURCE_DEFS", (*RESOURCE_DEFS, fake))
+
     monkeypatch.setitem(B.GATHER_AMOUNTS, "ore", 3)
 
     assert "ore" in live_resource_keys()
