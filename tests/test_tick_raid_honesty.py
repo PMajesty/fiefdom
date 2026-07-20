@@ -180,7 +180,7 @@ def test_tick_applies_harvest_mult_same_day():
 
     with (
         patch("app.services.world_tick.roll_minor_event", return_value="harvest"),
-        patch("app.engine.apply_fief_tick", side_effect=fake_apply),
+        patch("app.services.realm_tick.apply_fief_tick", side_effect=fake_apply),
     ):
         result = engine.run_realm_tick(1)
 
@@ -242,7 +242,7 @@ def test_tick_drought_applies_farm_mult_to_all_fiefs():
 
     with (
         patch("app.services.world_tick.roll_minor_event", return_value="drought"),
-        patch("app.engine.apply_fief_tick", side_effect=fake_apply),
+        patch("app.services.realm_tick.apply_fief_tick", side_effect=fake_apply),
     ):
         engine.run_realm_tick(1)
 
@@ -391,7 +391,7 @@ def test_manual_tick_does_not_advance_schedule_markers():
 
     with (
         patch("app.services.world_tick.roll_minor_event", return_value=None),
-        patch("app.engine.apply_fief_tick", side_effect=fake_apply),
+        patch("app.services.realm_tick.apply_fief_tick", side_effect=fake_apply),
     ):
         engine.run_realm_tick(1)
 
@@ -421,7 +421,7 @@ def test_scheduled_tick_writes_slot_markers():
 
     with (
         patch("app.services.world_tick.roll_minor_event", return_value=None),
-        patch("app.engine.apply_fief_tick", side_effect=fake_apply),
+        patch("app.services.realm_tick.apply_fief_tick", side_effect=fake_apply),
     ):
         engine.run_realm_tick(1, tick_slot=0)
 
