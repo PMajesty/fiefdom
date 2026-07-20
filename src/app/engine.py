@@ -118,8 +118,6 @@ from app.domain.tick_schedule import (
     format_tick_slots,
     next_tick_datetime,
     play_window_bounds,
-    raid_declare_open,
-    raid_lock_due,
     schedule_anchor_at,
 )
 
@@ -254,6 +252,8 @@ def raid_pact_lock_message(*, onboard_step: int, day_number: int) -> str:
         return "Набег и пакт - после квестов."
     return f"Набег и пакт - {hint} долины."
 
+
+from app.services.raid_declare import RaidDeclareService
 
 class Engine:
     def __init__(self, db: Database):
@@ -985,29 +985,9 @@ class Engine:
             )
         return total
 
+
     def list_raid_target_fiefs(self, attacker_fief_id: int) -> list[dict]:
-        """Цели на всём континенте (без своей user_id)."""
-        atk = self.db.get_fief(attacker_fief_id)
-        if not atk:
-            return []
-        atk_uid = int(atk["user_id"])
-        atk_realm = int(atk["realm_id"])
-        realm_ids = {atk_realm}
-        for nb in self.db.list_adjacent_realms(atk_realm):
-            realm_ids.add(int(nb["id"]))
-        out: list[dict] = []
-        for rid in sorted(realm_ids):
-            for f in self.db.list_fiefs(rid):
-                if f.get("frozen"):
-                    continue
-                if int(f["id"]) == int(attacker_fief_id):
-                    continue
-                if int(f["user_id"]) == atk_uid:
-                    continue
-                item = dict(f)
-                item["via_portal"] = int(f["realm_id"]) != atk_realm
-                out.append(item)
-        return out
+        return RaidDeclareService(self).list_raid_target_fiefs(attacker_fief_id)
 
     def _world_local_now(self, world: dict) -> datetime:
         try:
@@ -1057,82 +1037,25 @@ class Engine:
         return play_window_bounds(opened_local, next_at)
 
     def raid_declare_is_open(self, world: dict) -> bool:
-        local_now = self._world_local_now(world)
-        return raid_declare_open(local_now, self.play_window_bounds_for_world(world))
+        return RaidDeclareService(self).raid_declare_is_open(world)
 
-    def _format_raid_deadline(
-        self, world: dict, *, midpoint: bool
-    ) -> str:
-        bounds = self.play_window_bounds_for_world(world)
-        if bounds is None:
-            return "-"
-        from app.domain.tick_schedule import raid_declare_midpoint
+    def format_raid_deadline(self, world: dict, *, midpoint: bool) -> str:
+        return RaidDeclareService(self).format_raid_deadline(
+            world, midpoint=midpoint
+        )
 
-        point = raid_declare_midpoint(bounds) if midpoint else bounds[1]
-        return point.strftime("%d.%m %H:%M")
+    def _format_raid_deadline(self, world: dict, *, midpoint: bool) -> str:
+        return self.format_raid_deadline(world, midpoint=midpoint)
 
     def _refund_action(self, fief_id: int) -> None:
-        fief = self.db.get_fief(fief_id)
-        if not fief:
-            return
-        new_actions = min(B.ACTIONS_BANK_MAX, int(fief["actions"]) + 1)
-        self.db.update_fief(int(fief_id), actions=new_actions)
+        return RaidDeclareService(self)._refund_action(fief_id)
 
     def _raid_declare_gates(
         self, attacker_id: int, victim_id: int, might: int
     ) -> tuple[dict, dict, dict, dict, int]:
-        if might < B.RAID_MIN_MIGHT:
-            raise ValueError(f"Минимум {B.RAID_MIN_MIGHT} силы")
-        atk = self.require_active_fief(attacker_id)
-        vic = self.db.get_fief(victim_id)
-        if not atk or not vic:
-            raise ValueError("Цель не найдена")
-        if not self.db.realms_are_adjacent(
-            int(atk["realm_id"]), int(vic["realm_id"])
-        ):
-            raise ValueError("Цель не найдена")
-        self._require_cross_valley_caught_up(
-            int(atk["realm_id"]), int(vic["realm_id"])
+        return RaidDeclareService(self)._raid_declare_gates(
+            attacker_id, victim_id, might
         )
-        if atk["id"] == vic["id"]:
-            raise ValueError("Нельзя грабить себя")
-        if int(atk["user_id"]) == int(vic["user_id"]):
-            raise ValueError("Нельзя грабить свою усадьбу")
-        if atk["hungry"]:
-            raise ValueError("Голодные мужики не воюют")
-        if atk["might"] < might:
-            raise ValueError("Недостаточно силы")
-        realm = self.db.get_realm(atk["realm_id"]) or {}
-        tick_index = int(realm.get("tick_index") or 0)
-        if tick_active(atk.get("shield_until_tick"), tick_index):
-            raise ValueError("Пока действует щит, набеги недоступны")
-        if tick_active(vic.get("shield_until_tick"), tick_index):
-            raise ValueError("У жертвы щит после набега")
-        last_pair = self.db.last_raid_attacker_victim(attacker_id, victim_id)
-        last_reverse = self.db.last_raid_attacker_victim(victim_id, attacker_id)
-        for raid_tick in (last_pair, last_reverse):
-            if raid_tick is None:
-                continue
-            # Ночной лог на тике T должен закрывать пару на play-дне T+1.
-            if int(raid_tick) + B.RAID_SAME_VICTIM_TICKS >= tick_index:
-                raise ValueError("Кулдаун на эту пару усадеб")
-        if not raid_pact_unlocked(
-            onboard_step=int(atk.get("onboard_step") or 0),
-            day_number=int(realm.get("day_number") or 1),
-        ):
-            raise ValueError(
-                raid_pact_lock_message(
-                    onboard_step=int(atk.get("onboard_step") or 0),
-                    day_number=int(realm.get("day_number") or 1),
-                )
-            )
-        wid = self._world_id_for_realm(int(atk["realm_id"]))
-        world = self.db.get_world(wid) or {}
-        if not self.raid_declare_is_open(world):
-            raise ValueError(
-                "Поздно объявлять набег: до закрытия заявок осталось меньше половины окна"
-            )
-        return atk, vic, realm, world, tick_index
 
     def declare_raid(
         self,
@@ -1142,118 +1065,12 @@ class Engine:
         *,
         open_truce: bool = False,
     ) -> DeclareRaidResult:
-        atk, vic, realm, world, tick_index = self._raid_declare_gates(
-            attacker_id, victim_id, might
-        )
-        wid = int(world["id"])
-        for intent in self.db.list_open_raid_intents_for_fief(attacker_id):
-            if int(intent.get("tick_index") or -1) != tick_index:
-                continue
-            payload = intent.get("payload") or {}
-            if int(payload.get("victim_id") or 0) == int(victim_id):
-                raise ValueError("На эту цель уже есть заявка в этом тике")
-
-        self.collect_for_fief(attacker_id)
-        atk = self.db.get_fief(attacker_id) or atk
-        if int(atk["might"]) < might:
-            raise ValueError("Недостаточно силы")
-
-        same_realm = int(atk["realm_id"]) == int(vic["realm_id"])
-        vic_realm = self.db.get_realm(vic["realm_id"]) or realm
-        pact_hint = None
-        truce = bool(open_truce)
-        if atk.get("pact_id"):
-            truce = False
-            pact_hint = "Союзники по пакту сольются в один удар на дороге."
-        elif truce:
-            pact_hint = "Открытое перемирие: другие opt-in отряды сольются с вами."
-
-        with self.db.transaction():
-            self._require_cross_valley_caught_up(
-                int(atk["realm_id"]), int(vic["realm_id"])
-            )
-            if not self.raid_declare_is_open(self.db.get_world(wid) or world):
-                raise ValueError(
-                    "Поздно объявлять набег: до закрытия заявок осталось меньше половины окна"
-                )
-            self._spend_action(atk)
-            if not self.db.debit_fief_resources(attacker_id, might=int(might)):
-                raise ValueError("Недостаточно силы")
-            intent = self.db.create_action_intent(
-                world_id=wid,
-                tick_index=tick_index,
-                fief_id=attacker_id,
-                kind="raid",
-                status="open",
-                payload={
-                    "victim_id": int(victim_id),
-                    "might": int(might),
-                    "open_truce": truce,
-                    "via_portal": not same_realm,
-                    "attacker_realm_id": int(atk["realm_id"]),
-                    "victim_realm_id": int(vic["realm_id"]),
-                    "escrowed": True,
-                    "attacker_pact_id": (
-                        int(atk["pact_id"]) if atk.get("pact_id") else None
-                    ),
-                },
-            )
-            self.db.update_fief(
-                attacker_id,
-                last_raid_at=_utcnow(),
-                last_raid_tick=tick_index,
-            )
-
-        atk_final = self.db.get_fief(attacker_id) or atk
-        men_home = int(atk_final.get("might") or 0)
-        lock_text = self._format_raid_deadline(world, midpoint=True)
-        resolve_text = self._format_raid_deadline(world, midpoint=False)
-        dm = (
-            f"Дружина ушла в ночь на хутор {self.fief_label(vic)}: "
-            f"{might} силы в пути, дома {men_home}. "
-            f"Заявку можно отменить до {lock_text}. "
-            f"Бой в тик около {resolve_text}."
-        )
-        if pact_hint:
-            dm = f"{dm} {pact_hint}"
-        return DeclareRaidResult(
-            intent_id=int(intent["id"]),
-            victim_fief_id=int(victim_id),
-            victim_name=self.fief_label(vic),
-            might=int(might),
-            men_home=men_home,
-            open_truce=truce,
-            lock_deadline_text=lock_text,
-            resolve_slot_text=resolve_text,
-            pact_merge_hint=pact_hint,
-            dm_text=dm,
+        return RaidDeclareService(self).declare_raid(
+            attacker_id, victim_id, might, open_truce=open_truce
         )
 
     def cancel_raid_intent(self, fief_id: int, intent_id: int) -> str:
-        fief = self.require_active_fief(fief_id)
-        intent = self.db._fetchone(
-            "SELECT * FROM action_intents WHERE id=%s;",
-            (int(intent_id),),
-        )
-        if not intent or intent.get("kind") != "raid":
-            raise ValueError("Заявка не найдена")
-        if int(intent["fief_id"]) != int(fief_id):
-            raise ValueError("Это не ваша заявка")
-        if intent.get("status") != "open":
-            raise ValueError("После закрытия заявок отменить нельзя")
-        payload = dict(intent.get("payload") or {})
-        might = int(payload.get("might") or 0)
-        with self.db.transaction():
-            claimed = self.db.cancel_action_intent(int(intent_id))
-            if not claimed:
-                raise ValueError("После закрытия заявок отменить нельзя")
-            if might > 0:
-                self.db.credit_fief_resources(fief_id, might=might)
-            self._refund_action(fief_id)
-        return (
-            f"Заявка снята: {might} силы и 1 действие вернулись "
-            f"({self.fief_label(fief)})."
-        )
+        return RaidDeclareService(self).cancel_raid_intent(fief_id, intent_id)
 
     def lock_open_raid_intents(self, world_id: int) -> int:
         world = self.db.get_world(world_id) or {}
@@ -1261,16 +1078,8 @@ class Engine:
         return self.db.lock_action_intents(int(world_id), tick_index, kind="raid")
 
     def maybe_lock_raids_at_midpoint(self, world_id: int) -> int:
-        """Scheduler: идемпотентный lock после середины окна play."""
-        world = self.ensure_play_opened_at(int(world_id))
-        if normalize_tick_phase(world.get("tick_phase")) != TICK_PHASE_PLAY:
-            return 0
-        if self.world_tick_incomplete(int(world_id)):
-            return 0
-        local_now = self._world_local_now(world)
-        if not raid_lock_due(local_now, self.play_window_bounds_for_world(world)):
-            return 0
-        return self.lock_open_raid_intents(int(world_id))
+        return RaidDeclareService(self).maybe_lock_raids_at_midpoint(world_id)
+
 
     def _append_pending_raid_line(self, realm_id: int, line: str) -> None:
         if not line:
