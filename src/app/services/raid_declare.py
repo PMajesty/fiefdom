@@ -16,9 +16,9 @@ from app.engine import _utcnow, raid_pact_lock_message, raid_pact_unlocked
 
 
 class RaidDeclareService:
-    def __init__(self, engine, db: RaidDeclareRepos | None = None) -> None:
+    def __init__(self, engine, db: RaidDeclareRepos) -> None:
         self._engine = engine
-        self._db = db if db is not None else engine.db
+        self._db = db
 
     def list_raid_target_fiefs(self, attacker_fief_id: int) -> list[dict]:
         """Цели на всём континенте (без своей user_id)."""

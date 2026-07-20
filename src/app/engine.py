@@ -790,6 +790,12 @@ class Engine:
             event_id, user_id, amount
         )
 
+    def plan_world_catastrophe(self, world: dict):
+        return CatastropheService(self, self.db).plan_world_catastrophe(world)
+
+    def iter_expired_catastrophe_resolutions(self, realm: dict):
+        return CatastropheService(self, self.db).iter_expired_resolutions(realm)
+
     def list_raid_target_fiefs(self, attacker_fief_id: int) -> list[dict]:
         return RaidDeclareService(self, self.db).list_raid_target_fiefs(attacker_fief_id)
 

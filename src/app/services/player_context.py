@@ -7,9 +7,9 @@ from typing import Any
 
 
 class PlayerContextService:
-    def __init__(self, engine, db: PlayerContextRepos | None = None) -> None:
+    def __init__(self, engine, db: PlayerContextRepos) -> None:
         self._engine = engine
-        self._db = db if db is not None else engine.db
+        self._db = db
 
     def resolve_realm_for_user(
         self, user_id: int, chat: Any = None

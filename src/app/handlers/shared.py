@@ -81,9 +81,7 @@ def parse_start_payload(payload: str | None) -> tuple[str | None, int | None]:
 
 def resolve_realm_for_user(engine: Engine, user_id: int, chat: Any = None) -> dict | None:
     """Realm из группового чата, last_realm с усадьбой пользователя или единственной усадьбы."""
-    from app.services.player_context import PlayerContextService
-
-    return PlayerContextService(engine).resolve_realm_for_user(user_id, chat)
+    return engine.resolve_realm_for_user(user_id, chat)
 
 
 def resolve_fief_for_user(
@@ -91,9 +89,7 @@ def resolve_fief_for_user(
     user_id: int,
     realm_id: int | None = None,
 ) -> dict | None:
-    from app.services.player_context import PlayerContextService
-
-    return PlayerContextService(engine).resolve_fief_for_user(user_id, realm_id)
+    return engine.resolve_fief_for_user(user_id, realm_id)
 
 
 def format_join_announce(fief_name: str) -> str:

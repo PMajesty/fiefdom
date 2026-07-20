@@ -9,7 +9,7 @@ import pytest
 from app import balance as B
 from app.database import Database
 from app.engine import Engine
-from app.handlers.shared import resolve_fief_for_user, resolve_realm_for_user
+from app.services.player_context import PlayerContextService
 
 
 def _join_ready_db(*, world_id: int = 1, owned_world_fief=None):
@@ -212,7 +212,9 @@ def test_has_fief_elsewhere_is_world_scoped():
 def test_resolve_fief_for_user_realm_scoped_still_works():
     engine = MagicMock()
     engine.db.get_fief_by_user.return_value = {"id": 7, "realm_id": 1, "user_id": 42}
-    found = resolve_fief_for_user(engine, 42, realm_id=1)
+    found = PlayerContextService(engine, engine.db).resolve_fief_for_user(
+        42, realm_id=1
+    )
     assert found["id"] == 7
     engine.db.get_fief_by_user.assert_called_once_with(1, 42)
 
@@ -231,7 +233,7 @@ def test_resolve_fief_for_user_single_holding_fallback():
         "user_id": 42,
         "world_id": 1,
     }
-    found = resolve_fief_for_user(engine, 42)
+    found = PlayerContextService(engine, engine.db).resolve_fief_for_user(42)
     assert found["id"] == 7
     engine.db.get_fief_by_user.assert_called_with(1, 42)
 
@@ -249,11 +251,12 @@ def test_resolve_recovers_from_poisoned_last_realm():
     )
     engine.db.list_fiefs_by_user.return_value = [owned]
 
-    realm = resolve_realm_for_user(engine, 42)
+    ctx = PlayerContextService(engine, engine.db)
+    realm = ctx.resolve_realm_for_user(42)
     assert realm is not None and int(realm["id"]) == 1
     engine.db.set_last_realm.assert_called_once_with(42, 1)
 
-    found = resolve_fief_for_user(engine, 42)
+    found = ctx.resolve_fief_for_user(42)
     assert found["id"] == 7
 
 

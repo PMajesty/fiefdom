@@ -25,9 +25,9 @@ logger = logging.getLogger(__name__)
 
 
 class WorldTickOrchestrator:
-    def __init__(self, engine, db: WorldTickRepos | None = None) -> None:
+    def __init__(self, engine, db: WorldTickRepos) -> None:
         self._engine = engine
-        self._db = db if db is not None else engine.db
+        self._db = db
 
     def _enter_tick_economy(
         self, world_id: int, world: dict | None = None

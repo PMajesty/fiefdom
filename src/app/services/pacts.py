@@ -7,9 +7,9 @@ from app import balance as B
 
 
 class PactService:
-    def __init__(self, engine, db: PactRepos | None = None) -> None:
+    def __init__(self, engine, db: PactRepos) -> None:
         self._engine = engine
-        self._db = db if db is not None else engine.db
+        self._db = db
 
     def get_pact(self, pact_id: int) -> dict | None:
         return self._db.get_pact(pact_id)

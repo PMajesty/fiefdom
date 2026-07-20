@@ -28,9 +28,9 @@ class CatastropheAnnounce:
 
 
 class CatastropheService:
-    def __init__(self, engine, db: CatastropheRepos | None = None) -> None:
+    def __init__(self, engine, db: CatastropheRepos) -> None:
         self._engine = engine
-        self._db = db if db is not None else engine.db
+        self._db = db
 
     def contribute_catastrophe_might(
         self, event_id: int, user_id: int, amount: int = 5

@@ -11,6 +11,22 @@ import pytest
 from app import balance as B
 from app.engine import Engine
 from app.scheduler import _maybe_post_world_catastrophe
+from app.services.catastrophes import CatastropheService
+
+
+def _wire_catastrophe_facades(engine: MagicMock) -> MagicMock:
+    """MagicMock Engine: facades делегируют в реальный CatastropheService."""
+    engine.plan_world_catastrophe.side_effect = (
+        lambda world: CatastropheService(engine, engine.db).plan_world_catastrophe(
+            world
+        )
+    )
+    engine.iter_expired_catastrophe_resolutions.side_effect = (
+        lambda realm: CatastropheService(
+            engine, engine.db
+        ).iter_expired_resolutions(realm)
+    )
+    return engine
 
 
 def _freeze_msk(year: int, month: int, day: int, hour: int = 12):
@@ -587,7 +603,7 @@ def test_empty_world_tick_does_not_bump_calendar_day():
 
 @pytest.mark.asyncio
 async def test_catastrophe_advances_schedule_before_send_and_resumes_missing():
-    engine = MagicMock()
+    engine = _wire_catastrophe_facades(MagicMock())
     world = _world(tick_index=10, next_catastrophe_tick=10, next_catastrophe_key="bandit_night")
     r1 = _realm(1, chat_id=-1)
     r2 = _realm(2, chat_id=-2)
@@ -653,7 +669,7 @@ async def test_catastrophe_advances_schedule_before_send_and_resumes_missing():
 @pytest.mark.asyncio
 async def test_catastrophe_announce_text_failure_isolates_realms():
     """Сбой сборки текста для одной долины не отменяет create/announce остальных."""
-    engine = MagicMock()
+    engine = _wire_catastrophe_facades(MagicMock())
     world = _world(
         tick_index=10, next_catastrophe_tick=10, next_catastrophe_key="bandit_night"
     )
@@ -705,7 +721,7 @@ async def test_catastrophe_announce_text_failure_isolates_realms():
 @pytest.mark.asyncio
 async def test_catastrophe_heals_divergent_active_keys_to_canonical_wave():
     """Разные активные ключи не должны вечно стопорить fan-out."""
-    engine = MagicMock()
+    engine = _wire_catastrophe_facades(MagicMock())
     world = _world(
         tick_index=10,
         next_catastrophe_tick=10,
@@ -765,7 +781,7 @@ async def test_catastrophe_heals_divergent_active_keys_to_canonical_wave():
 @pytest.mark.asyncio
 async def test_catastrophe_heal_tie_prefers_last_catastrophe_key_when_schedule_advanced():
     """При равном большинстве и уже сдвинутом расписании канон - last_catastrophe_key."""
-    engine = MagicMock()
+    engine = _wire_catastrophe_facades(MagicMock())
     world = _world(
         tick_index=10,
         next_catastrophe_tick=20,
@@ -817,7 +833,7 @@ async def test_catastrophe_heal_expired_wave_no_bandit_fail_penalties():
     """Просроченный канон: placeholder resolved, без fail-штрафов по зерну."""
     from app.scheduler import _resolve_expired_catastrophes
 
-    engine = MagicMock()
+    engine = _wire_catastrophe_facades(MagicMock())
     world = _world(
         tick_index=12,
         next_catastrophe_tick=20,

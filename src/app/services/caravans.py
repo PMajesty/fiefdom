@@ -19,9 +19,9 @@ from app.domain.resource_registry import tradeable_keys
 
 
 class CaravanService:
-    def __init__(self, engine, db: CaravanRepos | None = None) -> None:
+    def __init__(self, engine, db: CaravanRepos) -> None:
         self._engine = engine
-        self._db = db if db is not None else engine.db
+        self._db = db
 
     def resolve_target_fief(self, realm_id: int, text: str) -> dict | None:
         """Ищет усадьбу на всём континенте (своя долина + остальные долины мира)."""

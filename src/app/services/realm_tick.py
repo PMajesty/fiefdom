@@ -32,9 +32,9 @@ from app.domain.tile_entities import (
 
 
 class RealmTickRunner:
-    def __init__(self, engine, db: RealmTickRepos | None = None) -> None:
+    def __init__(self, engine, db: RealmTickRepos) -> None:
         self._engine = engine
-        self._db = db if db is not None else engine.db
+        self._db = db
 
     def apply_absence(self, realm_id: int) -> None:
         realm = self._db.get_realm(realm_id) or {}

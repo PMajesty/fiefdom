@@ -23,9 +23,9 @@ logger = logging.getLogger(__name__)
 
 
 class RealmLifecycleService:
-    def __init__(self, engine, db: RealmLifecycleRepos | None = None) -> None:
+    def __init__(self, engine, db: RealmLifecycleRepos) -> None:
         self._engine = engine
-        self._db = db if db is not None else engine.db
+        self._db = db
 
     def world_id_for_realm(self, realm_id: int) -> int:
         realm = self._db.get_realm(realm_id) or {}

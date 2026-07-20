@@ -13,7 +13,7 @@ from app.domain.tick_pipeline import needs_economy_wake, needs_resolve_wake
 from app.domain.tick_schedule import due_tick_slot
 from app.notifier import post_digest, post_realm_public
 from app.patch_announce import announce_pending_patches
-from app.services.catastrophes import CatastropheAnnounce, CatastropheService
+from app.services.catastrophes import CatastropheAnnounce
 from app.wiring import get_engine
 
 logger = logging.getLogger(__name__)
@@ -219,7 +219,7 @@ async def _deliver_catastrophe_announce(bot: Bot, announce: CatastropheAnnounce)
 
 async def _maybe_post_world_catastrophe(bot: Bot, engine, world: dict) -> None:
     """Доставка волны: сервис пишет БД, планировщик шлёт в чаты."""
-    announces = CatastropheService(engine).plan_world_catastrophe(world)
+    announces = engine.plan_world_catastrophe(world)
     for announce in announces:
         try:
             await _deliver_catastrophe_announce(bot, announce)
@@ -230,5 +230,5 @@ async def _maybe_post_world_catastrophe(bot: Bot, engine, world: dict) -> None:
 
 
 async def _resolve_expired_catastrophes(bot: Bot, engine, realm: dict) -> None:
-    for result_text in CatastropheService(engine).iter_expired_resolutions(realm):
+    for result_text in engine.iter_expired_catastrophe_resolutions(realm):
         await post_realm_public(bot, int(realm["id"]), result_text)

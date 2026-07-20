@@ -36,9 +36,9 @@ from app.resource_schema import raid_stolen_fields
 
 
 class NightRaidResolver:
-    def __init__(self, engine, db: NightRaidRepos | None = None) -> None:
+    def __init__(self, engine, db: NightRaidRepos) -> None:
         self._engine = engine
-        self._db = db if db is not None else engine.db
+        self._db = db
 
     def _pick_raid_interceptor(
         self, vic: dict, *, incomplete_world: bool

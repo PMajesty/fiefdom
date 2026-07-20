@@ -15,9 +15,9 @@ from app.engine import fief_name_for_user
 
 
 class OnboardingService:
-    def __init__(self, engine, db: OnboardingRepos | None = None) -> None:
+    def __init__(self, engine, db: OnboardingRepos) -> None:
         self._engine = engine
-        self._db = db if db is not None else engine.db
+        self._db = db
 
     def ensure_user(self, user) -> None:
         name = (user.full_name or user.first_name or "Путник").strip()
