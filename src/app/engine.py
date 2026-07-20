@@ -226,6 +226,7 @@ def raid_pact_lock_message(*, onboard_step: int, day_number: int) -> str:
 
 
 from app.services.catastrophes import CatastropheService
+from app.services.patch_announce import PatchAnnounceService
 from app.services.player_context import PlayerContextService
 from app.services.raid_declare import RaidDeclareService
 from app.services.realm_admin import RealmLifecycleService
@@ -263,6 +264,15 @@ class Engine:
 
     def adjacent_realm_ids(self, realm_id: int) -> list[int]:
         return RealmLifecycleService(self).adjacent_realm_ids(realm_id)
+
+    def announced_patch_names(self) -> set[str]:
+        return PatchAnnounceService(self).announced_names()
+
+    def realms_to_announce(self) -> list[dict]:
+        return PatchAnnounceService(self).realms_to_announce()
+
+    def mark_patch_announced(self, name: str) -> None:
+        return PatchAnnounceService(self).mark_announced(name)
 
     def grant_resources(
         self,

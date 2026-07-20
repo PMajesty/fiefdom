@@ -19,12 +19,12 @@ async def announce_pending_patches(bot: Bot) -> list[str]:
     приняла сообщение (или долин нет). Иначе повтор на следующем опросе.
     """
     engine = get_engine()
-    announced = engine.db.list_announced_patch_names()
+    announced = engine.announced_patch_names()
     pending = pending_patch_notes(announced)
     if not pending:
         return []
 
-    realms = engine.db.list_realms()
+    realms = engine.realms_to_announce()
     delivered: list[str] = []
     for note in pending:
         text = format_patch_announcement(note)
@@ -39,7 +39,7 @@ async def announce_pending_patches(bot: Bot) -> list[str]:
                 note.id,
             )
             continue
-        engine.db.mark_patch_announced(note.id)
+        engine.mark_patch_announced(note.id)
         delivered.append(note.id)
         logger.info(
             "patch announced id=%s ok_realms=%s/%s",

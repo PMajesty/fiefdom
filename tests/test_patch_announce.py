@@ -55,14 +55,17 @@ def test_patch_note_ids_unique():
     assert all(note.id and note.title and note.body_lines for note in PATCH_NOTES)
 
 
+def _patch_engine(*, announced, realms):
+    engine = MagicMock()
+    engine.announced_patch_names.return_value = announced
+    engine.realms_to_announce.return_value = realms
+    return engine
+
+
 @pytest.mark.asyncio
 async def test_announce_pending_posts_then_marks():
     note = PATCH_NOTES[0]
-    db = MagicMock()
-    db.list_announced_patch_names.return_value = set()
-    db.list_realms.return_value = [{"id": 1}, {"id": 2}]
-    engine = MagicMock()
-    engine.db = db
+    engine = _patch_engine(announced=set(), realms=[{"id": 1}, {"id": 2}])
     posted: list[tuple[int, str]] = []
 
     async def _fake_post(bot, realm_id, text, *, reply_markup=None):
@@ -79,17 +82,13 @@ async def test_announce_pending_posts_then_marks():
     assert delivered == [note.id]
     assert [r for r, _ in posted] == [1, 2]
     assert all("Вестник долины" in t for _, t in posted)
-    db.mark_patch_announced.assert_called_once_with(note.id)
+    engine.mark_patch_announced.assert_called_once_with(note.id)
 
 
 @pytest.mark.asyncio
 async def test_announce_pending_skips_already_announced():
     note = PATCH_NOTES[0]
-    db = MagicMock()
-    db.list_announced_patch_names.return_value = {note.id}
-    db.list_realms.return_value = [{"id": 1}]
-    engine = MagicMock()
-    engine.db = db
+    engine = _patch_engine(announced={note.id}, realms=[{"id": 1}])
     post = AsyncMock(return_value=True)
 
     with (
@@ -101,17 +100,13 @@ async def test_announce_pending_skips_already_announced():
 
     assert delivered == []
     post.assert_not_called()
-    db.mark_patch_announced.assert_not_called()
+    engine.mark_patch_announced.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_announce_defers_mark_when_all_sends_fail():
     note = PATCH_NOTES[0]
-    db = MagicMock()
-    db.list_announced_patch_names.return_value = set()
-    db.list_realms.return_value = [{"id": 1}, {"id": 2}]
-    engine = MagicMock()
-    engine.db = db
+    engine = _patch_engine(announced=set(), realms=[{"id": 1}, {"id": 2}])
 
     async def _fail_post(bot, realm_id, text, *, reply_markup=None):
         return False
@@ -124,17 +119,13 @@ async def test_announce_defers_mark_when_all_sends_fail():
         delivered = await announce_pending_patches(object())
 
     assert delivered == []
-    db.mark_patch_announced.assert_not_called()
+    engine.mark_patch_announced.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_announce_marks_when_at_least_one_realm_ok():
     note = PATCH_NOTES[0]
-    db = MagicMock()
-    db.list_announced_patch_names.return_value = set()
-    db.list_realms.return_value = [{"id": 1}, {"id": 2}]
-    engine = MagicMock()
-    engine.db = db
+    engine = _patch_engine(announced=set(), realms=[{"id": 1}, {"id": 2}])
 
     async def _partial_post(bot, realm_id, text, *, reply_markup=None):
         return int(realm_id) == 2
@@ -147,17 +138,13 @@ async def test_announce_marks_when_at_least_one_realm_ok():
         delivered = await announce_pending_patches(object())
 
     assert delivered == [note.id]
-    db.mark_patch_announced.assert_called_once_with(note.id)
+    engine.mark_patch_announced.assert_called_once_with(note.id)
 
 
 @pytest.mark.asyncio
 async def test_announce_marks_when_no_realms():
     note = PATCH_NOTES[0]
-    db = MagicMock()
-    db.list_announced_patch_names.return_value = set()
-    db.list_realms.return_value = []
-    engine = MagicMock()
-    engine.db = db
+    engine = _patch_engine(announced=set(), realms=[])
     post = AsyncMock(return_value=True)
 
     with (
@@ -169,7 +156,7 @@ async def test_announce_marks_when_no_realms():
 
     assert delivered == [note.id]
     post.assert_not_called()
-    db.mark_patch_announced.assert_called_once_with(note.id)
+    engine.mark_patch_announced.assert_called_once_with(note.id)
 
 
 def test_db_mark_and_list_announced_patches_sql():
