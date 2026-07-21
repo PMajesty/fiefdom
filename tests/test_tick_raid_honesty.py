@@ -524,6 +524,17 @@ def _raid_stateful_engine(*, atk_extra=None, vic_extra=None, reverse_pair_at=Non
             row[col] = int(row.get(col) or 0) + int(amt)
         return dict(row)
 
+    def credit_campaign_return_might(fid, might):
+        amount = max(0, int(might))
+        if amount <= 0:
+            return dict(fiefs[int(fid)])
+        row = fiefs[int(fid)]
+        row["might"] = int(row.get("might") or 0) + amount
+        row["militia_prepaid_might"] = (
+            int(row.get("militia_prepaid_might") or 0) + amount
+        )
+        return dict(row)
+
     def last_pair(a, v):
         return pair_log.get((a, v))
 
@@ -579,6 +590,7 @@ def _raid_stateful_engine(*, atk_extra=None, vic_extra=None, reverse_pair_at=Non
     db.update_fief.side_effect = update_fief
     db.debit_fief_resources.side_effect = debit_fief_resources
     db.credit_fief_resources.side_effect = credit_fief_resources
+    db.credit_campaign_return_might.side_effect = credit_campaign_return_might
     db.get_realm.return_value = realm
     db.update_realm = MagicMock()
     db.last_raid_attacker_victim.side_effect = last_pair

@@ -136,6 +136,7 @@ def test_stand_down_refunds_open_stance():
     msg = engine.set_cover_stand_down(3)
     assert "стороне" in msg
     assert engine._fiefs[3]["might"] == 40
+    assert engine._fiefs[3].get("militia_prepaid_might", 0) == 0
     assert engine._fiefs[3]["cover_allies"] is False
     assert all(i["status"] == "cancelled" for i in engine._intents)
 
@@ -267,6 +268,7 @@ def test_settle_deployment_uses_battle_refund_map():
     )
     # После эскроу 20 дома осталось 20; вернули 17 из боя → 37.
     assert engine._fiefs[3]["might"] == 37
+    assert engine._fiefs[3]["militia_prepaid_might"] == 17
     assert any("вернулось 17" in n.text and "потери 3" in n.text for n in notices)
 
 
@@ -379,6 +381,7 @@ def test_leave_pact_before_lock_refunds_open_cover():
     engine.leave_pact(3)
     assert engine._fiefs[3]["pact_id"] is None
     assert engine._fiefs[3]["might"] == 40
+    assert engine._fiefs[3].get("militia_prepaid_might", 0) == 0
     assert engine._fiefs[3]["cover_allies"] is False
     assert all(
         i["status"] == "cancelled"
@@ -436,6 +439,7 @@ def test_dissolve_refunds_locked_cover_of_prior_leaver():
     msg = engine.leave_pact(4)
     assert "распущен" in msg.lower()
     assert engine._fiefs[3]["might"] == 40
+    assert engine._fiefs[3]["militia_prepaid_might"] == 12
     assert all(
         i["status"] == "cancelled"
         for i in engine._intents
@@ -565,6 +569,7 @@ def test_cover_allies_cleared_when_night_stance_resolves():
             i["status"] = "locked"
     notices = engine.resolve_remaining_cover_stances(1, 10)
     assert engine._fiefs[3]["might"] == 40
+    assert engine._fiefs[3]["militia_prepaid_might"] == 10
     assert engine._fiefs[3]["cover_allies"] is False
     assert notices
     # Без новой стойки авто-перехват не выбирает союзника.

@@ -368,6 +368,13 @@ def militia_upkeep_grain(might: int) -> int:
     return int(math.ceil(excess * MILITIA_GRAIN_PER_EXCESS))
 
 
+def militia_billable_might(might: int, prepaid_might: int = 0) -> int:
+    """Сила без prepaid-возврата с похода (на неё только и идёт утреннее жалование)."""
+    total = max(0, int(might))
+    prepaid = max(0, min(int(prepaid_might), total))
+    return total - prepaid
+
+
 def travel_supply_grain(might: int) -> int:
     """Разовое снабжение похода/заставы: ceil(B × ставка), без бесплатной полосы."""
     import math
@@ -387,6 +394,30 @@ def militia_affordable(might: int, grain_available: int) -> int:
     # free band always kept if we had them; disband only excess we can't pay
     max_excess = int(math.floor(grain_available / MILITIA_GRAIN_PER_EXCESS)) if MILITIA_GRAIN_PER_EXCESS else 10**9
     return MILITIA_FREE + max_excess
+
+
+def militia_keep_after_shortfall(
+    might: int,
+    paid_grain: int,
+    need_grain: int,
+    *,
+    prepaid_might: int = 0,
+) -> tuple[int, int]:
+    """Недоплата жалования: (новая сила, сколько разошлось).
+
+    Prepaid с похода не режется. Бесплатная полоса действует на billable
+    (домашних), не на prepaid.
+    """
+    total = max(0, int(might))
+    prepaid = max(0, min(int(prepaid_might), total))
+    billable = total - prepaid
+    if int(paid_grain) >= int(need_grain) or billable <= 0:
+        return total, 0
+    keep_billable = min(billable, militia_affordable(billable, int(paid_grain)))
+    if int(paid_grain) <= 0:
+        keep_billable = min(billable, MILITIA_FREE)
+    disbanded = billable - keep_billable
+    return prepaid + keep_billable, disbanded
 
 
 def militia_after_disband(might: int, keep: int) -> tuple[int, int]:

@@ -29,6 +29,72 @@ def test_militia_after_disband():
     assert B.militia_after_disband(10, 0) == (0, 10)
 
 
+def test_militia_billable_and_keep_respect_prepaid_and_free_band():
+    assert B.militia_billable_might(47, prepaid_might=42) == 5
+    assert B.militia_billable_might(40, prepaid_might=40) == 0
+    assert B.militia_upkeep_grain(B.militia_billable_might(40, 40)) == 0
+    # Весь prepaid сохранён; без зерна у домашних остаётся бесплатная полоса.
+    keep, lost = B.militia_keep_after_shortfall(
+        50, paid_grain=0, need_grain=3, prepaid_might=40
+    )
+    assert keep == 40 + B.MILITIA_FREE
+    assert lost == 5
+    # Полный prepaid: утром после возврата никого не режем.
+    keep_all, lost_all = B.militia_keep_after_shortfall(
+        40, paid_grain=0, need_grain=0, prepaid_might=40
+    )
+    assert keep_all == 40
+    assert lost_all == 0
+
+
+def test_tick_prepaid_return_skips_militia_disband_keeps_free_home():
+    tiles = [TileView(0, 0, B.TILE_HILLS, 1, None, 0)]
+    # Вернулись 40 с похода, дома ещё 10 - без зерна режем только домашних сверх 5.
+    state = FiefTickState(
+        stash={B.RES_GRAIN: 0, B.RES_GOODS: 0, B.RES_MIGHT: 50},
+        pending={B.RES_GRAIN: 0.0, B.RES_GOODS: 0.0, B.RES_MIGHT: 0.0},
+        actions=1,
+        hungry=False,
+        tiles=tiles,
+        barn_level=0,
+        militia_prepaid_might=40,
+    )
+    out = apply_fief_tick(state)
+    assert out.stash[B.RES_MIGHT] == 40 + B.MILITIA_FREE
+    assert out.militia_disbanded == 5
+    assert out.militia_upkeep == B.militia_upkeep_grain(10)
+
+
+def test_tick_full_prepaid_return_survives_empty_granary():
+    tiles = [TileView(0, 0, B.TILE_HILLS, 1, None, 0)]
+    state = FiefTickState(
+        stash={B.RES_GRAIN: 0, B.RES_GOODS: 0, B.RES_MIGHT: 42},
+        pending={B.RES_GRAIN: 0.0, B.RES_GOODS: 0.0, B.RES_MIGHT: 0.0},
+        actions=1,
+        hungry=False,
+        tiles=tiles,
+        barn_level=0,
+        militia_prepaid_might=42,
+    )
+    out = apply_fief_tick(state)
+    assert out.stash[B.RES_MIGHT] == 42
+    assert out.militia_disbanded == 0
+    assert out.militia_upkeep == 0
+    # Следующий тик без prepaid - полный роспуск до бесплатных 5.
+    next_state = FiefTickState(
+        stash=dict(out.stash),
+        pending=dict(out.pending),
+        actions=out.actions,
+        hungry=out.hungry,
+        tiles=tiles,
+        barn_level=0,
+        militia_prepaid_might=0,
+    )
+    next_out = apply_fief_tick(next_state)
+    assert next_out.stash[B.RES_MIGHT] == B.MILITIA_FREE
+    assert next_out.militia_disbanded == 42 - B.MILITIA_FREE
+
+
 def test_hungry_zeros_watch_might_keeps_full_manor_refill():
     tiles = [
         TileView(0, 0, B.TILE_FIELD, 1, B.BLD_MANOR, 1),
@@ -263,3 +329,129 @@ def test_gather_resources_kb_hides_might_when_hungry():
     ]
     assert f"gth:2:{B.RES_MIGHT}" in fed_data
     assert f"gth:2:{B.RES_MIGHT}" not in hungry_data
+
+
+def test_realm_tick_clears_prepaid_for_active_and_inactive():
+    from contextlib import nullcontext
+
+    from app.services.realm_tick import RealmTickRunner
+
+    fiefs = {
+        1: {
+            "id": 1,
+            "realm_id": 1,
+            "frozen": False,
+            "actions": 1,
+            "hungry": False,
+            "grain": 20,
+            "goods": 0,
+            "might": 40,
+            "pending_grain": 0.0,
+            "pending_goods": 0.0,
+            "pending_might": 0.0,
+            "militia_prepaid_might": 35,
+            "patrol_until_tick": None,
+            "shield_until_tick": None,
+            "patrol_until": None,
+            "shield_until": None,
+        },
+        2: {
+            "id": 2,
+            "realm_id": 1,
+            "frozen": False,
+            "actions": 1,
+            "hungry": False,
+            "grain": 0,
+            "goods": 0,
+            "might": 20,
+            "pending_grain": 0.0,
+            "pending_goods": 0.0,
+            "pending_might": 0.0,
+            "militia_prepaid_might": 18,
+            "patrol_until_tick": None,
+            "shield_until_tick": None,
+            "patrol_until": None,
+            "shield_until": None,
+        },
+    }
+    updates: list[tuple[int, dict]] = []
+
+    class _Db:
+        def get_realm(self, _rid):
+            return {
+                "id": 1,
+                "title": "Долина",
+                "tick_index": 3,
+                "day_number": 3,
+                "timezone": "UTC",
+                "chat_id": -100,
+                "pending_raid_lines": [],
+                "active_minor_key": None,
+            }
+
+        def list_fiefs(self, _rid):
+            return [dict(fiefs[1]), dict(fiefs[2])]
+
+        def fief_tiles(self, fid):
+            return [
+                {
+                    "x": 0,
+                    "y": 0,
+                    "tile_type": B.TILE_FIELD,
+                    "owner_fief_id": int(fid),
+                    "building": B.BLD_MANOR,
+                    "building_level": 1,
+                    "is_core": True,
+                    "is_overgrown": False,
+                }
+            ]
+
+        def update_fief(self, fid, **fields):
+            fiefs[int(fid)].update(fields)
+            updates.append((int(fid), dict(fields)))
+
+        def update_realm(self, _rid, **_fields):
+            return None
+
+        def transaction(self):
+            return nullcontext()
+
+    class _Eng:
+        def apply_absence(self, _rid):
+            return None
+
+        def _resolve_tile_entities(self, _rid, _tick):
+            return [], []
+
+        def _prepare_tick_minor(self, _rid, consume_pending=True):
+            return None
+
+        def realm_modifiers(self, _realm, tile_entities=None):
+            class _M:
+                def farm_mult(self):
+                    return 1.0
+
+            return _M()
+
+        def barn_level(self, _fid):
+            return 0
+
+        def fief_is_active_play(self, fief):
+            return int(fief["id"]) == 1
+
+        def _feud_lines(self, _rid):
+            return []
+
+        def maybe_grow_map(self, _rid):
+            return None
+
+        def _sunday_extra(self, _rid):
+            return None
+
+    RealmTickRunner(_Eng(), _Db()).run_realm_tick(1, advance_clock=False)
+    assert fiefs[1]["militia_prepaid_might"] == 0
+    assert fiefs[2]["militia_prepaid_might"] == 0
+    assert any(
+        fid == 2 and fields.get("militia_prepaid_might") == 0
+        for fid, fields in updates
+    )

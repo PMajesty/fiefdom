@@ -453,7 +453,12 @@ class Engine:
         tier = absence_mod.inactivity_tier(inactive_ticks)
         if tier == "dormant":
             flags.append("Дремлет")
-        militia = B.militia_upkeep_grain(fief["might"])
+        militia = B.militia_upkeep_grain(
+            B.militia_billable_might(
+                fief["might"],
+                int(fief.get("militia_prepaid_might") or 0),
+            )
+        )
         land = B.land_upkeep(len([t for t in tiles if not t.get("is_overgrown")]))
         active_tiles = [t for t in tiles if not t.get("is_overgrown")]
         # Уже расширились, но квест на клейм ещё висит (старые усадьбы / сбой).

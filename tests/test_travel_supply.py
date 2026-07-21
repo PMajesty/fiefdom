@@ -127,6 +127,7 @@ def test_cover_pre_lock_cancel_and_stand_down_refund_supply():
     msg = engine.cancel_cover_stance_intent(3, intent["id"])
     assert engine._fiefs[3]["might"] == 40
     assert engine._fiefs[3]["grain"] == grain0
+    assert engine._fiefs[3].get("militia_prepaid_might", 0) == 0
     assert str(fee) in msg
 
     engine.set_cover_stance(3, mode=COVER_MODE_ANY, budget=8)
@@ -135,6 +136,7 @@ def test_cover_pre_lock_cancel_and_stand_down_refund_supply():
     engine.set_cover_stand_down(3)
     assert engine._fiefs[3]["might"] == 40
     assert engine._fiefs[3]["grain"] == grain0
+    assert engine._fiefs[3].get("militia_prepaid_might", 0) == 0
 
 
 def test_cover_same_budget_retarget_no_second_charge():
@@ -149,6 +151,7 @@ def test_cover_same_budget_retarget_no_second_charge():
     )
     assert engine._fiefs[3]["grain"] == grain0 - fee
     assert engine._fiefs[3]["might"] == 30
+    assert engine._fiefs[3].get("militia_prepaid_might", 0) == 0
     assert "без доплаты" in msg.lower()
     open_intents = [
         i
@@ -230,8 +233,10 @@ def test_cover_budget_change_nets_supply():
     fee20 = B.travel_supply_grain(20)
     assert engine._fiefs[3]["grain"] == grain0 - fee20
     assert fee20 - fee10 == 5
+    assert engine._fiefs[3].get("militia_prepaid_might", 0) == 0
     engine.set_cover_stance(3, mode=COVER_MODE_ANY, budget=10)
     assert engine._fiefs[3]["grain"] == grain0 - fee10
+    assert engine._fiefs[3].get("militia_prepaid_might", 0) == 0
 
 
 def test_leave_pact_open_refunds_supply_dissolve_open_too():
@@ -343,6 +348,7 @@ def test_guide_and_patch_note_document_road_supply():
     text = game_guide()
     assert "снабжение похода" in text.lower()
     assert "дружина дома" in text.lower() or "только для тех, кто дома" in text
+    assert "после возврата" in text.lower()
     note = next(n for n in PATCH_NOTES if n.id == "road_supply_fee_v1")
     body = " ".join(note.body_lines).lower()
     assert "снабжение" in body

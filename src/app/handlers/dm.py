@@ -188,9 +188,15 @@ def patrol_prompt_callback(fief_id: int) -> str:
     return f"pat:{int(fief_id)}"
 
 
-def disband_prompt_text(might: int, *, hungry: bool = False) -> str:
+def disband_prompt_text(
+    might: int,
+    *,
+    hungry: bool = False,
+    prepaid_might: int = 0,
+) -> str:
     current = max(0, int(might))
-    feed = B.militia_upkeep_grain(current)
+    billable = B.militia_billable_might(current, prepaid_might)
+    feed = B.militia_upkeep_grain(billable)
     free = int(B.MILITIA_FREE)
     feed_free = B.militia_upkeep_grain(free)
     lines = [

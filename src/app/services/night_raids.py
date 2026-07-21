@@ -185,8 +185,8 @@ class NightRaidResolver:
                     if not self._db.claim_resolve_action_intent(int(intent["id"])):
                         continue
                     if might > 0:
-                        self._db.credit_fief_resources(
-                            int(intent["fief_id"]), might=might
+                        self._db.credit_campaign_return_might(
+                            int(intent["fief_id"]), might
                         )
                 report.resolved_count += 1
             return
@@ -316,7 +316,7 @@ class NightRaidResolver:
                 if not claimed:
                     continue
                 if returned > 0:
-                    self._db.credit_fief_resources(fate.fief_id, might=returned)
+                    self._db.credit_campaign_return_might(fate.fief_id, returned)
                 self._db.update_action_intent_payload(fate.intent_id, payload)
                 atk = self._db.get_fief(fate.fief_id)
                 if atk:
@@ -408,7 +408,9 @@ class NightRaidResolver:
                     if not claimed:
                         continue
                     if returned > 0:
-                        self._db.credit_fief_resources(fate.fief_id, might=returned)
+                        self._db.credit_campaign_return_might(
+                            fate.fief_id, returned
+                        )
                 report.resolved_count += 1
                 atk = self._db.get_fief(fate.fief_id)
                 if atk:
@@ -457,7 +459,9 @@ class NightRaidResolver:
                         if not claimed:
                             continue
                         if returned > 0:
-                            self._db.credit_fief_resources(f2.fief_id, might=returned)
+                            self._db.credit_campaign_return_might(
+                                f2.fief_id, returned
+                            )
                     report.resolved_count += 1
                     atk = self._db.get_fief(f2.fief_id)
                     if atk:
@@ -677,7 +681,7 @@ class NightRaidResolver:
                 if not claimed:
                     continue
                 if returned > 0:
-                    self._db.credit_fief_resources(fate.fief_id, might=returned)
+                    self._db.credit_campaign_return_might(fate.fief_id, returned)
 
                 if result.success and sum(stolen_bag.values()) > 0:
                     vic_live = self._db.get_fief(victim_id) or vic

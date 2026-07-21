@@ -129,7 +129,10 @@ class RealmTickRunner:
                     )
 
             # Неактивная долина владельца: без урожая и без +действия.
+            # Prepaid с похода всё равно сгорает - иначе льгота перенесётся на недели.
             if not self._engine.fief_is_active_play(fief):
+                if int(fief.get("militia_prepaid_might") or 0) > 0:
+                    self._db.update_fief(fief["id"], militia_prepaid_might=0)
                 continue
 
             farm_mult = base_farm_mult
@@ -146,6 +149,7 @@ class RealmTickRunner:
                 **out.balance_columns(),
                 actions=out.actions,
                 hungry=out.hungry,
+                militia_prepaid_might=0,
             )
             outcomes.append((fief, out))
 

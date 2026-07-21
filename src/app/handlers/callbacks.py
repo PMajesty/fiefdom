@@ -174,7 +174,9 @@ async def cb_disband(callback: CallbackQuery) -> None:
             await answer_html(
                 callback.message,
                 dm_mod.disband_prompt_text(
-                    might, hungry=bool(fief.get("hungry"))
+                    might,
+                    hungry=bool(fief.get("hungry")),
+                    prepaid_might=int(fief.get("militia_prepaid_might") or 0),
                 ),
                 reply_markup=dm_mod.disband_militia_kb(fief_id, might),
             )

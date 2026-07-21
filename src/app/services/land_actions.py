@@ -312,8 +312,15 @@ class LandActionService:
         new_might, lost = B.militia_after_disband(current, keep)
         if lost <= 0:
             raise ValueError("Некого распускать")
-        self._db.update_fief(fief_id, might=new_might)
-        feed = B.militia_upkeep_grain(new_might)
+        prepaid = min(int(fief.get("militia_prepaid_might") or 0), new_might)
+        self._db.update_fief(
+            fief_id,
+            might=new_might,
+            militia_prepaid_might=prepaid,
+        )
+        feed = B.militia_upkeep_grain(
+            B.militia_billable_might(new_might, prepaid)
+        )
         return (
             f"Распустил {lost} (−{lost} Силы). "
             f"Дома {new_might}, корм дружины {feed} зерна/день."

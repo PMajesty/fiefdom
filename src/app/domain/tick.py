@@ -34,6 +34,7 @@ class FiefTickState:
     barn_level: int
     farm_mult: float = 1.0
     workshop_mult: float = 1.0
+    militia_prepaid_might: int = 0
 
     @classmethod
     def from_fief_row(
@@ -54,6 +55,7 @@ class FiefTickState:
             barn_level=barn_level,
             farm_mult=farm_mult,
             workshop_mult=workshop_mult,
+            militia_prepaid_might=int(fief.get("militia_prepaid_might") or 0),
         )
 
     def stash_bag(self) -> ResourceBag:
@@ -147,15 +149,18 @@ def apply_fief_tick(state: FiefTickState) -> TickOutcome:
     if hungry:
         notes.append("Голод: нечем платить содержание земли")
 
-    militia_need = B.militia_upkeep_grain(might)
+    # Снабжение похода уже оплатило месяц: prepaid не входит в утреннее жалование.
+    billable = B.militia_billable_might(might, state.militia_prepaid_might)
+    militia_need = B.militia_upkeep_grain(billable)
     grain, pending_grain, paid_mil = _pay_grain(grain, pending_grain, militia_need)
     disbanded = 0
     if paid_mil < militia_need:
-        keep = min(might, B.militia_affordable(might, paid_mil))
-        if paid_mil <= 0:
-            keep = min(might, B.MILITIA_FREE)
-        disbanded = max(0, might - keep)
-        might = keep
+        might, disbanded = B.militia_keep_after_shortfall(
+            might,
+            paid_mil,
+            militia_need,
+            prepaid_might=state.militia_prepaid_might,
+        )
         if disbanded:
             notes.append(f"Нечем кормить дружину - разошлись {disbanded} (−{disbanded} Силы)")
 

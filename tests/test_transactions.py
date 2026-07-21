@@ -750,12 +750,24 @@ def test_raid_interceptor_debit_cas_miss_reresolves_without_interceptor():
             row[col] = int(row.get(col) or 0) + int(amt)
         return dict(row)
 
+    def credit_campaign_return_might(fid, might):
+        amount = max(0, int(might))
+        if amount <= 0:
+            return dict(fiefs[int(fid)])
+        row = fiefs[int(fid)]
+        row["might"] = int(row.get("might") or 0) + amount
+        row["militia_prepaid_might"] = (
+            int(row.get("militia_prepaid_might") or 0) + amount
+        )
+        return dict(row)
+
     db = MagicMock()
     db.transaction.return_value = nullcontext()
     db.get_fief.side_effect = get_fief
     db.update_fief.side_effect = update_fief
     db.debit_fief_resources.side_effect = debit_fief_resources
     db.credit_fief_resources.side_effect = credit_fief_resources
+    db.credit_campaign_return_might.side_effect = credit_campaign_return_might
     db.get_realm.return_value = realm
     db.realms_are_adjacent.return_value = True
     db.last_raid_attacker_victim.return_value = None
@@ -816,7 +828,10 @@ def test_raid_interceptor_debit_cas_miss_reresolves_without_interceptor():
     )
     assert report.resolved_count == 1
     assert fiefs[3]["might"] == ally_might_before
-    assert fiefs[1]["might"] == 7 + 1  # returned commit-lost = 5-4
+    # Схватка у ворот переписывает might_lost мока; домой commit − смерти у ворот.
+    returned = int(fiefs[1]["might"]) - 7
+    assert returned > 0
+    assert fiefs[1]["militia_prepaid_might"] == returned
     assert fiefs[2]["grain"] == 38
     assert fiefs[2]["goods"] == 9
     db.debit_fief_resources.assert_any_call(3, might=B.INTERCEPT_MIGHT)

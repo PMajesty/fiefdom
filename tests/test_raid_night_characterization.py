@@ -105,6 +105,17 @@ def _raid_night_engine(
             row[col] = int(row.get(col) or 0) + int(amt)
         return dict(row)
 
+    def credit_campaign_return_might(fid, might):
+        amount = max(0, int(might))
+        if amount <= 0:
+            return dict(fiefs[int(fid)])
+        row = fiefs[int(fid)]
+        row["might"] = int(row.get("might") or 0) + amount
+        row["militia_prepaid_might"] = (
+            int(row.get("militia_prepaid_might") or 0) + amount
+        )
+        return dict(row)
+
     def get_realm(rid):
         row = realms.get(int(rid))
         return dict(row) if row else None
@@ -172,6 +183,7 @@ def _raid_night_engine(
     db.update_fief.side_effect = update_fief
     db.debit_fief_resources.side_effect = debit_fief_resources
     db.credit_fief_resources.side_effect = credit_fief_resources
+    db.credit_campaign_return_might.side_effect = credit_campaign_return_might
     db.get_realm.side_effect = get_realm
     db.update_realm.side_effect = update_realm
     db.last_raid_attacker_victim.side_effect = lambda a, v: pair_log.get((a, v))
@@ -365,6 +377,9 @@ def test_multi_stack_road_to_siege_live_resolve_pins_notices_loot_shield():
     # После дороги 32 в осаде, у ворот atk-налог от слабой стороны → домой 29 + база 10.
     assert engine._fiefs[1]["might"] == 39
     assert engine._fiefs[3]["might"] == 32
+    # Вернувшаяся сила помечена prepaid на ближайший тик жалования.
+    assert engine._fiefs[1]["militia_prepaid_might"] == 29
+    assert engine._fiefs[3]["militia_prepaid_might"] == 22
     assert engine._log_calls[0]["attacker_fief_id"] == 3
     assert engine._log_calls[0]["success"] is False
     assert engine._log_calls[0]["might_spent"] == 30

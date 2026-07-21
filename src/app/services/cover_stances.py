@@ -85,19 +85,26 @@ class CoverStanceService:
         fief_id: int,
         payload: dict,
         refund_supply: bool,
+        prepaid: bool = False,
     ) -> int:
-        """Вернуть силу; зерно снабжения - только если refund_supply и оно было списано."""
+        """Вернуть силу; зерно снабжения - только если refund_supply и оно было списано.
+
+        prepaid=True: снабжение осталось у двора (locked), сила идёт как возврат с похода.
+        Не ставить prepaid при временном возврате перед переэскроу (смена стойки).
+        """
         budget = int(payload.get("budget") or 0)
-        credit: dict[str, int] = {}
+        credited_might = 0
         if budget > 0 and payload.get("escrowed"):
-            credit["might"] = budget
+            if prepaid:
+                self._db.credit_campaign_return_might(int(fief_id), budget)
+            else:
+                self._db.credit_fief_resources(int(fief_id), might=budget)
+            credited_might = budget
         if refund_supply:
             supply = intent_supply_grain(payload)
             if supply > 0:
-                credit["grain"] = supply
-        if credit:
-            self._db.credit_fief_resources(int(fief_id), **credit)
-        return budget if "might" in credit else 0
+                self._db.credit_fief_resources(int(fief_id), grain=supply)
+        return credited_might
 
     def _cancel_open_stance_refund(
         self, intent: dict, *, refund_supply: bool = True
@@ -110,6 +117,7 @@ class CoverStanceService:
             fief_id=int(intent["fief_id"]),
             payload=payload,
             refund_supply=refund_supply,
+            prepaid=False,
         )
 
     def refund_cover_stances_for_fief(
@@ -138,6 +146,7 @@ class CoverStanceService:
                 fief_id=int(intent["fief_id"]),
                 payload=payload,
                 refund_supply=was_open,
+                prepaid=not was_open,
             )
         self._sync_cover_allies_flag(int(fief_id))
         return refunded
@@ -175,6 +184,7 @@ class CoverStanceService:
                 fief_id=helper_fid,
                 payload=payload,
                 refund_supply=was_open,
+                prepaid=not was_open,
             )
             touched.add(helper_fid)
         for fid in touched:
@@ -483,7 +493,9 @@ class CoverStanceService:
                     continue
                 self._sync_cover_allies_flag(helper_fid)
             if battle_refund > 0:
-                self._db.credit_fief_resources(helper_fid, might=int(battle_refund))
+                self._db.credit_campaign_return_might(
+                    helper_fid, int(battle_refund)
+                )
             if deployed <= 0:
                 continue
             helper_row = self._db.get_fief(helper_fid)
@@ -540,7 +552,7 @@ class CoverStanceService:
             budget = int(payload.get("budget") or 0)
             helper_fid = int(claimed["fief_id"])
             if budget > 0 and payload.get("escrowed"):
-                self._db.credit_fief_resources(helper_fid, might=budget)
+                self._db.credit_campaign_return_might(helper_fid, budget)
             self._sync_cover_allies_flag(helper_fid)
             helper = self._db.get_fief(helper_fid)
             if helper and budget > 0:

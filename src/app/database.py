@@ -184,6 +184,7 @@ class Database(
                     {", ".join(fief_stash_ddl_lines())},
                     actions INT NOT NULL DEFAULT 1,
                     hungry BOOLEAN NOT NULL DEFAULT FALSE,
+                    militia_prepaid_might INT NOT NULL DEFAULT 0,
                     patrol_until TIMESTAMPTZ,
                     shield_until TIMESTAMPTZ,
                     patrol_until_tick INT,
@@ -408,6 +409,8 @@ class Database(
                 "ALTER TABLE fiefs ADD COLUMN IF NOT EXISTS last_raid_tick INT;",
                 "ALTER TABLE fiefs ADD COLUMN IF NOT EXISTS last_active_tick INT;",
                 "ALTER TABLE fiefs ADD COLUMN IF NOT EXISTS pact_left_tick INT;",
+                "ALTER TABLE fiefs ADD COLUMN IF NOT EXISTS militia_prepaid_might "
+                "INT NOT NULL DEFAULT 0;",
                 "ALTER TABLE trade_offers ADD COLUMN IF NOT EXISTS expires_tick INT;",
                 "ALTER TABLE pact_invites ADD COLUMN IF NOT EXISTS expires_tick INT;",
                 "ALTER TABLE personal_deals ADD COLUMN IF NOT EXISTS expires_tick INT;",
@@ -1674,6 +1677,35 @@ class Database(
         with self.lock:
             try:
                 self.cursor.execute(sql, params)
+                row = self.cursor.fetchone()
+                if not row:
+                    self.commit()
+                    return None
+                cols = [d[0] for d in self.cursor.description]
+                result = self._normalize(dict(zip(cols, row)))
+                self.commit()
+                return result
+            except Exception:
+                self._rollback_outside_tx()
+                raise
+
+    def credit_campaign_return_might(self, fief_id: int, might: int) -> dict | None:
+        """Вернуть силу с похода и отметить prepaid на ближайший тик жалования."""
+        amount = max(0, int(might))
+        if amount <= 0:
+            return self.get_fief(fief_id)
+        with self.lock:
+            try:
+                self.cursor.execute(
+                    """
+                    UPDATE fiefs
+                    SET might = might + %s,
+                        militia_prepaid_might = militia_prepaid_might + %s
+                    WHERE id = %s
+                    RETURNING *;
+                    """,
+                    (amount, amount, int(fief_id)),
+                )
                 row = self.cursor.fetchone()
                 if not row:
                     self.commit()
