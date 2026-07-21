@@ -97,33 +97,16 @@ def test_compose_foreign_rumor_prefixes_valley():
     assert "Пётр" in text
 
 
-def test_fluff_templates_pool_size():
-    assert len(rumors._FLUFF_TEMPLATES) == 55
-    assert all("{name}" in line for line in rumors._FLUFF_TEMPLATES)
-    assert all(
-        bad not in " ".join(rumors._FLUFF_TEMPLATES)
-        for bad in ("зарплат", "рейд", "табуретка", "мозолями на языке")
-    )
+def test_roll_rumor_line_empty_pool_without_hints():
+    assert rumors.roll_rumor_line((), (), (), Random(1)) is None
 
 
-def test_compose_fluff_named_and_opener():
-    text = rumors.compose_fluff_rumor("Кирилл", Random(3))
-    assert "Кирилл" in text
-    assert any(text.startswith(op) for op in rumors.RUMOR_OPENERS)
-
-
-def test_roll_rumor_line_fluff_rate_near_quarter():
-    local = [_snap(fief_id=1, name="А")]
-    foreign = [_snap(fief_id=2, name="Б", realm_title="Юг")]
-    fluff = 0
-    n = 800
-    for seed in range(n):
-        line = rumors.roll_rumor_line(local, foreign, (), Random(seed))
+def test_roll_rumor_line_is_gameplay_intel():
+    local = [_snap(fief_id=1, name="А", grain=10, goods=5, might=5)]
+    for seed in range(80):
+        line = rumors.roll_rumor_line(local, (), (), Random(seed))
         assert line
-        if any(line.startswith(op) for op in rumors.RUMOR_OPENERS):
-            fluff += 1
-    rate = fluff / n
-    assert 0.18 <= rate <= 0.32
+        assert line.startswith("У А, говорят,") or line.startswith("Про А:")
 
 
 def test_roll_rumor_line_mixed_pool_can_foreign():
