@@ -52,10 +52,20 @@ def home_kb(
     *,
     prepared_count: int = 0,
     early_tick_label: str | None = None,
+    hungry: bool = False,
 ) -> InlineKeyboardMarkup:
     """Дом: опциональный квест-CTA + Дела / Связи + карта и правила."""
     fid = int(fief_id)
     rows: list[list[InlineKeyboardButton]] = []
+    if hungry:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="Голод · распустить",
+                    callback_data=f"dis:{fid}",
+                )
+            ]
+        )
     if primary_label and primary_callback:
         rows.append(
             [
@@ -226,7 +236,13 @@ def estate_hub_kb(
                 InlineKeyboardButton(text="Дозор", callback_data=f"pat:{fid}"),
             ],
             [
+                InlineKeyboardButton(
+                    text="Распустить",
+                    callback_data=f"dis:{fid}",
+                ),
                 InlineKeyboardButton(text="Снос", callback_data=f"dml:{fid}"),
+            ],
+            [
                 raid_btn,
             ],
             [
@@ -340,4 +356,5 @@ def main_menu_kb(
         cb,
         prepared_count=prepared_count,
         early_tick_label=early_tick_label,
+        hungry=bool(fief.get("hungry")),
     )

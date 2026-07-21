@@ -2,7 +2,13 @@
 from __future__ import annotations
 
 from app import balance as B
-from app.domain.production import Production, building_production, tile_passive
+from app.domain.hunger import hunger_holdings_banner
+from app.domain.production import (
+    Production,
+    apply_hunger_to_yields,
+    building_production,
+    tile_passive,
+)
 
 from app.domain.map_gen import coord_label
 from app.domain.resource_bags import add_bags
@@ -98,7 +104,10 @@ def tile_effect_text(
         total_bag, defense=passive.defense + built.defense
     )
     if hungry:
-        total = total.scale(B.HUNGER_PRODUCTION_MULT)
+        preserved = 0.0
+        if building == B.BLD_MANOR:
+            preserved = float(total.resources().get(B.RES_MIGHT, 0) or 0)
+        total = apply_hunger_to_yields(total, preserved_might=preserved)
 
     parts = format_prod_parts(total.resources(), defense=total.defense)
     if (
@@ -163,7 +172,7 @@ def format_holdings(
         f"{fief_label} · {len(ordered)}/{B.TILE_HARD_CAP} клеток",
     ]
     if hungry:
-        lines.append("Голод: урожай с земли снижен вдвое.")
+        lines.append(hunger_holdings_banner())
     lines.append("")
 
     if not ordered:

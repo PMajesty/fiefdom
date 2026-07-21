@@ -227,6 +227,16 @@ def test_home_kb_without_primary_starts_with_hubs():
     assert [btn.text for btn in rows[1]] == ["Карта", "Правила"]
 
 
+def test_home_kb_hungry_shows_disband_row():
+    from app.handlers.shared import home_kb
+
+    kb = home_kb(9, hungry=True)
+    rows = kb.inline_keyboard
+    assert rows[0][0].text == "Голод · распустить"
+    assert rows[0][0].callback_data == "dis:9"
+    assert [btn.text for btn in rows[1]] == ["Дела", "Связи"]
+
+
 def test_home_kb_has_primary_hubs_map_guide():
     from app.handlers.shared import home_kb
 
@@ -292,6 +302,7 @@ def test_estate_and_valley_hub_prefixes():
         "bld:9",
         "gth:9",
         "pat:9",
+        "dis:9",
         "dml:9",
         "rad:9",
         "prep:9",

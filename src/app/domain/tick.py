@@ -81,23 +81,22 @@ class TickOutcome:
 
 def _pay_grain(grain: int, pending: float, amount: int) -> tuple[int, float, int]:
     """Списывает amount зерна со stash, затем pending. Возвращает (grain, pending, paid)."""
-    need = max(0, amount)
-    take = min(grain, need)
-    grain -= take
-    need -= take
-    if need > 0 and pending > 0:
-        take_p = min(pending, float(need))
-        pending -= take_p
-        need -= int(take_p)
-        frac = take_p - int(take_p)
-        if need > 0 and frac > 0:
-            pending = max(0.0, pending - (need - frac))
-            need = 0
-        elif need > 0 and pending >= need:
-            pending -= need
-            need = 0
-    paid = amount - need
-    return grain, max(0.0, pending), paid
+    import math
+
+    remaining = float(max(0, int(amount)))
+    g = max(0, int(grain))
+    take_g = min(float(g), remaining)
+    g -= int(take_g)
+    remaining -= take_g
+    p = max(0.0, float(pending))
+    take_p = min(p, remaining)
+    p -= take_p
+    remaining -= take_p
+    if remaining <= 1e-9:
+        paid = int(amount)
+    else:
+        paid = max(0, int(amount) - int(math.ceil(remaining - 1e-9)))
+    return g, max(0.0, p), paid
 
 
 def apply_fief_tick(state: FiefTickState) -> TickOutcome:
@@ -159,6 +158,16 @@ def apply_fief_tick(state: FiefTickState) -> TickOutcome:
         might = keep
         if disbanded:
             notes.append(f"Нечем кормить дружину - разошлись {disbanded} (−{disbanded} Силы)")
+
+    if hungry:
+        # При голоде в pending силы только добор двора (после trim дружины).
+        refill = fief_daily_production(
+            state.tiles,
+            hungry=True,
+            farm_mult=state.farm_mult,
+            current_might=int(might),
+        )
+        pending[B.RES_MIGHT] = float(refill.resources()[B.RES_MIGHT])
 
     stash[B.RES_GRAIN] = grain
     stash[B.RES_MIGHT] = might

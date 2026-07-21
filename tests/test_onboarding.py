@@ -591,7 +591,9 @@ def test_status_card_groups_blocks_for_glance():
     assert "Зерно:" not in text
     assert "Содержание:" not in text
     assert text.startswith("🏡 <b>Усадьба @Artyom_dio</b> · день 2\n\n")
-    assert "Статусы: Голод\n\n⚡ Действия: 0/" in text
+    assert "Голод: земли нечем кормить" in text
+    assert "Статусы: Голод" in text
+    assert "⚡ Действия: 0/" in text
     assert f"⚡ Действия: 0/{B.ACTIONS_BANK_MAX} · Клетки: 2/{B.TILE_HARD_CAP}" in text
     assert "🌾 39 · 📦 31 · ⚔️ 5 · 🛡 17" in text
     assert f"Склад до {B.DEFAULT_STASH_CAP} · без амбара" in text

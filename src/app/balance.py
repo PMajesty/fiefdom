@@ -389,6 +389,13 @@ def militia_affordable(might: int, grain_available: int) -> int:
     return MILITIA_FREE + max_excess
 
 
+def militia_after_disband(might: int, keep: int) -> tuple[int, int]:
+    """Добровольный роспуск: (новая сила, сколько ушло). keep в [0, might]."""
+    current = max(0, int(might))
+    target = max(0, min(int(keep), current))
+    return target, current - target
+
+
 def building_upgrade_cost(building: str, target_level: int) -> int:
     costs = BUILDING_COSTS[building]
     if target_level not in costs:

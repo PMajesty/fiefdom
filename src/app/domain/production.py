@@ -117,6 +117,16 @@ def building_production(building: str, level: int, tile_type: str) -> Production
     return Production()
 
 
+def apply_hunger_to_yields(
+    prod: Production, *, preserved_might: float = 0.0
+) -> Production:
+    """Урожай × голод; сила обнуляется, затем возвращается preserved_might (двор)."""
+    cleared = prod.with_amounts(**{B.RES_MIGHT: 0.0})
+    return cleared.scale(B.HUNGER_PRODUCTION_MULT).with_amounts(
+        **{B.RES_MIGHT: float(preserved_might)}
+    )
+
+
 def fief_daily_production(
     tiles: list[TileView],
     *,
@@ -144,13 +154,13 @@ def fief_daily_production(
     # Сила двора только до бесплатного потолка дружины.
     free_room = max(0, B.MILITIA_FREE - max(0, int(current_might)))
     manor_applied = min(manor_might, float(free_room))
-    total = total.with_amounts(
-        **{B.RES_MIGHT: total.resources()[B.RES_MIGHT] + manor_applied}
-    )
     if active_tiles > 0 and B.FIEF_BASE_GOODS:
         total = total.with_amounts(
             **{B.RES_GOODS: total.resources()[B.RES_GOODS] + B.FIEF_BASE_GOODS}
         )
     if hungry:
-        total = total.scale(B.HUNGER_PRODUCTION_MULT)
-    return total
+        # Сторожки молчат; двор добирает до потолка полностью (не вдвое).
+        return apply_hunger_to_yields(total, preserved_might=manor_applied)
+    return total.with_amounts(
+        **{B.RES_MIGHT: total.resources()[B.RES_MIGHT] + manor_applied}
+    )

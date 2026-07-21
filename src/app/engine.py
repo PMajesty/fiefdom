@@ -437,7 +437,8 @@ class Engine:
         prod = self.fief_prod(fief)
         barn = self.barn_level(fief_id)
         flags = []
-        if fief["hungry"]:
+        hungry = bool(fief["hungry"])
+        if hungry:
             flags.append("Голод")
         if tick_active(fief.get("patrol_until_tick"), tick_index):
             flags.append("Дозор")
@@ -478,6 +479,10 @@ class Engine:
             )
             if hint:
                 alerts.append(f"Набег и пакт - {hint}.")
+        if hungry:
+            from app.domain.hunger import hunger_status_alert
+
+            alerts.append(hunger_status_alert())
         if flags:
             alerts.append(f"Статусы: {', '.join(flags)}")
         defense = standing_raid_defense(
@@ -801,6 +806,9 @@ class Engine:
 
     def gather_resource(self, fief_id: int, resource: str) -> str:
         return self._land_actions.gather_resource(fief_id, resource)
+
+    def disband_militia(self, fief_id: int, keep: int) -> str:
+        return self._land_actions.disband_militia(fief_id, keep)
 
     def _onboard_claim(self, fief_id: int) -> None:
         return self._land_actions._onboard_claim(fief_id)

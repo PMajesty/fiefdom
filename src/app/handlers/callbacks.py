@@ -125,19 +125,22 @@ async def cb_gather(callback: CallbackQuery) -> None:
     try:
         parts = callback.data.split(":")
         fief_id = int(parts[1])
-        engine.require_owned_fief(fief_id, callback.from_user.id)
+        fief = engine.require_owned_fief(fief_id, callback.from_user.id)
+        hungry = bool(fief.get("hungry"))
         if len(parts) == 2:
+            lines = [
+                "Сбор за 1 действие - плоская добыча, здания не нужны:",
+            ]
+            for r in resource_defs():
+                if hungry and r.key == B.RES_MIGHT:
+                    lines.append(f"• {r.synonyms[0]} - при голоде нельзя")
+                    continue
+                lines.append(f"• {r.synonyms[0]} +{B.gather_amount(r.key)}")
             await _ok(callback)
             await answer_html(
                 callback.message,
-                (
-                    "Сбор за 1 действие - плоская добыча, здания не нужны:\n"
-                    + "\n".join(
-                        f"• {r.synonyms[0]} +{B.gather_amount(r.key)}"
-                        for r in resource_defs()
-                    )
-                ),
-                reply_markup=dm_mod.gather_resources_kb(fief_id),
+                "\n".join(lines),
+                reply_markup=dm_mod.gather_resources_kb(fief_id, hungry=hungry),
             )
             return
         resource = parts[2]
@@ -152,6 +155,46 @@ async def cb_gather(callback: CallbackQuery) -> None:
         await callback.answer(str(exc), show_alert=True)
     except Exception:
         logger.exception("cb_gather")
+        await callback.answer("Ошибка", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("dis:"))
+async def cb_disband(callback: CallbackQuery) -> None:
+    engine = get_engine()
+    try:
+        parts = callback.data.split(":")
+        fief_id = int(parts[1])
+        fief = engine.require_owned_fief(fief_id, callback.from_user.id)
+
+        if len(parts) == 2:
+            engine.collect_for_fief(fief_id)
+            fief = engine.fief_by_id(fief_id) or fief
+            might = int(fief.get("might") or 0)
+            await _ok(callback)
+            await answer_html(
+                callback.message,
+                dm_mod.disband_prompt_text(
+                    might, hungry=bool(fief.get("hungry"))
+                ),
+                reply_markup=dm_mod.disband_militia_kb(fief_id, might),
+            )
+            return
+
+        if len(parts) != 4 or parts[3] != "ok":
+            await callback.answer("Неизвестное действие", show_alert=True)
+            return
+        keep = int(parts[2])
+        msg = engine.disband_militia(fief_id, keep)
+        await _ok(callback)
+        await reply_game(
+            callback.message,
+            msg + "\n\n" + engine.status_card(fief_id),
+            reply_markup=fief_home_kb(engine, fief_id),
+        )
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+    except Exception:
+        logger.exception("cb_disband")
         await callback.answer("Ошибка", show_alert=True)
 
 

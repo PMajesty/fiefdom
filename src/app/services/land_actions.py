@@ -10,6 +10,7 @@ from app.domain import absence as absence_mod
 from app.domain.map_geometry import adjacent_claimable
 
 from app.domain.map_gen import coord_label
+from app.domain.hunger import gather_might_hungry_message
 from app.domain.resource_bags import apply_gather_to_stash, stash_from_row
 from app.domain.resource_format import (
     gather_forbidden_message,
@@ -279,6 +280,8 @@ class LandActionService:
             raise ValueError("Усадьба не найдена")
         if fief.get("frozen"):
             raise ValueError("Усадьба заморожена")
+        if resource == B.RES_MIGHT and fief.get("hungry"):
+            raise ValueError(gather_might_hungry_message())
         amount = B.gather_amount(resource)
         self._engine.collect_for_fief(fief_id, include_might=(resource != B.RES_MIGHT))
         fief = self._db.get_fief(fief_id)
@@ -292,6 +295,29 @@ class LandActionService:
             )
             self._db.update_fief(fief_id, **{resource: stash[resource]})
             return gather_result_text(resource, gained, amount)
+
+    def disband_militia(self, fief_id: int, keep: int) -> str:
+        """Добровольно сократить дружину до keep. Без траты действия."""
+        fief = self._db.get_fief(fief_id)
+        if not fief:
+            raise ValueError("Усадьба не найдена")
+        if fief.get("frozen"):
+            raise ValueError("Усадьба заморожена")
+        # Сначала урожай в stash, иначе status_card после роспуска вернёт силу из pending.
+        self._engine.collect_for_fief(fief_id)
+        fief = self._db.get_fief(fief_id)
+        current = int(fief.get("might") or 0)
+        if current <= 0:
+            raise ValueError("Некого распускать")
+        new_might, lost = B.militia_after_disband(current, keep)
+        if lost <= 0:
+            raise ValueError("Некого распускать")
+        self._db.update_fief(fief_id, might=new_might)
+        feed = B.militia_upkeep_grain(new_might)
+        return (
+            f"Распустил {lost} (−{lost} Силы). "
+            f"Дома {new_might}, корм дружины {feed} зерна/день."
+        )
 
     def _onboard_claim(self, fief_id: int) -> None:
         fief = self._db.get_fief(fief_id)

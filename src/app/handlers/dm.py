@@ -57,6 +57,7 @@ from app.ui.keyboards import (
     format_build_tile_button,
     format_building_type_label,
     format_claim_button,
+    disband_militia_kb,
     gather_resources_kb,
     pact_invite_kb,
     pact_kb,
@@ -185,6 +186,20 @@ def patrol_confirm_text() -> str:
 
 def patrol_prompt_callback(fief_id: int) -> str:
     return f"pat:{int(fief_id)}"
+
+
+def disband_prompt_text(might: int, *, hungry: bool = False) -> str:
+    current = max(0, int(might))
+    feed = B.militia_upkeep_grain(current)
+    free = int(B.MILITIA_FREE)
+    feed_free = B.militia_upkeep_grain(free)
+    lines = [
+        f"Дружина дома: {current}. Корм сейчас {feed} зерна/день.",
+        f"Бесплатно до {free} (корм {feed_free}). Роспуск без траты действия.",
+    ]
+    if hungry:
+        lines.append("При голоде лишняя сила только жрёт зерно - лучше срезать сейчас.")
+    return "\n".join(lines)
 
 
 def realm_picker_kb(fiefs: list[dict], engine) -> InlineKeyboardMarkup:
