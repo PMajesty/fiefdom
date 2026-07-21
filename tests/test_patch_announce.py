@@ -13,7 +13,8 @@ from app.domain.patch_notes import (
     format_patch_announcement,
     pending_patch_notes,
 )
-from app.patch_announce import announce_pending_patches
+from app.notifier import FanoutResult
+from app.patch_announce import announce_pending_patches, should_mark_patch_announced
 
 
 def test_format_patch_announcement_rp_shape():
@@ -70,7 +71,7 @@ async def test_announce_pending_posts_then_marks():
 
     async def _fake_post(bot, realm_id, text, *, reply_markup=None):
         posted.append((int(realm_id), text))
-        return True
+        return FanoutResult(ok=True, targets=1, sent=1)
 
     with (
         patch("app.patch_announce.get_engine", return_value=engine),
@@ -89,7 +90,7 @@ async def test_announce_pending_posts_then_marks():
 async def test_announce_pending_skips_already_announced():
     note = PATCH_NOTES[0]
     engine = _patch_engine(announced={note.id}, realms=[{"id": 1}])
-    post = AsyncMock(return_value=True)
+    post = AsyncMock(return_value=FanoutResult(ok=True, targets=1))
 
     with (
         patch("app.patch_announce.get_engine", return_value=engine),
@@ -109,7 +110,7 @@ async def test_announce_defers_mark_when_all_sends_fail():
     engine = _patch_engine(announced=set(), realms=[{"id": 1}, {"id": 2}])
 
     async def _fail_post(bot, realm_id, text, *, reply_markup=None):
-        return False
+        return FanoutResult(ok=False, targets=2, sent=0)
 
     with (
         patch("app.patch_announce.get_engine", return_value=engine),
@@ -128,7 +129,9 @@ async def test_announce_marks_when_at_least_one_realm_ok():
     engine = _patch_engine(announced=set(), realms=[{"id": 1}, {"id": 2}])
 
     async def _partial_post(bot, realm_id, text, *, reply_markup=None):
-        return int(realm_id) == 2
+        if int(realm_id) == 2:
+            return FanoutResult(ok=True, targets=1, sent=1)
+        return FanoutResult(ok=False, targets=1, sent=0)
 
     with (
         patch("app.patch_announce.get_engine", return_value=engine),
@@ -141,11 +144,109 @@ async def test_announce_marks_when_at_least_one_realm_ok():
     engine.mark_patch_announced.assert_called_once_with(note.id)
 
 
+def test_should_mark_patch_announced_predicates():
+    assert should_mark_patch_announced(
+        realm_count=0, populated=0, ok_count=0, hard_fails=0
+    )
+    assert should_mark_patch_announced(
+        realm_count=2, populated=0, ok_count=0, hard_fails=0
+    )
+    assert should_mark_patch_announced(
+        realm_count=2, populated=2, ok_count=1, hard_fails=0
+    )
+    assert not should_mark_patch_announced(
+        realm_count=2, populated=2, ok_count=0, hard_fails=0
+    )
+    assert not should_mark_patch_announced(
+        realm_count=2, populated=0, ok_count=0, hard_fails=2
+    )
+
+
+@pytest.mark.asyncio
+async def test_announce_marks_on_partial_realm_delivery():
+    """Заблокированный получатель не должен крутить вестник вечно."""
+    note = PATCH_NOTES[0]
+    engine = _patch_engine(announced=set(), realms=[{"id": 1}])
+
+    async def _partial(bot, realm_id, text, *, reply_markup=None):
+        return FanoutResult(ok=False, targets=3, sent=2)
+
+    with (
+        patch("app.patch_announce.get_engine", return_value=engine),
+        patch("app.patch_announce.post_realm_public", new=_partial),
+        patch.object(notes_mod, "PATCH_NOTES", (note,)),
+    ):
+        delivered = await announce_pending_patches(object())
+
+    assert delivered == [note.id]
+    engine.mark_patch_announced.assert_called_once_with(note.id)
+
+
+@pytest.mark.asyncio
+async def test_announce_defers_on_hard_fanout_failure():
+    note = PATCH_NOTES[0]
+    engine = _patch_engine(announced=set(), realms=[{"id": 1}, {"id": 2}])
+
+    async def _hard_fail(bot, realm_id, text, *, reply_markup=None):
+        return FanoutResult(ok=False, targets=0, sent=0)
+
+    with (
+        patch("app.patch_announce.get_engine", return_value=engine),
+        patch("app.patch_announce.post_realm_public", new=_hard_fail),
+        patch.object(notes_mod, "PATCH_NOTES", (note,)),
+    ):
+        delivered = await announce_pending_patches(object())
+
+    assert delivered == []
+    engine.mark_patch_announced.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_announce_defers_when_only_empty_realms_succeed():
+    """Пустая долина не должна закрывать патч, если населённые упали."""
+    note = PATCH_NOTES[0]
+    engine = _patch_engine(announced=set(), realms=[{"id": 1}, {"id": 2}])
+
+    async def _empty_and_fail(bot, realm_id, text, *, reply_markup=None):
+        if int(realm_id) == 1:
+            return FanoutResult(ok=True, targets=0, sent=0)
+        return FanoutResult(ok=False, targets=3, sent=0)
+
+    with (
+        patch("app.patch_announce.get_engine", return_value=engine),
+        patch("app.patch_announce.post_realm_public", new=_empty_and_fail),
+        patch.object(notes_mod, "PATCH_NOTES", (note,)),
+    ):
+        delivered = await announce_pending_patches(object())
+
+    assert delivered == []
+    engine.mark_patch_announced.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_announce_marks_when_all_realms_empty():
+    note = PATCH_NOTES[0]
+    engine = _patch_engine(announced=set(), realms=[{"id": 1}, {"id": 2}])
+
+    async def _empty_post(bot, realm_id, text, *, reply_markup=None):
+        return FanoutResult(ok=True, targets=0, sent=0)
+
+    with (
+        patch("app.patch_announce.get_engine", return_value=engine),
+        patch("app.patch_announce.post_realm_public", new=_empty_post),
+        patch.object(notes_mod, "PATCH_NOTES", (note,)),
+    ):
+        delivered = await announce_pending_patches(object())
+
+    assert delivered == [note.id]
+    engine.mark_patch_announced.assert_called_once_with(note.id)
+
+
 @pytest.mark.asyncio
 async def test_announce_marks_when_no_realms():
     note = PATCH_NOTES[0]
     engine = _patch_engine(announced=set(), realms=[])
-    post = AsyncMock(return_value=True)
+    post = AsyncMock(return_value=FanoutResult(ok=True, targets=1))
 
     with (
         patch("app.patch_announce.get_engine", return_value=engine),

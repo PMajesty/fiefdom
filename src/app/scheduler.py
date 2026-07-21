@@ -12,7 +12,12 @@ from app.config import TIMEZONE, tick_slots
 from app.domain.tick_pipeline import needs_economy_wake, needs_resolve_wake
 from app.domain.tick_schedule import due_tick_slot
 from app.messaging import send_game
-from app.notifier import post_continent_public, post_digest, post_realm_public
+from app.notifier import (
+    post_continent_public,
+    post_digest,
+    post_realm_public,
+    rumor_fanout_should_ack,
+)
 from app.patch_announce import announce_pending_patches
 from app.services.catastrophes import CatastropheAnnounce
 from app.wiring import get_engine
@@ -46,7 +51,7 @@ async def _finalize_caravan_lock_announce(bot: Bot, engine, world_id: int) -> No
 
 
 async def _deliver_raid_notices(bot: Bot, notices: list) -> bool:
-    """Лички и групповые строки (ночь + midday-confirm обозов).
+    """Лички сторон и публичные строки долины/континента (ночь + midday-обозы).
 
     False если хотя бы одна доставка упала (только для логов; commit не зависит).
     """
@@ -234,10 +239,10 @@ async def _scheduler_tick(bot: Bot) -> None:
                 text = item.get("text")
                 if not text:
                     continue
-                ok = await post_realm_public(
+                result = await post_realm_public(
                     bot, int(item["realm_id"]), str(text)
                 )
-                if ok:
+                if rumor_fanout_should_ack(result):
                     raw_lines = item.get("lines") or []
                     lines = [
                         str(x) for x in raw_lines if str(x).strip()
@@ -278,10 +283,9 @@ async def _scheduler_tick(bot: Bot) -> None:
             if item.get("skipped"):
                 continue
             digest = item.get("digest")
-            chat_id = item.get("chat_id")
             realm_id = item.get("realm_id")
-            if digest and chat_id and realm_id:
-                await post_digest(bot, chat_id, int(realm_id), digest)
+            if digest and realm_id:
+                await post_digest(bot, int(realm_id), digest)
         logger.info(
             "World tick slot %s posted for %s realms (resumed=%s incomplete=%s early=%s)",
             tick_slot,
@@ -330,7 +334,7 @@ async def _deliver_catastrophe_announce(bot: Bot, announce: CatastropheAnnounce)
 
 
 async def _maybe_post_world_catastrophe(bot: Bot, engine, world: dict) -> None:
-    """Доставка волны: сервис пишет БД, планировщик шлёт в чаты."""
+    """Доставка волны: сервис пишет БД, планировщик шлёт в лички долины."""
     announces = engine.plan_world_catastrophe(world)
     for announce in announces:
         try:

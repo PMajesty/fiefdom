@@ -44,7 +44,7 @@ class DeclareRaidResult:
 
 @dataclass
 class RaidNightPartyNotice:
-    """Личка/группа после ночного разрешения."""
+    """Личка стороны или публичная строка долины/континента после ночи."""
 
     user_id: int | None
     realm_id: int | None
@@ -404,6 +404,6 @@ def resolve_raid(
         stolen=stolen,
         defense_used=defense,
         intercept_applied=intercept,
-        # Суммы добычи только в личке сторон; в группе и в ночной сводке - без цифр.
+        # Суммы добычи только в личке сторон; в публичной строке и сводке - без цифр.
         public_line=f"{attacker_name} ограбил {victim_name}",
     )

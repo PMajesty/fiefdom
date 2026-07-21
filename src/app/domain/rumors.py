@@ -17,7 +17,7 @@ FACT_TYPES = (FACT_WEALTH, FACT_MIGHT, FACT_BUILDING, FACT_PATROL)
 
 RUMOR_EMPTY_PULL = (
     "👂 Слухи рынка. Площадь пока молчит.\n"
-    "Новые сплетни днём сами дойдут в групповом чате долины."
+    "Новые сплетни днём сами дойдут в личку."
 )
 
 _MIGHT_SOFT_LABELS = ("тонкая", "крепкая", "толпа")
@@ -437,5 +437,5 @@ def format_rumors_pull(lines: Sequence[str]) -> str:
     body = "\n".join(f"• {line}" for line in clean)
     return (
         f"👂 Недавний шёпот площади:\n{body}\n\n"
-        "<i>Площадь не врёт. Новые слухи капают днём в группе.</i>"
+        "<i>Площадь не врёт. Новые слухи капают днём в личку.</i>"
     )

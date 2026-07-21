@@ -687,11 +687,14 @@ async def test_announce_continent_fans_out_to_adjacent(monkeypatch):
             assert realm_id == 1
             return [2, 3, 2]
 
-    async def _fake_announce_realm(bot, realm_id, text, *, reply_markup=None):
+    async def _fake_post_realm(bot, realm_id, text, *, reply_markup=None):
+        from app.notifier import FanoutResult
+
         announced.append(int(realm_id))
+        return FanoutResult(ok=True, targets=1, sent=1)
 
     monkeypatch.setattr(notifier_mod, "get_engine", lambda: _Engine())
-    monkeypatch.setattr(notifier_mod, "announce_realm", _fake_announce_realm)
+    monkeypatch.setattr(notifier_mod, "post_realm_public", _fake_post_realm)
 
     await notifier_mod.announce_continent(object(), 1, "🛒 лот")
     assert announced == [1, 2, 3]

@@ -1,4 +1,4 @@
-"""Публичные объявления долины идут в группу, не в личный fan-out."""
+"""Публичные объявления долины идут fan-out в лички, не в групповой чат."""
 from __future__ import annotations
 
 import os
@@ -13,8 +13,8 @@ from app.handlers.dm import _handle_pending
 
 
 @pytest.mark.asyncio
-async def test_raid_might_prompts_confirm_without_instant_group():
-    """Ввод силы не резолвит бой и не постит исход в группу."""
+async def test_raid_might_prompts_confirm_without_instant_public():
+    """Ввод силы не резолвит бой и не постит исход сразу."""
     engine = MagicMock()
     engine.fief_by_id.side_effect = lambda fid: {
         1: {"id": 1, "realm_id": 1, "might": 40, "pact_id": None},
@@ -67,7 +67,7 @@ async def test_declare_result_has_no_loot_digits_in_public_copy():
 
 
 @pytest.mark.asyncio
-async def test_pact_create_logs_to_group():
+async def test_pact_create_logs_public_announce():
     engine = MagicMock()
     fief = {"id": 1, "realm_id": 7, "name": "Альфа"}
     engine.fief_by_id = MagicMock(return_value=fief)
@@ -95,9 +95,10 @@ async def test_pact_create_logs_to_group():
     assert "Север" in public.await_args.args[2]
 
 
-def test_guide_mentions_public_drama_channel():
+def test_guide_mentions_public_drama_in_dm():
     from app.domain.guide import game_guide
 
     text = game_guide()
-    assert "набеги, пакты, беды и указы" in text
-    assert "беды и прочие извещения - в личке" not in text
+    assert "набеги, пакты, беды, указы и слухи" in text
+    assert "приходят в личку" in text
+    assert "приходят в группу долины" not in text

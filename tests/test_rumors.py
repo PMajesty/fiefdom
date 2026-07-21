@@ -247,7 +247,7 @@ def test_format_rumors_pull_archive_note():
     text = rumors.format_rumors_pull(["У Ивана, говорят, дружина тонка."])
     assert "Недавний шёпот" in text
     assert "У Ивана" in text
-    assert "днём в группе" in text
+    assert "днём в личку" in text
     assert "не врёт" in text
     assert "Слухи рынка:" not in text
     assert "Из других долин" not in text
@@ -256,7 +256,7 @@ def test_format_rumors_pull_archive_note():
 def test_format_rumors_pull_empty_explains():
     text = rumors.format_rumors_pull([])
     assert "молчит" in text
-    assert "групповом чате" in text
+    assert "в личку" in text
 
 
 def test_format_digest_omits_rumors():
@@ -564,3 +564,13 @@ def test_patch_note_rumor_true_sparse_registered():
 
     ids = {n.id for n in PATCH_NOTES}
     assert "rumor_true_sparse_v1" in ids
+
+
+def test_patch_note_public_notices_to_dm_registered():
+    from app.domain.patch_notes import PATCH_NOTES
+
+    note = next(n for n in PATCH_NOTES if n.id == "public_notices_to_dm_v1")
+    body = " ".join(note.body_lines)
+    assert "личку" in body
+    assert "групповой чат" in body
+    assert "мелкий обоз" in body

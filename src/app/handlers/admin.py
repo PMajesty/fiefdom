@@ -69,7 +69,7 @@ ADMIN_HELP_TEXT = (
     "<b>Заморозка</b> усадьбы: 1 = заморозить, 0 = снять:\n"
     "<code>/вч_freeze 3 1</code>\n"
     "\n"
-    "<b>Указ</b> в групповой чат долины:\n"
+    "<b>Указ</b> в лички владельцев усадеб долины:\n"
     "<code>/вч_decree 1 Текст указа</code>"
 )
 
@@ -105,10 +105,9 @@ async def cmd_tick(message: Message, bot: Bot) -> None:
         n = 0
         for item in result.get("realms") or []:
             digest = item.get("digest") or ""
-            chat_id = item.get("chat_id")
             realm_id = item.get("realm_id")
-            if digest and chat_id and realm_id:
-                await post_digest(bot, chat_id, int(realm_id), digest)
+            if digest and realm_id:
+                await post_digest(bot, int(realm_id), digest)
                 n += 1
         await answer_html(
             message,
@@ -269,7 +268,7 @@ async def cmd_decree(message: Message, bot: Bot) -> None:
         number = engine.issue_decree(realm_id, body)
         text = format_decree(number, body)
         await post_realm_public(bot, realm_id, text)
-        await answer_html(message, f"Указ №{number} отправлен в группу.")
+        await answer_html(message, f"Указ №{number} отправлен в лички долины.")
     except ValueError as exc:
         await answer_html(message, str(exc))
     except Exception:
