@@ -135,6 +135,7 @@ class LandActionService:
 
         new_type = target["tile_type"]
         ruins_loot = 0
+        ruins_loot_added = 0
         if is_wilds:
             new_type = random.choice(B.WILDS_CLEAR_TO)
         if new_type == B.TILE_RUINS and not target.get("ruins_looted"):
@@ -148,8 +149,8 @@ class LandActionService:
             if ruins_loot:
                 fief = self._db.get_fief(fief_id)
                 cap = B.stash_cap(self._engine.barn_level(fief_id))
-                add = min(ruins_loot, max(0, cap - fief["goods"]))
-                self._db.update_fief(fief_id, goods=fief["goods"] + add)
+                ruins_loot_added = min(ruins_loot, max(0, cap - fief["goods"]))
+                self._db.update_fief(fief_id, goods=fief["goods"] + ruins_loot_added)
 
             self._db.update_tile(
                 target["id"],
@@ -165,7 +166,16 @@ class LandActionService:
 
             self._engine.maybe_grow_map(realm_id)
         self._engine._onboard_claim(fief_id)
-        extra = f" Находка в руинах: +{ruins_loot} товаров." if ruins_loot else ""
+        extra = ""
+        if ruins_loot:
+            cap_hint = (
+                "" if ruins_loot_added == ruins_loot else " (склад почти полон)"
+            )
+            extra = (
+                f" Находка в руинах: +{ruins_loot_added} товаров{cap_hint}. "
+                f"Дальше +{B.RUINS_PASSIVE_GRAIN} зерна и "
+                f"+{B.RUINS_PASSIVE_GOODS} товаров/день."
+            )
         if is_wilds:
             extra = f" Глушь расчищена → {B.TILE_NAMES_RU[new_type]}." + extra
         return f"Клетка {coord_label(x, y)} присоединена (−{cost} товаров).{extra}"

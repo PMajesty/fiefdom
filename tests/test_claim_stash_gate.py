@@ -102,3 +102,54 @@ def test_claim_prompt_clear_when_barn_enough():
         engine, fief, 6, tile_meta, base="Выберите клетку:"
     )
     assert text == "Выберите клетку:"
+
+
+def test_claim_ruins_sets_looted_and_announces_residual():
+    svc, db, _engine = _claim_service(
+        barn=0, goods=100, tiles_n=1, tile_type=B.TILE_RUINS
+    )
+    with (
+        patch(
+            "app.services.land_actions.adjacent_claimable",
+            return_value={(1, 0)},
+        ),
+        patch("app.services.land_actions.random.randint", return_value=45),
+    ):
+        msg = svc.claim_tile(1, 1, 0)
+    assert "Находка в руинах: +45 товаров." in msg
+    assert (
+        f"Дальше +{B.RUINS_PASSIVE_GRAIN} зерна и "
+        f"+{B.RUINS_PASSIVE_GOODS} товаров/день."
+    ) in msg
+    assert "склад почти полон" not in msg
+    claim_update = next(
+        c for c in db.update_tile.call_args_list if c.args and c.args[0] == 99
+    )
+    assert claim_update.kwargs.get("ruins_looted") is True
+
+
+def test_claim_ruins_stash_cap_hint():
+    # cap 150, goods 150, cost 20 → после списания 130, места 20, loot 45 → +20 и подсказка.
+    svc, db, _engine = _claim_service(
+        barn=0, goods=150, tiles_n=1, tile_type=B.TILE_RUINS
+    )
+
+    def _debit(_fief_id, **res):
+        fief = db.get_fief.return_value
+        fief["goods"] = fief["goods"] - int(res.get("goods") or 0)
+        return fief
+
+    db.debit_fief_resources.side_effect = _debit
+    with (
+        patch(
+            "app.services.land_actions.adjacent_claimable",
+            return_value={(1, 0)},
+        ),
+        patch("app.services.land_actions.random.randint", return_value=45),
+    ):
+        msg = svc.claim_tile(1, 1, 0)
+    assert "Находка в руинах: +20 товаров (склад почти полон)." in msg
+    assert (
+        f"Дальше +{B.RUINS_PASSIVE_GRAIN} зерна и "
+        f"+{B.RUINS_PASSIVE_GOODS} товаров/день."
+    ) in msg

@@ -52,12 +52,15 @@ TILE_FILL_WEIGHTS = {
 }
 TILE_CLUSTER_BONUS = 0.15
 
-RIVER_PASSIVE_GRAIN = 3
-ROAD_PASSIVE_GOODS = 3
+RIVER_PASSIVE_GRAIN = 9
+ROAD_PASSIVE_GOODS = 6
 # Базовый доход усадьбы (не от зданий): соло-старт без рынка не зависает.
 FIEF_BASE_GOODS = 5
-RUINS_LOOT_MIN = 30
-RUINS_LOOT_MAX = 80
+RUINS_LOOT_MIN = 40
+RUINS_LOOT_MAX = 50
+# После находки руины дают постоянный двойной пассив (не ×1.5 native).
+RUINS_PASSIVE_GRAIN = 5
+RUINS_PASSIVE_GOODS = 5
 # Стартовая усадьба не на руинах и не рядом (тор Манхэттен < этого порога).
 RUINS_SPAWN_MIN_DISTANCE = 2
 WILDS_CLAIM_MULT = 1

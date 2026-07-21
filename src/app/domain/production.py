@@ -21,6 +21,7 @@ class TileView:
     is_bridge: bool = False
     is_core: bool = False
     is_overgrown: bool = False
+    ruins_looted: bool = False
 
 
 class Production:
@@ -84,11 +85,18 @@ class Production:
         )
 
 
-def tile_passive(tile_type: str) -> Production:
+def tile_passive(tile_type: str, *, ruins_looted: bool = False) -> Production:
     if tile_type == B.TILE_RIVER:
         return Production(**{B.RES_GRAIN: B.RIVER_PASSIVE_GRAIN})
     if tile_type == B.TILE_ROAD:
         return Production(**{B.RES_GOODS: B.ROAD_PASSIVE_GOODS})
+    if tile_type == B.TILE_RUINS and ruins_looted:
+        return Production(
+            **{
+                B.RES_GRAIN: B.RUINS_PASSIVE_GRAIN,
+                B.RES_GOODS: B.RUINS_PASSIVE_GOODS,
+            }
+        )
     return Production()
 
 
@@ -141,7 +149,7 @@ def fief_daily_production(
         if t.is_overgrown:
             continue
         active_tiles += 1
-        p = tile_passive(t.tile_type)
+        p = tile_passive(t.tile_type, ruins_looted=t.ruins_looted)
         b = building_production(t.building or "", t.building_level, t.tile_type)
         if t.building == B.BLD_FARM:
             b = b.with_amounts(

@@ -56,6 +56,19 @@ def test_patch_note_ids_unique():
     assert all(note.id and note.title and note.body_lines for note in PATCH_NOTES)
 
 
+def test_special_geography_patch_note_numbers():
+    from app import balance as B
+
+    note = next(n for n in PATCH_NOTES if n.id == "special_geography_v1")
+    text = format_patch_announcement(note)
+    assert str(B.RIVER_PASSIVE_GRAIN) in text
+    assert str(B.ROAD_PASSIVE_GOODS) in text
+    assert str(B.RUINS_LOOT_MIN) in text
+    assert str(B.RUINS_LOOT_MAX) in text
+    assert str(B.RUINS_PASSIVE_GRAIN) in text
+    assert str(B.RUINS_PASSIVE_GOODS) in text
+
+
 def _patch_engine(*, announced, realms):
     engine = MagicMock()
     engine.announced_patch_names.return_value = announced

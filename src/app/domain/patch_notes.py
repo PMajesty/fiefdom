@@ -254,4 +254,20 @@ PATCH_NOTES: tuple[PatchNote, ...] = (
             "крупный знают долины континента, добычу набега - только стороны.",
         ),
     ),
+    PatchNote(
+        id="special_geography_v1",
+        title="Местность: река, дорога, руины",
+        body_lines=(
+            (
+                f"Река: +{B.RIVER_PASSIVE_GRAIN} зерна/день. "
+                f"Дорога: +{B.ROAD_PASSIVE_GOODS} товаров/день."
+            ),
+            (
+                f"Руины: при занятии {B.RUINS_LOOT_MIN}-{B.RUINS_LOOT_MAX} товаров; "
+                f"после находки +{B.RUINS_PASSIVE_GRAIN} зерна и "
+                f"+{B.RUINS_PASSIVE_GOODS} товаров/день."
+            ),
+            "Бонус ×1.5 у зданий - только поле, лес и холмы.",
+        ),
+    ),
 )

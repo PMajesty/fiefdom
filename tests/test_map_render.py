@@ -111,9 +111,10 @@ def test_map_tile_legend_reads_naturally():
     assert f"волны · Река - +{B.RIVER_PASSIVE_GRAIN} зерна/день" in text
     assert f"полоса · Дорога - +{B.ROAD_PASSIVE_GOODS} товаров/день" in text
     assert (
-        f"памятник · Руины - разово {B.RUINS_LOOT_MIN}-{B.RUINS_LOOT_MAX} товаров"
-        in text
-    )
+        f"памятник · Руины - разово {B.RUINS_LOOT_MIN}-{B.RUINS_LOOT_MAX} тов.; "
+        f"затем +{B.RUINS_PASSIVE_GRAIN} зерна и "
+        f"+{B.RUINS_PASSIVE_GOODS} товаров/день"
+    ) in text
     if B.WILDS_CLAIM_MULT == 1:
         assert "куст · Глушь - занятие → поле/лес/холмы" in text
     else:

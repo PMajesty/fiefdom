@@ -110,6 +110,7 @@ class RealmTickRunner:
                     building_level=int(t.get("building_level") or 0),
                     is_core=bool(t.get("is_core")),
                     is_overgrown=bool(t.get("is_overgrown")),
+                    ruins_looted=bool(t.get("ruins_looted")),
                 )
                 for t in self._db.fief_tiles(fief["id"])
             ]

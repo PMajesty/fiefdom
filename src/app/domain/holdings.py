@@ -79,7 +79,9 @@ def tile_effect_text(
     level = int(tile.get("building_level") or 0)
     tile_type = tile.get("tile_type") or ""
 
-    passive = tile_passive(tile_type)
+    passive = tile_passive(
+        tile_type, ruins_looted=bool(tile.get("ruins_looted"))
+    )
     if building == B.BLD_BARN and level > 0:
         barn_line = _barn_effect_line(level)
         if hungry:

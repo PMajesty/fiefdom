@@ -30,7 +30,11 @@ _TILE_EFFECT_RU = {
     B.TILE_HILLS: "бонус сторожке",
     B.TILE_RIVER: f"+{B.RIVER_PASSIVE_GRAIN} зерна/день",
     B.TILE_ROAD: f"+{B.ROAD_PASSIVE_GOODS} товаров/день",
-    B.TILE_RUINS: f"разово {B.RUINS_LOOT_MIN}-{B.RUINS_LOOT_MAX} товаров",
+    B.TILE_RUINS: (
+        f"разово {B.RUINS_LOOT_MIN}-{B.RUINS_LOOT_MAX} тов.; "
+        f"затем +{B.RUINS_PASSIVE_GRAIN} зерна и "
+        f"+{B.RUINS_PASSIVE_GOODS} товаров/день"
+    ),
     B.TILE_WILDS: (
         "занятие → поле/лес/холмы"
         if B.WILDS_CLAIM_MULT == 1
@@ -155,7 +159,9 @@ def game_guide() -> str:
         f"• Холмы - лучше для сторожки (×{B.NATIVE_BONUS})\n"
         f"• Река - +{B.RIVER_PASSIVE_GRAIN} зерна в день без здания\n"
         f"• Дорога - +{B.ROAD_PASSIVE_GOODS} товаров в день без здания\n"
-        f"• Руины - при занятии разово дают {B.RUINS_LOOT_MIN}-{B.RUINS_LOOT_MAX} товаров\n\n"
+        f"• Руины - при занятии разово {B.RUINS_LOOT_MIN}-{B.RUINS_LOOT_MAX} товаров; "
+        f"после находки +{B.RUINS_PASSIVE_GRAIN} зерна и "
+        f"+{B.RUINS_PASSIVE_GOODS} товаров в день\n\n"
         "Здания\n"
         "При основании усадьбы на главной клетке сразу стоит двор: "
         f"+{B.MANOR_GRAIN} зерна, +{B.MANOR_GOODS} товаров и "

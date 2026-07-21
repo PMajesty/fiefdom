@@ -113,6 +113,34 @@ def test_fief_base_goods_income():
     assert fief_daily_production(overgrown).resources()[B.RES_GOODS] == 0
 
 
+def test_special_tile_passives():
+    from app.domain.production import tile_passive
+
+    assert tile_passive(B.TILE_ROAD).resources()[B.RES_GOODS] == B.ROAD_PASSIVE_GOODS
+    assert tile_passive(B.TILE_RIVER).resources()[B.RES_GRAIN] == B.RIVER_PASSIVE_GRAIN
+    virgin = tile_passive(B.TILE_RUINS)
+    assert virgin.resources()[B.RES_GRAIN] == 0
+    assert virgin.resources()[B.RES_GOODS] == 0
+    looted = tile_passive(B.TILE_RUINS, ruins_looted=True)
+    assert looted.resources()[B.RES_GRAIN] == B.RUINS_PASSIVE_GRAIN
+    assert looted.resources()[B.RES_GOODS] == B.RUINS_PASSIVE_GOODS
+
+
+def test_looted_ruins_count_in_daily_production():
+    husk = [TileView(0, 0, B.TILE_RUINS, 1, None, 0)]
+    husk_prod = fief_daily_production(husk)
+    assert husk_prod.resources()[B.RES_GRAIN] == 0
+    assert husk_prod.resources()[B.RES_GOODS] == B.FIEF_BASE_GOODS
+
+    looted = [TileView(0, 0, B.TILE_RUINS, 1, None, 0, ruins_looted=True)]
+    prod = fief_daily_production(looted)
+    assert prod.resources()[B.RES_GRAIN] == B.RUINS_PASSIVE_GRAIN
+    assert (
+        prod.resources()[B.RES_GOODS]
+        == B.FIEF_BASE_GOODS + B.RUINS_PASSIVE_GOODS
+    )
+
+
 def _tick_state(**stash_pending) -> FiefTickState:
     return FiefTickState(
         stash={

@@ -116,6 +116,17 @@ def test_tile_effect_river_empty():
     assert tile_effect_text(river) == f"+{B.RIVER_PASSIVE_GRAIN} зерна/день"
 
 
+def test_tile_effect_looted_ruins_dual_passive():
+    virgin = _tile(0, 0, B.TILE_RUINS)
+    assert tile_effect_text(virgin) == "без дохода"
+
+    looted = _tile(0, 0, B.TILE_RUINS)
+    looted["ruins_looted"] = True
+    text = tile_effect_text(looted)
+    assert f"+{B.RUINS_PASSIVE_GRAIN} зерна/день" in text
+    assert f"+{B.RUINS_PASSIVE_GOODS} товаров/день" in text
+
+
 def test_tile_effect_overgrown_and_hungry():
     farm = _tile(
         0,
