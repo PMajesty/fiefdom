@@ -12,6 +12,7 @@ from app.domain.rumors import (
     FiefRumorSnapshot,
     UpcomingEventHint,
     append_rumor_archive,
+    clamp_rumor_dues,
     format_rumor_wave,
     format_rumors_pull,
     in_rumor_quiet_hours,
@@ -128,7 +129,7 @@ class RumorService:
         return aa.replace(microsecond=0) == bb.replace(microsecond=0)
 
     def plan_world_rumor_queues(self, world_id: int) -> None:
-        """После входа в play: 1-3 due-волны на окно. Без окна - очистить stale."""
+        """После входа в play: 0 или 1 due на окно. Без окна - очистить stale."""
         world = self._db.get_world(int(world_id)) or {}
         bounds = self._engine.play_window_bounds_for_world(world)
         world = self._db.get_world(int(world_id)) or world
@@ -154,6 +155,19 @@ class RumorService:
             )
         self._db.update_world(int(world_id), rumor_plan_play_opened_at=opened)
 
+    def _clamp_realm_rumor_queues(self, world_id: int) -> None:
+        """Срезает старые очереди до одной волны (mid-play после смены cadence)."""
+        for realm in self._db.list_realms_by_chain(int(world_id)):
+            dues = parse_rumor_queue(realm.get("rumor_queue"))
+            clamped = clamp_rumor_dues(dues, max_count=1)
+            if len(clamped) >= len(dues):
+                continue
+            self._db.update_realm(
+                int(realm["id"]),
+                rumor_queue=rumor_queue_storage(clamped),
+            )
+            realm["rumor_queue"] = rumor_queue_storage(clamped)
+
     def ensure_rumor_queues_planned(self, world_id: int) -> None:
         """Деплой mid-play / crash: план один раз на текущий play_opened_at."""
         world = self._db.get_world(int(world_id)) or {}
@@ -167,6 +181,7 @@ class RumorService:
             world.get("rumor_plan_play_opened_at"),
             world.get("play_opened_at"),
         ):
+            self._clamp_realm_rumor_queues(int(world_id))
             return
         self._engine.plan_world_rumor_queues(int(world_id))
 
@@ -176,12 +191,14 @@ class RumorService:
         """Due-слоты к публикации. Очередь чистится только после успешного поста."""
         if in_rumor_quiet_hours(local_now):
             return []
+        self._clamp_realm_rumor_queues(int(world_id))
         out: list[dict[str, Any]] = []
         for realm in self._db.list_realms_by_chain(int(world_id)):
             rid = int(realm["id"])
             raw_queue = realm.get("rumor_queue") or []
             if not isinstance(raw_queue, list):
                 continue
+            due_item: dict[str, Any] | None = None
             for item in raw_queue:
                 key = item.get("due") if isinstance(item, dict) else item
                 if key is None:
@@ -197,14 +214,15 @@ class RumorService:
                     continue
                 lines = self._engine._roll_rumor_wave_for_realm(rid)
                 text = format_rumor_wave(lines) if lines else None
-                out.append(
-                    {
-                        "realm_id": rid,
-                        "due": due_key,
-                        "text": text,
-                        "lines": lines,
-                    }
-                )
+                due_item = {
+                    "realm_id": rid,
+                    "due": due_key,
+                    "text": text,
+                    "lines": lines,
+                }
+                break
+            if due_item is not None:
+                out.append(due_item)
         return out
 
     def acknowledge_rumor_posted(

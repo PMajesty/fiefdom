@@ -1,4 +1,4 @@
-"""Слухи долины: капельные сплетни между тиками (чистые функции, без БД)."""
+"""Слухи долины: редкие правдивые сплетни между тиками (чистые функции, без БД)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -7,12 +7,7 @@ from random import Random
 from typing import Any, Sequence
 
 from app import balance as B
-from app.domain.events import (
-    MINOR_EVENTS,
-    SHIPPED_CATASTROPHE_KEYS,
-    SHIPPED_MINOR_KEYS,
-    event_name_ru,
-)
+from app.domain.events import event_name_ru
 
 FACT_WEALTH = "wealth"
 FACT_MIGHT = "might"
@@ -20,25 +15,24 @@ FACT_BUILDING = "building"
 FACT_PATROL = "patrol"
 FACT_TYPES = (FACT_WEALTH, FACT_MIGHT, FACT_BUILDING, FACT_PATROL)
 
-TRUTH_FULL = "full"
-TRUTH_FUZZY = "fuzzy"
-TRUTH_FALSE = "false"
-
 RUMOR_EMPTY_PULL = (
     "👂 Слухи рынка. Площадь пока молчит.\n"
     "Новые сплетни днём сами дойдут в групповом чате долины."
 )
 
-# Сцепка строк одной волны: площадь передаёт молву дальше, не сыпет списком.
-RUMOR_CHAIN_BRIDGES = (
-    "А ещё шепчут:",
-    "К тому же:",
-    "Другие добавляют:",
-    "С другого конца площади:",
-    "И тут же, оглядываясь:",
-)
-
 _MIGHT_SOFT_LABELS = ("тонкая", "крепкая", "толпа")
+
+_WEALTH_PHRASES = (
+    "тощая кладовая",
+    "запасы средние",
+    "закрома тугие",
+    "амбар ломится",
+)
+_MIGHT_PHRASES = (
+    "дружина тонка",
+    "дружина крепкая",
+    "копий во дворе много",
+)
 
 
 @dataclass(frozen=True)
@@ -101,6 +95,17 @@ def rumor_queue_storage(dues: Sequence[datetime]) -> list[str]:
     return [d.isoformat() for d in dues]
 
 
+def clamp_rumor_dues(
+    dues: Sequence[datetime],
+    *,
+    max_count: int = 1,
+) -> list[datetime]:
+    """Не больше max_count due (самые ранние). Страховка от старых многоволновых очередей."""
+    if max_count <= 0:
+        return []
+    return sorted(dues)[: int(max_count)]
+
+
 def append_rumor_archive(
     archive: Sequence[str],
     line: str,
@@ -145,140 +150,59 @@ def might_soft_label(might: int) -> str:
     return _MIGHT_SOFT_LABELS[max(0, min(len(_MIGHT_SOFT_LABELS) - 1, band))]
 
 
-def _shift_band(band: int, max_band: int, rng: Random, *, force_change: bool) -> int:
-    if max_band <= 0:
-        return 0
-    if not force_change:
-        return max(0, min(max_band, band))
-    options = [i for i in range(max_band + 1) if i != band]
-    if not options:
-        return band
-    return rng.choice(options)
+def _wealth_phrase(band: int) -> str:
+    band = max(0, min(len(_WEALTH_PHRASES) - 1, band))
+    return _WEALTH_PHRASES[band]
 
 
-def _wealth_phrase(band: int, *, fuzzy: bool) -> str:
-    phrases = (
-        ("тощая кладовая", "закрома будто пустоваты"),
-        ("запасы средние", "запасы ни туда ни сюда"),
-        ("закрома тугие", "житница вроде не худая"),
-        ("амбар ломится", "добро будто через край прёт"),
-    )
-    band = max(0, min(len(phrases) - 1, band))
-    clear, soft = phrases[band]
-    return soft if fuzzy else clear
-
-
-def _might_phrase(band: int, *, fuzzy: bool) -> str:
-    phrases = (
-        ("дружина тонка", "силы будто маловато"),
-        ("дружина крепкая", "дружина вроде держится"),
-        ("копий во дворе много", "копий на дворе будто густо"),
-    )
-    band = max(0, min(len(phrases) - 1, band))
-    clear, soft = phrases[band]
-    return soft if fuzzy else clear
+def _might_phrase(band: int) -> str:
+    band = max(0, min(len(_MIGHT_PHRASES) - 1, band))
+    return _MIGHT_PHRASES[band]
 
 
 def _roman(level: int) -> str:
     return {1: "I", 2: "II", 3: "III"}.get(level, str(level))
 
 
-def _building_phrase(
-    building: str,
-    level: int,
-    *,
-    fuzzy: bool,
-) -> str:
+def _building_phrase(building: str, level: int) -> str:
     name = B.BUILDING_NAMES_RU.get(building, building)
-    if fuzzy:
-        return f"будто {name.lower()} у них имеется"
     return f"стоит {name} {_roman(level)}"
 
 
-def _patrol_phrase(active: bool, *, fuzzy: bool) -> str:
+def _patrol_phrase(active: bool) -> str:
     if active:
-        if fuzzy:
-            return "по ночам будто с факелами ходят"
         return "дозор ходит у ворот"
-    if fuzzy:
-        return "у ворот будто тихо, без лишнего шума"
     return "ворота без дозора"
 
 
-def _pick_truth(rng: Random) -> str:
-    roll = rng.random()
-    if roll < B.RUMOR_TRUTH_FULL:
-        return TRUTH_FULL
-    if roll < B.RUMOR_TRUTH_FULL + B.RUMOR_TRUTH_FUZZY:
-        return TRUTH_FUZZY
-    return TRUTH_FALSE
-
-
-def _false_building(
-    snap: FiefRumorSnapshot,
-    rng: Random,
-) -> tuple[str, int]:
-    all_bld = (B.BLD_MANOR, B.BLD_FARM, B.BLD_WORKSHOP, B.BLD_WATCH, B.BLD_BARN)
-    owned = {b for b, _ in snap.buildings}
-    missing = [b for b in all_bld if b not in owned]
-    if missing:
-        return rng.choice(missing), rng.randint(1, 3)
-    if not snap.buildings:
-        return rng.choice(all_bld), rng.randint(1, 2)
-    bld, level = rng.choice(snap.buildings)
-    wrong = max(1, min(3, level + rng.choice([-1, 1])))
-    if wrong == level:
-        wrong = 1 if level != 1 else 2
-    return bld, wrong
-
-
-def _wrap_intel_line(name: str, phrase: str, *, fuzzy: bool) -> str:
-    """Full - уверенный рынок; fuzzy - оговорка только во фразе, без второй."""
-    if fuzzy:
-        return f"Про {name}: {phrase}."
+def _wrap_intel_line(name: str, phrase: str) -> str:
     return f"У {name}, говорят, {phrase}."
 
 
 def compose_rumor_text(
     snap: FiefRumorSnapshot,
     fact_type: str,
-    truth: str,
     rng: Random,
 ) -> str:
+    """Одна правдивая строка про усадьбу."""
     name = snap.name
-    fuzzy = truth == TRUTH_FUZZY
-    false = truth == TRUTH_FALSE
 
     if fact_type == FACT_WEALTH:
-        true_band = wealth_band(wealth_total(snap.grain, snap.goods))
-        band = _shift_band(true_band, 3, rng, force_change=false)
-        return _wrap_intel_line(
-            name, _wealth_phrase(band, fuzzy=fuzzy), fuzzy=fuzzy
-        )
+        band = wealth_band(wealth_total(snap.grain, snap.goods))
+        return _wrap_intel_line(name, _wealth_phrase(band))
 
     if fact_type == FACT_MIGHT:
-        true_band = might_band(snap.might)
-        band = _shift_band(true_band, 2, rng, force_change=false)
-        return _wrap_intel_line(
-            name, _might_phrase(band, fuzzy=fuzzy), fuzzy=fuzzy
-        )
+        band = might_band(snap.might)
+        return _wrap_intel_line(name, _might_phrase(band))
 
     if fact_type == FACT_BUILDING:
-        if false or not snap.buildings:
-            bld, level = _false_building(snap, rng)
-        else:
-            bld, level = rng.choice(snap.buildings)
-        return _wrap_intel_line(
-            name,
-            _building_phrase(bld, level, fuzzy=fuzzy),
-            fuzzy=fuzzy,
-        )
+        if not snap.buildings:
+            return f"Про {name} на рынке шепчут - и тут же забывают."
+        bld, level = rng.choice(snap.buildings)
+        return _wrap_intel_line(name, _building_phrase(bld, level))
 
     if fact_type == FACT_PATROL:
-        active = (not snap.patrol_active) if false else snap.patrol_active
-        return _wrap_intel_line(
-            name, _patrol_phrase(active, fuzzy=fuzzy), fuzzy=fuzzy
-        )
+        return _wrap_intel_line(name, _patrol_phrase(snap.patrol_active))
 
     return f"Про {name} на рынке шепчут - и тут же забывают."
 
@@ -286,10 +210,9 @@ def compose_rumor_text(
 def compose_foreign_rumor_text(
     snap: FiefRumorSnapshot,
     fact_type: str,
-    truth: str,
     rng: Random,
 ) -> str:
-    body = compose_rumor_text(snap, fact_type, truth, rng)
+    body = compose_rumor_text(snap, fact_type, rng)
     title = (snap.realm_title or "").strip() or "чужая долина"
     return f"Из долины {title}: {body}"
 
@@ -301,29 +224,11 @@ def _eligible_fact_types(snap: FiefRumorSnapshot) -> list[str]:
     return types
 
 
-def _event_pool(kind: str) -> list[str]:
-    if kind == "catastrophe":
-        return sorted(SHIPPED_CATASTROPHE_KEYS)
-    return sorted(k for k in SHIPPED_MINOR_KEYS if k in MINOR_EVENTS)
-
-
-def compose_event_rumor(
-    hint: UpcomingEventHint,
-    rng: Random,
-    *,
-    accuracy: float | None = None,
-) -> str:
-    """Слух о грядущем событии: accuracy шанс назвать верный ключ."""
-    accuracy = B.RUMOR_EVENT_ACCURACY if accuracy is None else accuracy
-    pool = _event_pool(hint.kind)
-    if not pool:
+def compose_event_rumor(hint: UpcomingEventHint) -> str:
+    """Правдивое предвестие грядущего события."""
+    title = event_name_ru(hint.kind, hint.key)
+    if not title:
         return "На рынке шепчут, будто долина чего-то ждёт - сами не знают чего."
-    named = hint.key
-    if rng.random() >= accuracy:
-        others = [k for k in pool if k != hint.key]
-        if others:
-            named = rng.choice(others)
-    title = event_name_ru(hint.kind, named)
     if hint.kind == "catastrophe":
         return f"Шепчут, будто близится беда - {title}."
     return f"Говорят, на подходе - {title}."
@@ -337,10 +242,9 @@ def _compose_intel_line(
 ) -> str:
     facts = _eligible_fact_types(snap)
     fact = rng.choice(facts)
-    truth = _pick_truth(rng)
     if foreign:
-        return compose_foreign_rumor_text(snap, fact, truth, rng)
-    return compose_rumor_text(snap, fact, truth, rng)
+        return compose_foreign_rumor_text(snap, fact, rng)
+    return compose_rumor_text(snap, fact, rng)
 
 
 def roll_rumor_line(
@@ -349,14 +253,14 @@ def roll_rumor_line(
     event_hints: Sequence[UpcomingEventHint],
     rng: Random | None = None,
 ) -> str | None:
-    """Одна строка игрового пула: intel по дворам (+ редко предвестие события)."""
+    """Одна строка: intel по дворам или (редко) правдивое предвестие события."""
     rng = rng or Random()
     local = list(local_snaps)
     foreign = list(foreign_snaps)
 
     hints = list(event_hints or ())
     if hints and rng.random() < float(B.RUMOR_EVENT_LINE_CHANCE):
-        return compose_event_rumor(rng.choice(hints), rng)
+        return compose_event_rumor(rng.choice(hints))
 
     pool: list[tuple[FiefRumorSnapshot, bool]] = (
         [(s, False) for s in local] + [(s, True) for s in foreign]
@@ -383,26 +287,13 @@ def _weighted_count(weights: Sequence[float], rng: Random, *, base: int) -> int:
     return base + len(weights) - 1
 
 
-def rumor_lines_per_wave(rng: Random | None = None) -> int:
-    """Сколько строк в одной волне (минимум 2)."""
-    rng = rng or Random()
-    weights = tuple(B.RUMOR_WAVE_LINE_WEIGHTS)
-    return _weighted_count(weights, rng, base=2)
-
-
 def format_rumor_wave(lines: Sequence[str]) -> str:
-    """Склеивает строки волны мостами площади в одно сообщение."""
-    clean = [str(x).strip() for x in lines if str(x).strip()]
-    if not clean:
-        return ""
-    if len(clean) == 1:
-        return clean[0]
-    bridges = RUMOR_CHAIN_BRIDGES or ("А ещё:",)
-    parts = [clean[0]]
-    for i, line in enumerate(clean[1:]):
-        bridge = bridges[i % len(bridges)]
-        parts.append(f"{bridge} {line}")
-    return "\n".join(parts)
+    """Текст поста: одна строка волны (пустой список → пустая строка)."""
+    for line in lines:
+        text = str(line).strip()
+        if text:
+            return text
+    return ""
 
 
 def roll_rumor_wave(
@@ -410,28 +301,11 @@ def roll_rumor_wave(
     foreign_snaps: Sequence[FiefRumorSnapshot],
     event_hints: Sequence[UpcomingEventHint],
     rng: Random | None = None,
-    *,
-    line_count: int | None = None,
 ) -> list[str]:
-    """Несколько разных строк одной волны; пусто только если рынок совсем нем."""
+    """0 или 1 строка на срабатывание due."""
     rng = rng or Random()
-    weights = tuple(B.RUMOR_WAVE_LINE_WEIGHTS)
-    # Согласовано с rumor_lines_per_wave(base=2): максимум = 2 + len(weights) - 1.
-    max_lines = max(2, 1 + len(weights)) if weights else 2
-    target = int(line_count) if line_count is not None else rumor_lines_per_wave(rng)
-    target = max(2, min(max_lines, target))
-    lines: list[str] = []
-    seen: set[str] = set()
-    attempts = target * 4
-    for _ in range(attempts):
-        if len(lines) >= target:
-            break
-        line = roll_rumor_line(local_snaps, foreign_snaps, event_hints, rng)
-        if not line or line in seen:
-            continue
-        seen.add(line)
-        lines.append(line)
-    return lines
+    line = roll_rumor_line(local_snaps, foreign_snaps, event_hints, rng)
+    return [line] if line else []
 
 
 def in_rumor_quiet_hours(
@@ -448,10 +322,10 @@ def in_rumor_quiet_hours(
 
 
 def rumor_count_for_window(rng: Random | None = None) -> int:
-    """Число волн на окно play по RUMOR_WINDOW_COUNT_WEIGHTS (1..len)."""
+    """Число волн на окно play: 0 или 1 по RUMOR_WINDOW_COUNT_WEIGHTS."""
     rng = rng or Random()
     weights = tuple(B.RUMOR_WINDOW_COUNT_WEIGHTS)
-    return _weighted_count(weights, rng, base=1)
+    return _weighted_count(weights, rng, base=0)
 
 
 def _segment_non_quiet(
@@ -466,7 +340,6 @@ def _segment_non_quiet(
     day = day_start.date()
     tz = day_start.tzinfo
     quiet_from = datetime(day.year, day.month, day.day, quiet_start, 0, tzinfo=tz)
-    quiet_to = datetime(day.year, day.month, day.day, quiet_end, 0, tzinfo=tz)
     # Тишина: [0, quiet_end) и [quiet_start, 24).
     allowed = [
         (
@@ -522,10 +395,9 @@ def plan_rumor_due_times(
     quiet_end: int | None = None,
     rng: Random | None = None,
 ) -> list[datetime]:
-    """Случайные due внутри дневных щелей окна. Без тихих часов."""
+    """Случайный due внутри дневных щелей окна. Не больше одной волны."""
     rng = rng or Random()
-    max_waves = max(1, len(tuple(B.RUMOR_WINDOW_COUNT_WEIGHTS)))
-    n = max(0, min(max_waves, int(count)))
+    n = 1 if int(count) >= 1 else 0
     if n <= 0:
         return []
     segments = allowed_rumor_segments(
@@ -540,36 +412,21 @@ def plan_rumor_due_times(
     if total_sec <= 0:
         return []
 
-    def _pick() -> datetime:
-        target = rng.random() * total_sec
-        acc = 0.0
-        for a, b in segments:
-            span = (b - a).total_seconds()
-            if acc + span >= target:
-                return a + timedelta(seconds=target - acc)
-            acc += span
-        return segments[-1][0]
+    target = rng.random() * total_sec
+    acc = 0.0
+    due = segments[-1][0]
+    for a, b in segments:
+        span = (b - a).total_seconds()
+        if acc + span >= target:
+            due = a + timedelta(seconds=target - acc)
+            break
+        acc += span
 
-    dues = sorted(_pick() for _ in range(n))
-    # Разводим совпавшие due, чтобы волны не слипались в один пост.
-    if len(dues) >= 2 and total_sec >= 2:
-        spread: list[datetime] = [dues[0]]
-        lim = segments[-1][1] - timedelta(seconds=1)
-        for due in dues[1:]:
-            prev = spread[-1]
-            nxt = due if due > prev else min(lim, prev + timedelta(minutes=1))
-            if nxt <= prev:
-                continue
-            spread.append(nxt)
-        dues = spread
-    # Страховка: ничего в тишине.
-    dues = [
-        d
-        for d in dues
-        if not in_rumor_quiet_hours(d, quiet_start=quiet_start, quiet_end=quiet_end)
-        and window_start <= d < window_end
-    ]
-    return dues[:n]
+    if in_rumor_quiet_hours(due, quiet_start=quiet_start, quiet_end=quiet_end):
+        return []
+    if not (window_start <= due < window_end):
+        return []
+    return [due]
 
 
 def format_rumors_pull(lines: Sequence[str]) -> str:
@@ -580,5 +437,5 @@ def format_rumors_pull(lines: Sequence[str]) -> str:
     body = "\n".join(f"• {line}" for line in clean)
     return (
         f"👂 Недавний шёпот площади:\n{body}\n\n"
-        "<i>Сплетни рынка - кто во что верит. Новые капают днём в группе.</i>"
+        "<i>Площадь не врёт. Новые слухи капают днём в группе.</i>"
     )
