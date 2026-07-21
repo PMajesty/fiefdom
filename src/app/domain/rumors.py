@@ -61,6 +61,11 @@ class UpcomingEventHint:
     key: str
 
 
+def rumor_subject_name(label: str) -> str:
+    """Имя в слухах без Telegram-тега: убирает все `@` из подписи."""
+    return str(label).replace("@", "")
+
+
 def parse_stored_rumors(raw: Any) -> list[str]:
     """Читает архив last_rumor_lines: плоский list или legacy {local, foreign}."""
     if isinstance(raw, list):

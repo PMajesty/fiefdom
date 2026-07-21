@@ -88,6 +88,20 @@ def test_compose_building_names_russian():
     assert "II" in text
 
 
+def test_rumor_subject_name_strips_telegram_at():
+    assert rumors.rumor_subject_name("Усадьба @artem_x") == "Усадьба artem_x"
+    assert rumors.rumor_subject_name("Усадьба Иван") == "Усадьба Иван"
+    assert rumors.rumor_subject_name("") == ""
+
+
+def test_compose_rumor_text_keeps_username_without_at():
+    name = rumors.rumor_subject_name("Усадьба @artem_x")
+    snap = _snap(name=name, grain=10, goods=0)
+    text = rumors.compose_rumor_text(snap, rumors.FACT_WEALTH, rumors.TRUTH_FULL, Random(1))
+    assert "Усадьба artem_x" in text
+    assert "@" not in text
+
+
 def test_compose_foreign_rumor_prefixes_valley():
     snap = _snap(name="Пётр", realm_title="Север")
     text = rumors.compose_foreign_rumor_text(
@@ -295,6 +309,29 @@ def test_append_rumor_archive_default_cap():
     assert len(archive) == B.RUMOR_ARCHIVE_MAX
     assert archive[0] == "l3"
     assert archive[-1] == f"l{B.RUMOR_ARCHIVE_MAX + 2}"
+
+
+def test_rumor_snapshots_strip_at_from_fief_label():
+    db = MagicMock()
+    db.get_realm.return_value = {"id": 1, "tick_index": 0, "title": "Север"}
+    db.list_fiefs.return_value = [
+        {
+            "id": 7,
+            "frozen": False,
+            "grain": 1,
+            "goods": 1,
+            "might": 1,
+            "patrol_until_tick": None,
+            "name": "Усадьба @artem_x",
+        }
+    ]
+    db.fief_tiles.return_value = []
+    engine = Engine(db)
+    engine.fief_label = MagicMock(return_value="Усадьба @artem_x")  # type: ignore[method-assign]
+    snaps = engine._rumor_snapshots(1)
+    assert len(snaps) == 1
+    assert snaps[0].name == "Усадьба artem_x"
+    assert "@" not in snaps[0].name
 
 
 def test_maybe_due_rumors_and_ack_idempotent():

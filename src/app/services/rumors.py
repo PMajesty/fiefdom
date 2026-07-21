@@ -20,6 +20,7 @@ from app.domain.rumors import (
     plan_rumor_due_times,
     rumor_count_for_window,
     rumor_queue_storage,
+    rumor_subject_name,
     roll_rumor_wave,
 )
 from app.domain.tick_pipeline import TICK_PHASE_PLAY, normalize_tick_phase
@@ -58,7 +59,7 @@ class RumorService:
             out.append(
                 FiefRumorSnapshot(
                     fief_id=int(fief["id"]),
-                    name=self._engine.fief_label(fief),
+                    name=rumor_subject_name(self._engine.fief_label(fief)),
                     grain=int(fief["grain"]),
                     goods=int(fief["goods"]),
                     might=int(fief["might"]),
