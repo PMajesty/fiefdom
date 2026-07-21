@@ -14,7 +14,7 @@ from app.balance import best_rectangle
 from app.config import TICK_HOUR, TICK_MINUTE, TIMEZONE, tick_slots
 from app.domain.events import next_catastrophe_delay_ticks, pick_catastrophe
 from app.domain.map_gen import generate_map
-from app.domain.portals import pick_portal_insertion
+from app.domain.portals import insert_chain_index, pick_link_anchor
 from app.domain.realm_identity import CLOCK_MODE_SHARED, REALM_KIND_VALLEY
 from app.domain.tick_schedule import format_tick_slots, schedule_anchor_at
 from app.engine import _utcnow
@@ -46,46 +46,65 @@ class RealmLifecycleService:
         tz = world.get("timezone") or TIMEZONE
         rng = random.Random()
         slots = tick_slots()
-        existing_realms = self._db.list_realms_by_chain(world_id)
-
-        if not existing_realms:
-            delay = next_catastrophe_delay_ticks(rng)
-            first_cat = pick_catastrophe(rng, None)
-            local_now = datetime.now(ZoneInfo(tz))
-            # Только уже прошедшие слоты; будущие слоты дня не сжигаем.
-            anchor_date, anchor_slot = schedule_anchor_at(
-                local_now=local_now, slots=slots
-            )
-            self._db.update_world(
-                world_id,
-                timezone=tz,
-                next_catastrophe_tick=delay,
-                next_catastrophe_key=first_cat,
-                last_tick_local_date=anchor_date,
-                last_tick_slot=anchor_slot,
-            )
-            world = self._db.get_world(world_id) or world
-            chain_index = 0
-            neighbor_note = ""
-        else:
-            indices = [int(r["chain_index"]) for r in existing_realms]
-            anchor_idx, _side, new_index = pick_portal_insertion(indices, rng)
-            chain_index = new_index
-            anchor = next(
-                (r for r in existing_realms if int(r["chain_index"]) == anchor_idx),
-                existing_realms[0],
-            )
-            neighbor_note = (
-                f"\nДолина на общем континенте с <b>{anchor['title']}</b> "
-                f"и остальными долинами мира."
-            )
-
-        world = self._db.get_world(world_id) or world
-        world_tick = int(world.get("tick_index") or 0)
+        link_anchor_id: int | None = None
+        neighbor_note = ""
+        chain_index = 0
+        linked_after_lock = False
         try:
             with self._db.transaction():
-                if existing_realms:
+                # Состав, часы пустого мира и степени - только после FOR UPDATE.
+                self._db.lock_world_realms_for_links(world_id)
+                existing_realms = self._db.list_realms_by_chain(world_id)
+                if not existing_realms:
+                    delay = next_catastrophe_delay_ticks(rng)
+                    first_cat = pick_catastrophe(rng, None)
+                    local_now = datetime.now(ZoneInfo(tz))
+                    # Только уже прошедшие слоты; будущие слоты дня не сжигаем.
+                    anchor_date, anchor_slot = schedule_anchor_at(
+                        local_now=local_now, slots=slots
+                    )
+                    self._db.update_world(
+                        world_id,
+                        timezone=tz,
+                        next_catastrophe_tick=delay,
+                        next_catastrophe_key=first_cat,
+                        last_tick_local_date=anchor_date,
+                        last_tick_slot=anchor_slot,
+                    )
+                else:
+                    linked_after_lock = True
+                    degrees = self._db.list_realm_link_degrees(world_id)
+                    picked = pick_link_anchor(
+                        [
+                            (int(r["id"]), int(degrees.get(int(r["id"]), 0)))
+                            for r in existing_realms
+                        ],
+                        max_degree=B.MAX_REALM_NEIGHBORS,
+                        rng=rng,
+                    )
+                    anchor = next(
+                        (
+                            r
+                            for r in existing_realms
+                            if picked is not None and int(r["id"]) == int(picked)
+                        ),
+                        existing_realms[0],
+                    )
+                    link_anchor_id = int(anchor["id"])
+                    side = rng.choice(("before", "after"))
+                    chain_index = insert_chain_index(
+                        existing_count=len(existing_realms),
+                        anchor_chain_index=int(anchor["chain_index"]),
+                        side=side,
+                    )
+                    neighbor_note = (
+                        f"\nПортал к <b>{anchor['title']}</b> "
+                        f"(до {B.MAX_REALM_NEIGHBORS} соседей у долины). "
+                        f"Континент общий: набеги и обозы между всеми долинами мира."
+                    )
                     self._db.shift_chain_indices(world_id, chain_index, delta=1)
+                world = self._db.get_world(world_id) or world
+                world_tick = int(world.get("tick_index") or 0)
                 realm = self._db.create_realm(
                     chat_id=chat_id,
                     title=title or "Долина",
@@ -121,8 +140,10 @@ class RealmLifecycleService:
                         for t in tiles
                     ],
                 )
+                if link_anchor_id is not None:
+                    self._db.ensure_realm_link(int(realm["id"]), int(link_anchor_id))
         except Exception:
-            if existing_realms:
+            if linked_after_lock:
                 try:
                     self._db.recompact_chain_indices(world_id)
                 except Exception:

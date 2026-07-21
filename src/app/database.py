@@ -968,6 +968,63 @@ class Database(
             END $$;
             """
         )
+        self.cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS realm_links (
+                realm_low BIGINT NOT NULL REFERENCES realms(id) ON DELETE CASCADE,
+                realm_high BIGINT NOT NULL REFERENCES realms(id) ON DELETE CASCADE,
+                PRIMARY KEY (realm_low, realm_high),
+                CHECK (realm_low < realm_high)
+            );
+            """
+        )
+        self.cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_realm_links_high
+            ON realm_links(realm_high);
+            """
+        )
+        self._seed_realm_links_if_empty()
+
+    def _seed_realm_links_if_empty(self) -> None:
+        """Одноразово: путь по chain_index, если у мира ещё нет рёбер.
+
+        Только raw cursor (без _fetchall/_fetchone): иначе mid-create_tables commit.
+        """
+        from app.domain.portals import path_edges_for_seed
+
+        self.cursor.execute("SELECT id FROM worlds ORDER BY id;")
+        world_ids = [int(row[0]) for row in self.cursor.fetchall()]
+        for wid in world_ids:
+            self.cursor.execute(
+                """
+                SELECT id FROM realms
+                WHERE world_id=%s
+                ORDER BY chain_index NULLS LAST, id;
+                """,
+                (wid,),
+            )
+            ids = [int(row[0]) for row in self.cursor.fetchall()]
+            if len(ids) < 2:
+                continue
+            self.cursor.execute(
+                """
+                SELECT COUNT(*) FROM realm_links
+                WHERE realm_low = ANY(%s) OR realm_high = ANY(%s);
+                """,
+                (ids, ids),
+            )
+            if int(self.cursor.fetchone()[0] or 0) > 0:
+                continue
+            for low, high in path_edges_for_seed(ids):
+                self.cursor.execute(
+                    """
+                    INSERT INTO realm_links (realm_low, realm_high)
+                    VALUES (%s, %s)
+                    ON CONFLICT DO NOTHING;
+                    """,
+                    (low, high),
+                )
 
     # --- world ---
     def get_or_create_world(self) -> dict:
@@ -1099,6 +1156,84 @@ class Database(
                 (int(world_id),),
             )
             self.commit()
+
+    def lock_world_realms_for_links(self, world_id: int) -> None:
+        """Блокирует world + valleys перед выбором якоря/ребра (anti-race).
+
+        Пустой континент: FOR UPDATE только по realms не сериализует create -
+        нужен lock строки worlds.
+        """
+        with self.lock:
+            self.cursor.execute(
+                """
+                SELECT id FROM worlds
+                WHERE id=%s
+                FOR UPDATE;
+                """,
+                (int(world_id),),
+            )
+            self.cursor.fetchone()
+            self.cursor.execute(
+                """
+                SELECT id FROM realms
+                WHERE world_id=%s
+                ORDER BY id
+                FOR UPDATE;
+                """,
+                (int(world_id),),
+            )
+            self.cursor.fetchall()
+            self.commit()
+
+    def list_realm_link_degrees(self, world_id: int) -> dict[int, int]:
+        """Степень каждой долины мира по realm_links (без рёбер - 0)."""
+        realms = self.list_realms_by_chain(int(world_id))
+        degrees = {int(r["id"]): 0 for r in realms}
+        if not degrees:
+            return degrees
+        ids = list(degrees.keys())
+        rows = self._fetchall(
+            """
+            SELECT realm_low, realm_high FROM realm_links
+            WHERE realm_low = ANY(%s) OR realm_high = ANY(%s);
+            """,
+            (ids, ids),
+        )
+        for row in rows:
+            low, high = int(row["realm_low"]), int(row["realm_high"])
+            if low in degrees:
+                degrees[low] += 1
+            if high in degrees:
+                degrees[high] += 1
+        return degrees
+
+    def ensure_realm_link(self, realm_a: int, realm_b: int) -> None:
+        from app.domain.portals import ordered_link_pair
+
+        low, high = ordered_link_pair(realm_a, realm_b)
+        with self.lock:
+            self.cursor.execute(
+                """
+                INSERT INTO realm_links (realm_low, realm_high)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING;
+                """,
+                (low, high),
+            )
+            self.commit()
+
+    def list_realm_neighbor_ids(self, realm_id: int) -> list[int]:
+        rid = int(realm_id)
+        rows = self._fetchall(
+            """
+            SELECT CASE WHEN realm_low = %s THEN realm_high ELSE realm_low END AS nb
+            FROM realm_links
+            WHERE realm_low = %s OR realm_high = %s
+            ORDER BY nb;
+            """,
+            (rid, rid, rid),
+        )
+        return [int(r["nb"]) for r in rows]
 
     def list_adjacent_realms(self, realm_id: int) -> list[dict]:
         """Другие долины того же континента."""

@@ -11,6 +11,9 @@ MAP_MIN_TILES = 36  # 6×6
 MAP_MAX_TILES = 100
 MAP_GROWTH_CLAIMED_RATIO = 0.70
 
+# Топология долин (рёбра realm_links). Play пока continent-wide; лимит - на create.
+MAX_REALM_NEIGHBORS = 3
+
 TILE_FIELD = "field"
 TILE_FOREST = "forest"
 TILE_HILLS = "hills"
