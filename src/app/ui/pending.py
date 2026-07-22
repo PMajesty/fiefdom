@@ -10,6 +10,7 @@ KIND_RAID_MIGHT = "raid_might"
 KIND_RAID_CONFIRM = "raid_confirm"
 KIND_PACT_NAME = "pact_name"
 KIND_PACT_INVITE = "pact_invite"
+KIND_DISBAND_KEEP = "disband_keep"
 
 
 class PendingStore:

@@ -44,6 +44,7 @@ from app.ui.flows import (
 )
 from app.ui.keyboards import cover_ally_pick_kb, cover_stance_kb
 from app.ui.pending import (
+    KIND_DISBAND_KEEP,
     KIND_SEND_AMOUNT,
     KIND_SEND_CONFIRM,
     KIND_SEND_PICK,
@@ -160,38 +161,32 @@ async def cb_gather(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("dis:"))
 async def cb_disband(callback: CallbackQuery) -> None:
+    """Старт роспуска: любой dis:fid... открывает ввод числа keep."""
     engine = get_engine()
     try:
         parts = callback.data.split(":")
         fief_id = int(parts[1])
         fief = engine.require_owned_fief(fief_id, callback.from_user.id)
 
-        if len(parts) == 2:
-            engine.collect_for_fief(fief_id)
-            fief = engine.fief_by_id(fief_id) or fief
-            might = int(fief.get("might") or 0)
-            await _ok(callback)
-            await answer_html(
-                callback.message,
-                dm_mod.disband_prompt_text(
-                    might,
-                    hungry=bool(fief.get("hungry")),
-                    prepaid_might=int(fief.get("militia_prepaid_might") or 0),
-                ),
-                reply_markup=dm_mod.disband_militia_kb(fief_id, might),
-            )
+        engine.collect_for_fief(fief_id)
+        fief = engine.fief_by_id(fief_id) or fief
+        might = int(fief.get("might") or 0)
+        if might <= 0:
+            await callback.answer("Некого распускать", show_alert=True)
             return
-
-        if len(parts) != 4 or parts[3] != "ok":
-            await callback.answer("Неизвестное действие", show_alert=True)
-            return
-        keep = int(parts[2])
-        msg = engine.disband_militia(fief_id, keep)
+        dm_mod.set_pending(
+            callback.from_user.id,
+            {"kind": KIND_DISBAND_KEEP, "fief_id": fief_id},
+        )
         await _ok(callback)
-        await reply_game(
+        await answer_html(
             callback.message,
-            msg + "\n\n" + engine.status_card(fief_id),
-            reply_markup=fief_home_kb(engine, fief_id),
+            dm_mod.disband_prompt_text(
+                might,
+                hungry=bool(fief.get("hungry")),
+                prepaid_might=int(fief.get("militia_prepaid_might") or 0),
+            ),
+            reply_markup=dm_mod.pending_cancel_kb(fief_id),
         )
     except ValueError as exc:
         await callback.answer(str(exc), show_alert=True)

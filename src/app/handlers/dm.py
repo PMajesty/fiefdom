@@ -57,7 +57,6 @@ from app.ui.keyboards import (
     format_build_tile_button,
     format_building_type_label,
     format_claim_button,
-    disband_militia_kb,
     gather_resources_kb,
     pact_invite_kb,
     pact_kb,
@@ -73,6 +72,7 @@ from app.ui.keyboards import (
     starter_tiles_kb,
 )
 from app.ui.pending import (
+    KIND_DISBAND_KEEP,
     KIND_SEND_AMOUNT,
     KIND_SEND_CONFIRM,
     KIND_SEND_PICK,
@@ -202,6 +202,8 @@ def disband_prompt_text(
     lines = [
         f"Дружина дома: {current}. Корм сейчас {feed} зерна/день.",
         f"Бесплатно до {free} (корм {feed_free}). Роспуск без траты действия.",
+        f"Напишите, сколько силы оставить дома (от 0 до {max(0, current - 1)}).",
+        "Или напишите \"отмена\".",
     ]
     if hungry:
         lines.append("При голоде лишняя сила только жрёт зерно - лучше срезать сейчас.")
@@ -822,6 +824,52 @@ async def _handle_pending(message: Message, engine, pending: dict, text: str) ->
             message,
             "Выберите ресурс кнопками.\n" + text_out,
             reply_markup=kb,
+        )
+        return True
+
+    if kind == KIND_DISBAND_KEEP:
+        fief_id = int(pending["fief_id"])
+        engine.collect_for_fief(fief_id)
+        fief = engine.fief_by_id(fief_id) or {}
+        current = max(0, int(fief.get("might") or 0))
+        if current <= 0:
+            clear_pending(user_id)
+            await answer_html(
+                message,
+                "Некого распускать.",
+                reply_markup=fief_home_kb(engine, fief_id),
+            )
+            return True
+        max_keep = current - 1
+        try:
+            keep = int(text.strip())
+        except ValueError:
+            keep = None
+        if keep is None or keep < 0 or keep > max_keep:
+            await answer_html(
+                message,
+                (
+                    f"Нужно целое число от 0 до {max_keep} "
+                    f"(сейчас дома {current}).\n"
+                    "Или напишите \"отмена\"."
+                ),
+                reply_markup=pending_cancel_kb(fief_id),
+            )
+            return True
+        try:
+            msg = engine.disband_militia(fief_id, keep)
+        except ValueError as exc:
+            await answer_html(
+                message,
+                f"{exc}\nИли напишите \"отмена\".",
+                reply_markup=pending_cancel_kb(fief_id),
+            )
+            return True
+        clear_pending(user_id)
+        await reply_game(
+            message,
+            msg + "\n\n" + engine.status_card(fief_id),
+            reply_markup=fief_home_kb(engine, fief_id),
         )
         return True
 

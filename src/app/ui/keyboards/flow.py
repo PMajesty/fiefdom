@@ -26,10 +26,6 @@ def patrol_confirm_callback(fief_id: int) -> str:
     return f"pat:{int(fief_id)}:ok"
 
 
-def disband_confirm_callback(fief_id: int, keep: int) -> str:
-    return f"dis:{int(fief_id)}:{int(keep)}:ok"
-
-
 def pending_cancel_kb(fief_id: int) -> InlineKeyboardMarkup:
     return with_pending_footer([], fief_id)
 
@@ -51,43 +47,6 @@ def patrol_confirm_kb(fief_id: int) -> InlineKeyboardMarkup:
             menu_row(fid),
         ]
     )
-
-
-def disband_militia_kb(fief_id: int, might: int) -> InlineKeyboardMarkup:
-    """Кнопки роспуска: до бесплатного потолка и до нуля."""
-    fid = int(fief_id)
-    current = max(0, int(might))
-    rows: list[list[InlineKeyboardButton]] = []
-    free = int(B.MILITIA_FREE)
-    if current > free:
-        lost = current - free
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"Оставить {free} (−{lost})",
-                    callback_data=disband_confirm_callback(fid, free),
-                )
-            ]
-        )
-    if current > 0:
-        rows.append(
-            [
-                InlineKeyboardButton(
-                    text=f"Распустить всех (−{current})",
-                    callback_data=disband_confirm_callback(fid, 0),
-                )
-            ]
-        )
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text="Отмена",
-                callback_data=menu_callback(fid),
-            )
-        ]
-    )
-    rows.append(menu_row(fid))
-    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def raid_confirm_kb(
@@ -460,8 +419,6 @@ __all__ = [
     "cover_confirm_kb",
     "cover_stance_kb",
     "demolish_tiles_kb",
-    "disband_confirm_callback",
-    "disband_militia_kb",
     "gather_resources_kb",
     "pact_invite_kb",
     "pact_kb",

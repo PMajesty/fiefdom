@@ -309,13 +309,264 @@ def test_disband_militia_cuts_stash():
     assert f"корм дружины {B.militia_upkeep_grain(B.MILITIA_FREE)}" in msg
 
 
-def test_disband_militia_kb_presets():
-    from app.ui.keyboards import disband_militia_kb
+def test_disband_prompt_asks_for_keep_number():
+    from app.handlers.dm import disband_prompt_text
 
-    kb = disband_militia_kb(3, 20)
-    data = [btn.callback_data for row in kb.inline_keyboard for btn in row]
-    assert f"dis:3:{B.MILITIA_FREE}:ok" in data
-    assert "dis:3:0:ok" in data
+    text = disband_prompt_text(20, hungry=True)
+    assert "Дружина дома: 20" in text
+    assert "от 0 до 19" in text
+    assert "отмена" in text.lower()
+    assert "голод" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_disband_keep_pending_applies_number():
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from app.handlers.dm import _handle_pending
+    from app.ui.pending import KIND_DISBAND_KEEP
+
+    engine = MagicMock()
+    engine.fief_by_id.return_value = {"might": 20, "id": 3}
+    engine.disband_militia.return_value = "Распустил 12 (−12 Силы)."
+    engine.status_card.return_value = "статус"
+    message = MagicMock()
+    message.from_user = MagicMock(id=101)
+    pending = {"kind": KIND_DISBAND_KEEP, "fief_id": 3}
+    with (
+        patch("app.handlers.dm.reply_game", new_callable=AsyncMock) as reply,
+        patch("app.handlers.dm.clear_pending") as clear_pending,
+        patch("app.handlers.dm.fief_home_kb", return_value="home"),
+    ):
+        ok = await _handle_pending(message, engine, pending, "8")
+    assert ok is True
+    engine.disband_militia.assert_called_once_with(3, 8)
+    clear_pending.assert_called_once_with(101)
+    assert "Распустил 12" in reply.await_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_disband_keep_pending_rejects_out_of_range():
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from app.handlers.dm import _handle_pending
+    from app.ui.pending import KIND_DISBAND_KEEP
+
+    engine = MagicMock()
+    engine.fief_by_id.return_value = {"might": 20, "id": 3}
+    message = MagicMock()
+    message.from_user = MagicMock(id=101)
+    pending = {"kind": KIND_DISBAND_KEEP, "fief_id": 3}
+    with (
+        patch("app.handlers.dm.answer_html", new_callable=AsyncMock) as answer,
+        patch("app.handlers.dm.pending_cancel_kb", return_value="cancel"),
+    ):
+        ok = await _handle_pending(message, engine, pending, "20")
+    assert ok is True
+    engine.disband_militia.assert_not_called()
+    text = answer.await_args.args[1]
+    assert "от 0 до 19" in text
+
+
+@pytest.mark.asyncio
+async def test_disband_keep_pending_rejects_non_numeric():
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from app.handlers.dm import _handle_pending
+    from app.ui.pending import KIND_DISBAND_KEEP
+
+    engine = MagicMock()
+    engine.fief_by_id.return_value = {"might": 20, "id": 3}
+    message = MagicMock()
+    message.from_user = MagicMock(id=101)
+    pending = {"kind": KIND_DISBAND_KEEP, "fief_id": 3}
+    with (
+        patch("app.handlers.dm.answer_html", new_callable=AsyncMock) as answer,
+        patch("app.handlers.dm.pending_cancel_kb", return_value="cancel"),
+        patch("app.handlers.dm.clear_pending") as clear_pending,
+    ):
+        ok = await _handle_pending(message, engine, pending, "abc")
+    assert ok is True
+    engine.disband_militia.assert_not_called()
+    clear_pending.assert_not_called()
+    assert "от 0 до 19" in answer.await_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_disband_keep_pending_engine_error_keeps_pending():
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from app.handlers.dm import _handle_pending
+    from app.ui.pending import KIND_DISBAND_KEEP
+
+    engine = MagicMock()
+    engine.fief_by_id.return_value = {"might": 20, "id": 3}
+    engine.disband_militia.side_effect = ValueError("Усадьба заморожена")
+    message = MagicMock()
+    message.from_user = MagicMock(id=101)
+    pending = {"kind": KIND_DISBAND_KEEP, "fief_id": 3}
+    with (
+        patch("app.handlers.dm.answer_html", new_callable=AsyncMock) as answer,
+        patch("app.handlers.dm.pending_cancel_kb", return_value="cancel"),
+        patch("app.handlers.dm.clear_pending") as clear_pending,
+    ):
+        ok = await _handle_pending(message, engine, pending, "5")
+    assert ok is True
+    clear_pending.assert_not_called()
+    assert "Усадьба заморожена" in answer.await_args.args[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("keep", ["0", "19"])
+async def test_disband_keep_pending_boundary_values(keep: str):
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from app.handlers.dm import _handle_pending
+    from app.ui.pending import KIND_DISBAND_KEEP
+
+    engine = MagicMock()
+    engine.fief_by_id.return_value = {"might": 20, "id": 3}
+    engine.disband_militia.return_value = "ok"
+    engine.status_card.return_value = "статус"
+    message = MagicMock()
+    message.from_user = MagicMock(id=101)
+    pending = {"kind": KIND_DISBAND_KEEP, "fief_id": 3}
+    with (
+        patch("app.handlers.dm.reply_game", new_callable=AsyncMock),
+        patch("app.handlers.dm.clear_pending"),
+        patch("app.handlers.dm.fief_home_kb", return_value="home"),
+    ):
+        ok = await _handle_pending(message, engine, pending, keep)
+    assert ok is True
+    engine.disband_militia.assert_called_once_with(3, int(keep))
+
+
+@pytest.mark.asyncio
+async def test_cb_disband_sets_pending_and_prompt():
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from app.handlers import callbacks as cb_mod
+    from app.ui.pending import KIND_DISBAND_KEEP
+
+    engine = MagicMock()
+    engine.require_owned_fief.return_value = {
+        "id": 3,
+        "might": 20,
+        "hungry": False,
+        "militia_prepaid_might": 0,
+    }
+    engine.fief_by_id.return_value = {
+        "id": 3,
+        "might": 20,
+        "hungry": False,
+        "militia_prepaid_might": 0,
+    }
+    callback = MagicMock()
+    callback.data = "dis:3"
+    callback.from_user = MagicMock(id=101)
+    callback.message = MagicMock()
+    callback.answer = AsyncMock()
+    with (
+        patch.object(cb_mod, "get_engine", return_value=engine),
+        patch.object(cb_mod.dm_mod, "set_pending") as set_pending,
+        patch.object(cb_mod.dm_mod, "pending_cancel_kb", return_value="cancel"),
+        patch.object(cb_mod, "answer_html", new_callable=AsyncMock) as answer,
+        patch.object(cb_mod, "_ok", new_callable=AsyncMock),
+    ):
+        await cb_mod.cb_disband(callback)
+    set_pending.assert_called_once_with(
+        101, {"kind": KIND_DISBAND_KEEP, "fief_id": 3}
+    )
+    assert "от 0 до 19" in answer.await_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_cb_disband_no_militia_alerts_without_pending():
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from app.handlers import callbacks as cb_mod
+
+    engine = MagicMock()
+    engine.require_owned_fief.return_value = {"id": 3, "might": 0}
+    engine.fief_by_id.return_value = {"id": 3, "might": 0}
+    callback = MagicMock()
+    callback.data = "dis:3"
+    callback.from_user = MagicMock(id=101)
+    callback.message = MagicMock()
+    callback.answer = AsyncMock()
+    with (
+        patch.object(cb_mod, "get_engine", return_value=engine),
+        patch.object(cb_mod.dm_mod, "set_pending") as set_pending,
+        patch.object(cb_mod, "answer_html", new_callable=AsyncMock) as answer,
+    ):
+        await cb_mod.cb_disband(callback)
+    set_pending.assert_not_called()
+    answer.assert_not_called()
+    callback.answer.assert_awaited()
+    assert "Некого распускать" in callback.answer.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_disband_keep_pending_clears_when_no_militia():
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from app.handlers.dm import _handle_pending
+    from app.ui.pending import KIND_DISBAND_KEEP
+
+    engine = MagicMock()
+    engine.fief_by_id.return_value = {"might": 0, "id": 3}
+    message = MagicMock()
+    message.from_user = MagicMock(id=101)
+    pending = {"kind": KIND_DISBAND_KEEP, "fief_id": 3}
+    with (
+        patch("app.handlers.dm.answer_html", new_callable=AsyncMock) as answer,
+        patch("app.handlers.dm.clear_pending") as clear_pending,
+        patch("app.handlers.dm.fief_home_kb", return_value="home"),
+    ):
+        ok = await _handle_pending(message, engine, pending, "0")
+    assert ok is True
+    clear_pending.assert_called_once_with(101)
+    engine.disband_militia.assert_not_called()
+    assert "Некого распускать" in answer.await_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_cb_disband_stale_ok_opens_prompt():
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from app.handlers import callbacks as cb_mod
+    from app.ui.pending import KIND_DISBAND_KEEP
+
+    engine = MagicMock()
+    engine.require_owned_fief.return_value = {
+        "id": 3,
+        "might": 12,
+        "hungry": False,
+        "militia_prepaid_might": 0,
+    }
+    engine.fief_by_id.return_value = {
+        "id": 3,
+        "might": 12,
+        "hungry": False,
+        "militia_prepaid_might": 0,
+    }
+    callback = MagicMock()
+    callback.data = f"dis:3:{B.MILITIA_FREE}:ok"
+    callback.from_user = MagicMock(id=101)
+    callback.message = MagicMock()
+    callback.answer = AsyncMock()
+    with (
+        patch.object(cb_mod, "get_engine", return_value=engine),
+        patch.object(cb_mod.dm_mod, "set_pending") as set_pending,
+        patch.object(cb_mod.dm_mod, "pending_cancel_kb", return_value="cancel"),
+        patch.object(cb_mod, "answer_html", new_callable=AsyncMock) as answer,
+        patch.object(cb_mod, "_ok", new_callable=AsyncMock),
+    ):
+        await cb_mod.cb_disband(callback)
+    set_pending.assert_called_once_with(
+        101, {"kind": KIND_DISBAND_KEEP, "fief_id": 3}
+    )
+    assert "от 0 до 11" in answer.await_args.args[1]
 
 
 def test_gather_resources_kb_hides_might_when_hungry():
