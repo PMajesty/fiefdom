@@ -183,14 +183,14 @@ def onboard_patience_hint(
             return None
         claim_s = str(next_claim) if next_claim is not None else "-"
         return (
-            f"Пока копите товары или зайдите на рынок: земля от {claim_s}."
+            f"Пока копите товары или ждите обоз: земля от {claim_s}."
         )
     if step == 3:
         if can_build:
             return None
         build_s = str(min_build_cost) if min_build_cost is not None else "-"
         return (
-            f"Пока копите товары или зайдите на рынок: стройка от {build_s}."
+            f"Пока копите товары или ждите обоз: стройка от {build_s}."
         )
     return None
 

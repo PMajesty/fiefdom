@@ -1,9 +1,10 @@
-"""Голод: сила со стороны, роспуск дружины, сбор силы."""
+"""Голод: сторожки молчат, роспуск дружины, сбор силы."""
 from __future__ import annotations
 
 import pytest
 
 from app import balance as B
+from app.domain.guide import game_guide
 from app.domain.hunger import (
     gather_might_hungry_message,
     hunger_holdings_banner,
@@ -262,8 +263,38 @@ def test_holdings_hungry_banner_mentions_might():
 
 def test_hunger_status_alert_mentions_disband():
     alert = hunger_status_alert()
+    assert "падает вдвое" in alert
+    assert "сторожки и сбор силы молчат" in alert
+    assert "по-прежнему добирает" in alert
+    assert str(B.MILITIA_FREE) in alert
+    assert "набег и заставу" in alert
     assert "распустить" in alert
-    assert "воевать нельзя" in alert
+    assert "собрать зерно" in alert
+    assert "обоз" in alert
+    assert "Урожай вдвое," not in alert
+    assert "сила со стороны" not in alert
+
+
+def test_hunger_holdings_banner_matches_status_polarity():
+    banner = hunger_holdings_banner()
+    assert "падает вдвое" in banner
+    assert "сторожки и сбор силы молчат" in banner
+    assert "по-прежнему добирает" in banner
+    assert str(B.MILITIA_FREE) in banner
+    assert "сила со стороны" not in banner
+
+
+def test_guide_hunger_section_matches_status_rules():
+    text = game_guide()
+    hunger_block = text.split("Голод\n", 1)[1].split("\n\n", 1)[0]
+    assert "падает вдвое" in hunger_block
+    assert "сторожки и сбор силы молчат" in hunger_block
+    assert "набег и заставу" in hunger_block
+    assert "по-прежнему добирает" in hunger_block
+    assert str(B.MILITIA_FREE) in hunger_block
+    assert "обоз" in hunger_block
+    assert "сила со стороны" not in hunger_block
+    assert "Урожай вдвое" not in hunger_block
 
 
 def test_gather_might_blocked_when_hungry():

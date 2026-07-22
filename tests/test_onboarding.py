@@ -222,7 +222,8 @@ def test_onboard_patience_hint_when_unaffordable():
         min_build_cost=50,
     )
     assert hint is not None
-    assert "рынок" in hint
+    assert "обоз" in hint
+    assert "рынок" not in hint
     assert str(B.CLAIM_COSTS[2]) in hint
     assert (
         onboard_patience_hint(
@@ -234,6 +235,8 @@ def test_onboard_patience_hint_when_unaffordable():
         onboard_step=3, goods=15, tile_count=2, min_build_cost=20
     )
     assert build_hint is not None
+    assert "обоз" in build_hint
+    assert "рынок" not in build_hint
     assert "20" in build_hint
     assert (
         onboard_patience_hint(
@@ -376,7 +379,8 @@ def test_status_card_puts_bold_quest_after_title():
     assert lines[1] == ""
     assert lines[2] == onboard_quest_html(2)
     assert "<b>Квест:" in lines[2]
-    assert "рынок" in lines[3]
+    assert "обоз" in lines[3]
+    assert "рынок" not in lines[3]
     assert str(B.CLAIM_COSTS[2]) in lines[3]
     assert not lines[-1].startswith("<b>Квест:")
 
@@ -591,7 +595,8 @@ def test_status_card_groups_blocks_for_glance():
     assert "Зерно:" not in text
     assert "Содержание:" not in text
     assert text.startswith("🏡 <b>Усадьба @Artyom_dio</b> · день 2\n\n")
-    assert "Голод: земли нечем кормить" in text
+    assert "Голод: нечем кормить земли" in text
+    assert "падает вдвое" in text
     assert "Статусы: Голод" in text
     assert "⚡ Действия: 0/" in text
     assert f"⚡ Действия: 0/{B.ACTIONS_BANK_MAX} · Клетки: 2/{B.TILE_HARD_CAP}" in text
