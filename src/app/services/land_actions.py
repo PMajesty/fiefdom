@@ -247,10 +247,11 @@ class LandActionService:
         return f"{B.BUILDING_NAMES_RU[building]} {target_level} на {coord_label(x, y)} (−{cost} товаров)."
 
     def demolish_building(self, fief_id: int, x: int, y: int) -> str:
-        """Снос здания на клетке: 1 действие, возврат доли вложенных товаров."""
-        fief = self._db.get_fief(fief_id)
-        if not fief:
-            raise ValueError("Усадьба не найдена")
+        """Снос здания на клетке без траты действия; возврат доли вложенных товаров."""
+        fief = self._engine.require_active_fief(fief_id)
+        if fief.get("frozen"):
+            raise ValueError("Усадьба заморожена")
+        self._engine._require_action_window(int(fief["realm_id"]))
         tile = self._db.get_tile(fief["realm_id"], x, y)
         if not tile or tile["owner_fief_id"] != fief_id:
             raise ValueError("Это не ваша клетка")
@@ -266,9 +267,7 @@ class LandActionService:
             raise ValueError("Это здание нельзя снести")
         refund = B.demolish_refund_goods(building, level)
         with self._db.transaction():
-            self._engine._spend_action(fief)
-            fief = self._db.get_fief(fief_id)
-            self._db.update_fief(fief_id, goods=int(fief["goods"]) + refund)
+            self._db.credit_fief_resources(fief_id, goods=refund)
             self._db.update_tile(
                 tile["id"],
                 building=None,

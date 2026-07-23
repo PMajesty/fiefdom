@@ -208,7 +208,7 @@ async def cb_demolish(callback: CallbackQuery) -> None:
             await answer_html(
                 callback.message,
                 (
-                    f"Снос здания: 1 действие, возврат "
+                    f"Снос здания: без траты действия, возврат "
                     f"{int(B.DEMOLISH_REFUND_FRAC * 100)}% вложенных товаров. "
                     "Двор (главная клетка) снести нельзя."
                 ),

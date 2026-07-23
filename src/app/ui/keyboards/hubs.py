@@ -207,7 +207,7 @@ def estate_hub_kb(
     raid_pact_open: bool = True,
     lock_hint: str | None = None,
 ) -> InlineKeyboardMarkup:
-    """Хабы Дела: действия за 1 действие."""
+    """Хабы Дела: действия, снос и роспуск дружины."""
     fid = int(fief_id)
     raid_btn, _pact = _raid_pact_hub_buttons(
         fid,

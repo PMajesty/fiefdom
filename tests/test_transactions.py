@@ -398,7 +398,7 @@ def test_patrol_wraps_spend_in_transaction():
     assert "Дозор" in msg
 
 
-def test_demolish_building_wraps_spend_in_transaction():
+def test_demolish_building_wraps_refund_in_transaction():
     fief = _spender_fief()
     tile = {
         "id": 50,
@@ -423,7 +423,6 @@ def test_demolish_building_wraps_spend_in_transaction():
     _allow_play(db)
     db.get_fief.return_value = dict(fief)
     db.get_tile.return_value = tile
-    db.spend_fief_action.return_value = dict(fief, actions=1)
     db.get_realm.return_value = {"tick_index": 1}
     db.get_user.return_value = {"last_realm_id": 9}
     db.list_fiefs_by_user.return_value = [dict(fief)]
@@ -433,8 +432,14 @@ def test_demolish_building_wraps_spend_in_transaction():
 
     msg = engine.demolish_building(1, 0, 0)
     assert entered["n"] == 1
-    db.spend_fief_action.assert_called_once()
+    db.spend_fief_action.assert_not_called()
+    refund = B.demolish_refund_goods(B.BLD_FARM, 1)
+    db.credit_fief_resources.assert_called_once_with(1, goods=refund)
+    db.update_tile.assert_called_once_with(
+        50, building=None, building_level=0, damaged=False
+    )
     assert "Снесено" in msg
+    assert str(refund) in msg
 
 
 def test_contribute_catastrophe_might_is_atomic():

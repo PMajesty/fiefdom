@@ -109,7 +109,7 @@ def test_demolish_building_allows_farm_on_core_tile():
         "id": 1,
         "realm_id": 9,
         "user_id": 100,
-        "actions": 2,
+        "actions": 0,
         "frozen": False,
         "goods": 40,
         "grain": 10,
@@ -130,7 +130,6 @@ def test_demolish_building_allows_farm_on_core_tile():
     db.transaction.return_value.__exit__ = MagicMock(return_value=False)
     db.get_fief.return_value = dict(fief)
     db.get_tile.return_value = tile
-    db.spend_fief_action.return_value = dict(fief, actions=1)
     db.get_realm.return_value = {"tick_index": 1}
     db.get_user.return_value = {"last_realm_id": 9}
     db.list_fiefs_by_user.return_value = [dict(fief)]
@@ -144,6 +143,9 @@ def test_demolish_building_allows_farm_on_core_tile():
 
     msg = engine.demolish_building(1, 1, 0)
     assert "Снесено" in msg
+    refund = B.demolish_refund_goods(B.BLD_FARM, 1)
+    db.spend_fief_action.assert_not_called()
+    db.credit_fief_resources.assert_called_once_with(1, goods=refund)
     db.update_tile.assert_called_once_with(
         50, building=None, building_level=0, damaged=False
     )
@@ -169,9 +171,106 @@ def test_demolish_building_rejects_manor():
         "is_core": True,
     }
     db = MagicMock()
+    world = {"id": 1, "tick_index": 0, "tick_phase": "play"}
+    db.get_world.return_value = world
+    db.get_or_create_world.return_value = world
+    db.list_realms_by_chain.return_value = []
     db.get_fief.return_value = dict(fief)
     db.get_tile.return_value = tile
+    db.get_user.return_value = {"last_realm_id": 9}
+    db.list_fiefs_by_user.return_value = [dict(fief)]
     engine = Engine(db)
     with pytest.raises(ValueError, match="Двор снести нельзя"):
         engine.demolish_building(1, 0, 0)
     db.spend_fief_action.assert_not_called()
+
+
+def test_demolish_building_rejects_frozen():
+    fief = {
+        "id": 1,
+        "realm_id": 9,
+        "user_id": 100,
+        "actions": 0,
+        "frozen": True,
+        "goods": 40,
+        "name": "A",
+        "onboard_step": 4,
+    }
+    db = MagicMock()
+    db.get_fief.return_value = dict(fief)
+    db.get_user.return_value = {"last_realm_id": 9}
+    db.list_fiefs_by_user.return_value = [dict(fief)]
+    engine = Engine(db)
+    with pytest.raises(ValueError, match="заморожена"):
+        engine.demolish_building(1, 0, 0)
+    db.get_tile.assert_not_called()
+    db.spend_fief_action.assert_not_called()
+
+
+def test_demolish_building_rejects_outside_action_window():
+    from app.domain.tick_pipeline import ActionWindow
+
+    fief = {
+        "id": 1,
+        "realm_id": 9,
+        "user_id": 100,
+        "actions": 0,
+        "frozen": False,
+        "goods": 40,
+        "name": "A",
+        "onboard_step": 4,
+    }
+    db = MagicMock()
+    world = {"id": 1, "tick_index": 0, "tick_phase": "economy"}
+    db.get_world.return_value = world
+    db.get_or_create_world.return_value = world
+    db.list_realms_by_chain.return_value = []
+    db.get_fief.return_value = dict(fief)
+    db.get_user.return_value = {"last_realm_id": 9}
+    db.list_fiefs_by_user.return_value = [dict(fief)]
+    engine = Engine(db)
+    with pytest.raises(ValueError, match=ActionWindow.BLOCKED_MESSAGE):
+        engine.demolish_building(1, 0, 0)
+    db.get_tile.assert_not_called()
+    db.spend_fief_action.assert_not_called()
+
+
+def test_demolish_building_rejects_inactive_valley():
+    fief = {
+        "id": 1,
+        "realm_id": 9,
+        "user_id": 100,
+        "actions": 0,
+        "frozen": False,
+        "goods": 40,
+        "name": "A",
+        "onboard_step": 4,
+    }
+    other = {**fief, "id": 2, "realm_id": 8}
+    db = MagicMock()
+    db.get_fief.return_value = dict(fief)
+    db.get_user.return_value = {"last_realm_id": 8}
+    db.list_fiefs_by_user.return_value = [dict(fief), dict(other)]
+    engine = Engine(db)
+    with pytest.raises(ValueError, match="активной"):
+        engine.demolish_building(1, 0, 0)
+    db.get_tile.assert_not_called()
+    db.spend_fief_action.assert_not_called()
+
+
+def test_patch_note_demolish_free_action_registered():
+    from app.domain.patch_notes import PATCH_NOTES
+
+    note = next(n for n in PATCH_NOTES if n.id == "demolish_free_action_v1")
+    body = " ".join(note.body_lines)
+    assert "не тратит действие" in body
+    assert f"{int(B.DEMOLISH_REFUND_FRAC * 100)}%" in body
+
+
+def test_guide_says_demolish_is_free():
+    from app.domain.guide import game_guide
+
+    text = game_guide()
+    assert "Снос не тратит действие" in text
+    assert "можно сносить здания" in text
+    assert "снос, сбор" not in text
